@@ -633,6 +633,12 @@ if (is_win) {
     default_warning_flags += [ "/WX" ]  # Treat warnings as errors.
   }
 
+  # Ensure UTF-8 source encoding on Chinese Windows (codepage 936)
+  default_warning_flags += [
+    "/utf-8",
+    "/wd4819",
+  ]
+
   if (is_clang) {
     default_warning_flags += [
       "-Wno-deprecated-declarations",  # crashpad

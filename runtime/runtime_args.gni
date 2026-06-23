@@ -74,6 +74,10 @@ declare_args() {
 
   # Whether to support dynamic loading and interpretation of Dart bytecode.
   dart_dynamic_modules = false
+
+  # Whether to expose the compact AOT patch installation API. This is separate
+  # from dart_dynamic_modules and must not pull in the bytecode interpreter.
+  dart_enable_aot_patching = false
 }
 
 declare_args() {

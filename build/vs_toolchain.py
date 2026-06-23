@@ -67,6 +67,7 @@ SDK_VERSION = '10.0.26100.0'
 # which makes a difference for the arm64 runtime.
 # The second number is an alternate version number, only used in an error string
 MSVS_VERSIONS = collections.OrderedDict([
+    ('2026', '18.0'),  # VS 2026 (user-installed) - uses folder name '18'
     ('2022', '17.0'),  # The VS version in our packaged toolchain.
     ('2019', '16.0'),
     ('2017', '15.0'),
@@ -75,10 +76,19 @@ MSVS_VERSIONS = collections.OrderedDict([
 # List of preferred VC toolset version based on MSVS
 # Order is not relevant for this dictionary.
 MSVC_TOOLSET_VERSION = {
+    '2026': 'VC145',
     '2022': 'VC143',
     '2019': 'VC142',
     '2017': 'VC141',
 }
+
+
+def VisualStudioFolderName(version_as_year):
+  """Return the install folder name for a supported Visual Studio version."""
+  if version_as_year >= '2026':
+    return MSVS_VERSIONS.get(version_as_year, version_as_year).split('.')[0]
+  return version_as_year
+
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 json_data_file = os.path.join(script_dir, 'win_toolchain.json')
@@ -212,7 +222,8 @@ def GetVisualStudioVersion():
     else:
       program_files_path_variable = '%ProgramFiles(x86)%'
     path = os.path.expandvars(program_files_path_variable +
-                              '/Microsoft Visual Studio/%s' % version)
+                              '/Microsoft Visual Studio/%s' %
+                              VisualStudioFolderName(version))
     if path and any(
         os.path.exists(os.path.join(path, edition))
         for edition in ('Enterprise', 'Professional', 'Community', 'Preview',
@@ -242,24 +253,25 @@ def DetectVisualStudioPath():
     program_files_path_variable = '%ProgramFiles%'
   else:
     program_files_path_variable = '%ProgramFiles(x86)%'
+  folder_name = VisualStudioFolderName(version_as_year)
   for path in (os.environ.get('vs%s_install' % version_as_year),
                os.path.expandvars(program_files_path_variable +
                                   '/Microsoft Visual Studio/%s/Enterprise' %
-                                  version_as_year),
+                                  folder_name),
                os.path.expandvars(program_files_path_variable +
                                   '/Microsoft Visual Studio/%s/Professional' %
-                                  version_as_year),
+                                  folder_name),
                os.path.expandvars(program_files_path_variable +
                                   '/Microsoft Visual Studio/%s/Community' %
-                                  version_as_year),
+                                  folder_name),
                os.path.expandvars(program_files_path_variable +
                                   '/Microsoft Visual Studio/%s/Preview' %
-                                  version_as_year),
+                                  folder_name),
                os.path.expandvars(program_files_path_variable +
                                   '/Microsoft Visual Studio/%s/BuildTools' %
-                                  version_as_year)):
+                                  folder_name)):
     if path and os.path.exists(path):
-      return path
+      return path.strip()
 
   raise Exception('Visual Studio Version %s not found.' % version_as_year)
 
@@ -562,6 +574,7 @@ def Update(force=False, no_download=False):
 
 
 def NormalizePath(path):
+  path = path.strip()
   while path.endswith('\\'):
     path = path[:-1]
   return path

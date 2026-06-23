@@ -38,7 +38,11 @@ void alsoVerySecretFoo() {
 }
 """);
 
-    List<MappingPair> mapping = getSnapshotMap(tmpDir, secretfilenameFile);
+    List<MappingPair> mapping = getSnapshotMap(
+      tmpDir,
+      secretfilenameFile,
+      outputPrefix: "base",
+    );
     bool good = verify(
       mapping,
       {
@@ -55,13 +59,51 @@ void alsoVerySecretFoo() {
       },
     );
     if (!good) throw "Obfuscation didn't work as expected";
+
+    secretfilename2File.writeAsStringSync("""
+@pragma('vm:entry-point')
+void verySecretFoo() {
+  print("foo!");
+  alsoVerySecretFoo();
+  newPatchOnlySecretFoo();
+}
+
+void alsoVerySecretFoo() {
+  print("foo too!");
+}
+
+void newPatchOnlySecretFoo() {
+  print("patched foo!");
+}
+""");
+
+    final File baseObfuscationMapFile = new File.fromUri(
+      tmpDirUri.resolve("obfuscation-base.map"),
+    );
+    List<MappingPair> patchMapping = getSnapshotMap(
+      tmpDir,
+      secretfilenameFile,
+      outputPrefix: "patch",
+      loadObfuscationMapFile: baseObfuscationMapFile,
+    );
+    good = verifyLoadedObfuscationMap(
+      mapping,
+      patchMapping,
+      "newPatchOnlySecretFoo",
+    );
+    if (!good) throw "Loaded obfuscation map didn't work as expected";
     print("Good");
   } finally {
     tmpDir.deleteSync(recursive: true);
   }
 }
 
-List<MappingPair> getSnapshotMap(Directory tmpDir, File compileDartFile) {
+List<MappingPair> getSnapshotMap(
+  Directory tmpDir,
+  File compileDartFile, {
+  required String outputPrefix,
+  File? loadObfuscationMapFile,
+}) {
   final Uri genKernel = Platform.script.resolve('../bin/gen_kernel.dart');
   final File genKernelFile = new File.fromUri(genKernel);
   if (!genKernelFile.existsSync()) {
@@ -96,7 +138,7 @@ List<MappingPair> getSnapshotMap(Directory tmpDir, File compileDartFile) {
 
   final Uri tmpDirUri = tmpDir.uri;
 
-  final Uri kernelDill = tmpDirUri.resolve("kernel.dill");
+  final Uri kernelDill = tmpDirUri.resolve("kernel-$outputPrefix.dill");
   final File kernelDillFile = new File.fromUri(kernelDill);
 
   print("Running gen_kernel");
@@ -120,14 +162,14 @@ List<MappingPair> getSnapshotMap(Directory tmpDir, File compileDartFile) {
         "stderr: ${kernelRun.stderr}";
   }
 
-  final Uri aotElf = tmpDirUri.resolve("aot.elf");
+  final Uri aotElf = tmpDirUri.resolve("aot-$outputPrefix.elf");
   final File aotElfFile = new File.fromUri(aotElf);
-  final Uri obfuscationMap = tmpDirUri.resolve("obfuscation.map");
+  final Uri obfuscationMap = tmpDirUri.resolve("obfuscation-$outputPrefix.map");
   final File obfuscationMapFile = new File.fromUri(obfuscationMap);
 
   print("Running $genSnapshot");
   // Extracted from pkg/dart2native/lib/dart2native.dart.
-  final ProcessResult snapshotRun = Process.runSync(genSnapshotFile.path, [
+  final List<String> genSnapshotArgs = [
     "--snapshot-kind=app-aot-elf",
     "--elf=${aotElfFile.path}",
     "--dwarf-stack-traces",
@@ -135,7 +177,17 @@ List<MappingPair> getSnapshotMap(Directory tmpDir, File compileDartFile) {
     "--strip",
     "--save-obfuscation-map=${obfuscationMapFile.path}",
     kernelDillFile.path,
-  ]);
+  ];
+  if (loadObfuscationMapFile != null) {
+    genSnapshotArgs.insert(
+      genSnapshotArgs.length - 1,
+      "--load-obfuscation-map=${loadObfuscationMapFile.path}",
+    );
+  }
+  final ProcessResult snapshotRun = Process.runSync(
+    genSnapshotFile.path,
+    genSnapshotArgs,
+  );
 
   if (snapshotRun.exitCode != 0) {
     throw "Got exit code ${snapshotRun.exitCode}\n"
@@ -155,6 +207,10 @@ List<MappingPair> readJsonMapping(File file) {
     result.add(new MappingPair(json[i] as String, json[i + 1] as String));
   }
   return result;
+}
+
+Map<String, String> toMap(List<MappingPair> mapping) {
+  return {for (MappingPair pair in mapping) pair.from: pair.to};
 }
 
 class MappingPair {
@@ -198,5 +254,51 @@ bool verify(
     }
     good = false;
   }
+  return good;
+}
+
+bool verifyLoadedObfuscationMap(
+  List<MappingPair> baseMapping,
+  List<MappingPair> patchMapping,
+  String patchOnlyName,
+) {
+  bool good = true;
+  final Map<String, String> patchMap = toMap(patchMapping);
+  for (MappingPair baseEntry in baseMapping) {
+    final String? patchValue = patchMap[baseEntry.from];
+    if (patchValue == null) {
+      print("Patch map is missing loaded entry ${baseEntry.from}");
+      good = false;
+    } else if (patchValue != baseEntry.to) {
+      print(
+        "Expected ${baseEntry.from} to keep ${baseEntry.to}, "
+        "but patch map used $patchValue",
+      );
+      good = false;
+    }
+  }
+
+  final String? patchOnlyValue = patchMap[patchOnlyName];
+  if (patchOnlyValue == null) {
+    print("Patch map is missing $patchOnlyName");
+    good = false;
+  } else {
+    if (patchOnlyValue == patchOnlyName) {
+      print("Expected $patchOnlyName to be obfuscated");
+      good = false;
+    }
+    final Set<String> baseValues = baseMapping
+        .where((MappingPair pair) => pair.from != pair.to)
+        .map((MappingPair pair) => pair.to)
+        .toSet();
+    if (baseValues.contains(patchOnlyValue)) {
+      print(
+        "Patch-only rename $patchOnlyName->$patchOnlyValue collides with "
+        "the loaded map",
+      );
+      good = false;
+    }
+  }
+
   return good;
 }

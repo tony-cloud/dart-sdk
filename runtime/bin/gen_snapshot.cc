@@ -112,6 +112,7 @@ static const char* const kSnapshotKindNames[] = {
   V(loading_unit_manifest, loading_unit_manifest_filename)                     \
   V(save_debugging_info, debugging_info_filename)                              \
   V(save_obfuscation_map, obfuscation_map_filename)                            \
+  V(load_obfuscation_map, load_obfuscation_map_filename)                       \
   V(ffi_callback_stub, ffi_callback_stub_filename)
 
 #define BOOL_OPTIONS_LIST(V)                                                   \
@@ -168,6 +169,7 @@ static void PrintUsage() {
 "[--obfuscate]                                                               \n"
 "[--save-debugging-info=<debug-filename>]                                    \n"
 "[--save-obfuscation-map=<map-filename>]                                     \n"
+"[--load-obfuscation-map=<map-filename>]                                     \n"
 "<dart-kernel-file>                                                          \n"
 "                                                                            \n"
 "To create an AOT application snapshot as an ELF shared library:             \n"
@@ -177,6 +179,7 @@ static void PrintUsage() {
 "[--obfuscate]                                                               \n"
 "[--save-debugging-info=<debug-filename>]                                    \n"
 "[--save-obfuscation-map=<map-filename>]                                     \n"
+"[--load-obfuscation-map=<map-filename>]                                     \n"
 "<dart-kernel-file>                                                          \n"
 "                                                                            \n"
 "To create an AOT application snapshot as an Mach-O dynamic library (dylib): \n"
@@ -186,6 +189,7 @@ static void PrintUsage() {
 "[--obfuscate]                                                               \n"
 "[--save-debugging-info=<debug-filename>]                                    \n"
 "[--save-obfuscation-map=<map-filename>]                                     \n"
+"[--load-obfuscation-map=<map-filename>]                                     \n"
 "<dart-kernel-file>                                                          \n"
 "                                                                            \n"
 "AOT snapshots can be obfuscated: that is all identifiers will be renamed    \n"
@@ -320,6 +324,12 @@ static int ParseArguments(int argc,
         "obfuscation is enabled by the --obfuscate flag.\n\n");
     return -1;
   }
+  if (!obfuscate && load_obfuscation_map_filename != nullptr) {
+    Syslog::PrintErr(
+        "--load-obfuscation_map=<...> should only be specified when "
+        "obfuscation is enabled by the --obfuscate flag.\n\n");
+    return -1;
+  }
 
   if (!IsSnapshottingForPrecompilation()) {
     if (obfuscate) {
@@ -331,6 +341,13 @@ static int ParseArguments(int argc,
     if (debugging_info_filename != nullptr) {
       Syslog::PrintErr(
           "--save-debugging-info=<...> can only be enabled when building an "
+          "AOT snapshot.\n\n");
+      return -1;
+    }
+
+    if (load_obfuscation_map_filename != nullptr) {
+      Syslog::PrintErr(
+          "--load-obfuscation-map=<...> can only be enabled when building an "
           "AOT snapshot.\n\n");
       return -1;
     }
@@ -392,6 +409,209 @@ static void ReadFile(const char* filename, uint8_t** buffer, intptr_t* size) {
 
 static void MallocFinalizer(void* isolate_callback_data, void* peer) {
   free(peer);
+}
+
+static bool IsJsonWhitespace(uint8_t c) {
+  return c == ' ' || c == '\n' || c == '\r' || c == '\t';
+}
+
+static int HexDigit(uint8_t c) {
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return 10 + (c - 'a');
+  }
+  if (c >= 'A' && c <= 'F') {
+    return 10 + (c - 'A');
+  }
+  return -1;
+}
+
+static void AppendUtf8(char* buffer, intptr_t* length, uint32_t code_point) {
+  if (code_point <= 0x7F) {
+    buffer[(*length)++] = static_cast<char>(code_point);
+  } else if (code_point <= 0x7FF) {
+    buffer[(*length)++] = static_cast<char>(0xC0 | (code_point >> 6));
+    buffer[(*length)++] = static_cast<char>(0x80 | (code_point & 0x3F));
+  } else if (code_point <= 0xFFFF) {
+    buffer[(*length)++] = static_cast<char>(0xE0 | (code_point >> 12));
+    buffer[(*length)++] = static_cast<char>(0x80 | ((code_point >> 6) & 0x3F));
+    buffer[(*length)++] = static_cast<char>(0x80 | (code_point & 0x3F));
+  } else {
+    buffer[(*length)++] = static_cast<char>(0xF0 | (code_point >> 18));
+    buffer[(*length)++] = static_cast<char>(0x80 | ((code_point >> 12) & 0x3F));
+    buffer[(*length)++] = static_cast<char>(0x80 | ((code_point >> 6) & 0x3F));
+    buffer[(*length)++] = static_cast<char>(0x80 | (code_point & 0x3F));
+  }
+}
+
+static bool ParseJsonStringArray(const uint8_t* buffer,
+                                 intptr_t size,
+                                 MallocGrowableArray<const char*>* strings,
+                                 const char** error) {
+  intptr_t cursor = 0;
+  auto skip_whitespace = [&]() {
+    while (cursor < size && IsJsonWhitespace(buffer[cursor])) {
+      cursor++;
+    }
+  };
+
+  skip_whitespace();
+  if (cursor >= size || buffer[cursor++] != '[') {
+    *error = "expected '['";
+    return false;
+  }
+  skip_whitespace();
+  if (cursor < size && buffer[cursor] == ']') {
+    cursor++;
+    skip_whitespace();
+    if (cursor != size) {
+      *error = "unexpected characters after ']'";
+      return false;
+    }
+    return true;
+  }
+
+  while (cursor < size) {
+    if (buffer[cursor++] != '"') {
+      *error = "expected string";
+      return false;
+    }
+    char* value = reinterpret_cast<char*>(malloc(size + 1));
+    if (value == nullptr) {
+      *error = "out of memory";
+      return false;
+    }
+    intptr_t length = 0;
+    while (cursor < size) {
+      uint8_t c = buffer[cursor++];
+      if (c == '"') {
+        value[length] = '\0';
+        strings->Add(value);
+        value = nullptr;
+        break;
+      }
+      if (c != '\\') {
+        value[length++] = static_cast<char>(c);
+        continue;
+      }
+      if (cursor >= size) {
+        free(value);
+        *error = "unterminated escape";
+        return false;
+      }
+      c = buffer[cursor++];
+      switch (c) {
+        case '"':
+        case '\\':
+        case '/':
+          value[length++] = static_cast<char>(c);
+          break;
+        case 'b':
+          value[length++] = '\b';
+          break;
+        case 'f':
+          value[length++] = '\f';
+          break;
+        case 'n':
+          value[length++] = '\n';
+          break;
+        case 'r':
+          value[length++] = '\r';
+          break;
+        case 't':
+          value[length++] = '\t';
+          break;
+        case 'u': {
+          if (cursor + 4 > size) {
+            free(value);
+            *error = "incomplete unicode escape";
+            return false;
+          }
+          uint32_t code_point = 0;
+          for (intptr_t i = 0; i < 4; i++) {
+            const int digit = HexDigit(buffer[cursor++]);
+            if (digit < 0) {
+              free(value);
+              *error = "invalid unicode escape";
+              return false;
+            }
+            code_point = (code_point << 4) | digit;
+          }
+          AppendUtf8(value, &length, code_point);
+          break;
+        }
+        default:
+          free(value);
+          *error = "invalid escape";
+          return false;
+      }
+    }
+    if (value != nullptr) {
+      free(value);
+      *error = "unterminated string";
+      return false;
+    }
+
+    skip_whitespace();
+    if (cursor < size && buffer[cursor] == ',') {
+      cursor++;
+      skip_whitespace();
+      continue;
+    }
+    if (cursor < size && buffer[cursor] == ']') {
+      cursor++;
+      skip_whitespace();
+      if (cursor != size) {
+        *error = "unexpected characters after ']'";
+        return false;
+      }
+      return true;
+    }
+    *error = "expected ',' or ']'";
+    return false;
+  }
+
+  *error = "unterminated array";
+  return false;
+}
+
+static void MaybeLoadObfuscationMap() {
+  if (load_obfuscation_map_filename == nullptr) {
+    return;
+  }
+
+  uint8_t* buffer = nullptr;
+  intptr_t size = 0;
+  ReadFile(load_obfuscation_map_filename, &buffer, &size);
+
+  MallocGrowableArray<const char*> strings;
+  const char* parse_error = nullptr;
+  if (!ParseJsonStringArray(buffer, size, &strings, &parse_error)) {
+    free(buffer);
+    for (intptr_t i = 0; i < strings.length(); i++) {
+      free(const_cast<char*>(strings[i]));
+    }
+    PrintErrAndExit("Error: Invalid obfuscation map %s: %s\n",
+                    load_obfuscation_map_filename, parse_error);
+  }
+  if ((strings.length() % 2) != 0) {
+    free(buffer);
+    for (intptr_t i = 0; i < strings.length(); i++) {
+      free(const_cast<char*>(strings[i]));
+    }
+    PrintErrAndExit(
+        "Error: Invalid obfuscation map %s: expected string pairs\n",
+        load_obfuscation_map_filename);
+  }
+
+  Dart_Handle result = Dart_SetObfuscationMap(strings.data(), strings.length());
+  free(buffer);
+  for (intptr_t i = 0; i < strings.length(); i++) {
+    free(const_cast<char*>(strings[i]));
+  }
+  CHECK_RESULT(result);
 }
 
 static void MaybeLoadExtraInputs(const CommandLineOptions& inputs) {
@@ -655,6 +875,8 @@ static void CreateAndWritePrecompiledSnapshot() {
   }
   ASSERT(kind_str != nullptr);
   ASSERT(filename != nullptr);
+
+  MaybeLoadObfuscationMap();
 
   // Precompile with specified embedder entry points
   Dart_Handle result = Dart_Precompile();

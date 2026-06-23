@@ -4242,6 +4242,82 @@ DART_EXPORT DART_API_WARN_UNUSED_RESULT Dart_Handle
 Dart_GetObfuscationMap(uint8_t** buffer, intptr_t* buffer_length);
 
 /**
+ * Restore a previously saved obfuscation map before AOT precompilation.
+ *
+ * The map uses the same flat string-pair format returned by
+ * Dart_GetObfuscationMap: [original0, obfuscated0, original1, obfuscated1, ...].
+ * The VM rebuilds the precompiler obfuscation state so subsequent renames are
+ * stable with the release build and newly introduced identifiers receive fresh
+ * obfuscated names.
+ */
+DART_EXPORT DART_API_WARN_UNUSED_RESULT Dart_Handle
+Dart_SetObfuscationMap(const char* const* map, intptr_t map_length);
+
+/*
+ * ========
+ * AOT patching
+ * ========
+ */
+
+typedef struct {
+  const char* app_id;
+  const char* app_build_id;
+  const char* base_flavor_id;
+  const char* base_license_type;
+  const char* flavor_id;
+  const char* license_type;
+  const char* sdk_hash;
+  const char* base_snapshot_hash;
+  const char* patch_snapshot_hash;
+  const char* obfuscation_map_hash;
+  const char* target_os;
+  const char* target_arch;
+} Dart_AotPatchInstallOptions;
+
+typedef bool (*Dart_AotPatchKeyCallback)(const char* key_id,
+                                         uint8_t* key_buffer,
+                                         intptr_t key_buffer_length,
+                                         intptr_t* key_length);
+
+/**
+ * Returns whether this VM was built with compact AOT patching support.
+ *
+ * This feature is intentionally independent of DART_DYNAMIC_MODULES and does
+ * not enable the bytecode interpreter.
+ */
+DART_EXPORT bool Dart_AotPatchingEnabled(void);
+
+/**
+ * Sets the callback used to resolve AES keys for encrypted AOT patch payloads.
+ * The callback is owned by the embedder and must remain valid while patches may
+ * be installed.
+ */
+DART_EXPORT void Dart_SetAotPatchKeyCallback(Dart_AotPatchKeyCallback callback);
+
+/**
+ * Validates an encrypted compact AOT patch artifact before embedder install.
+ *
+ * The VM validates open artifact metadata and requests key material for the
+ * artifact key id, then decrypts the AES-256-GCM compact payload into an owned
+ * buffer. A success result means the artifact is accepted for embedder
+ * installation. The caller owns `patch_payload_buffer` and must release it with
+ * Dart_FreeAotPatchPayload. iOS-safe AOT patch loading maps patched isolate
+ * snapshot data/instructions before isolate startup; this API does not mutate
+ * live executable code.
+ */
+DART_EXPORT DART_API_WARN_UNUSED_RESULT Dart_Handle
+Dart_InstallAotPatch(const uint8_t* patch_buffer,
+                     intptr_t patch_buffer_length,
+                     const Dart_AotPatchInstallOptions* options,
+                     uint8_t** patch_payload_buffer,
+                     intptr_t* patch_payload_length);
+
+/**
+ * Frees the buffer returned by Dart_InstallAotPatch.
+ */
+DART_EXPORT void Dart_FreeAotPatchPayload(uint8_t* patch_payload_buffer);
+
+/**
  *  Returns whether the VM only supports running from precompiled snapshots and
  *  not from any other kind of snapshot or from source (that is, the VM was
  *  compiled with DART_PRECOMPILED_RUNTIME).

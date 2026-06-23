@@ -297,7 +297,8 @@ TEST_CASE(DartAPI_IsolateOwnership) {
     EXPECT_EQ(false, Dart_GetCurrentThreadOwnsIsolate(ILLEGAL_PORT));
 
     Dart_ShutdownIsolate();
-  }).join();
+  })
+      .join();
 
   EXPECT_EQ(true, Dart_GetCurrentThreadOwnsIsolate(port));
   EXPECT_EQ(false, Dart_GetCurrentThreadOwnsIsolate(other_port));
@@ -352,7 +353,8 @@ TEST_CASE_WITH_EXPECTATION(
     // Causes an assertion failure, because the isolate is already owned by
     // another thread.
     Dart_EnterIsolate(isolate);
-  }).join();
+  })
+      .join();
 
   Dart_EnterIsolate(isolate);
 }
@@ -10911,6 +10913,88 @@ TEST_CASE(Dart_SetFfiNativeResolver_DoesNotResolve) {
 
   result = Dart_Invoke(lib, NewString("main"), 0, nullptr);
   EXPECT_ERROR(result, "Couldn't resolve function: 'DoesNotResolve'");
+}
+
+#if defined(DART_ENABLE_AOT_PATCHING)
+#if defined(DART_DYNAMIC_MODULES)
+#error DART_ENABLE_AOT_PATCHING must not require DART_DYNAMIC_MODULES.
+#endif
+
+static bool TestAotPatchKeyCallback(const char* key_id,
+                                    uint8_t* key_buffer,
+                                    intptr_t key_buffer_length,
+                                    intptr_t* key_length) {
+  EXPECT_STREQ(key_id, "test-key");
+  EXPECT(key_buffer_length >= 32);
+  memset(key_buffer, 0x42, 32);
+  *key_length = 32;
+  return true;
+}
+#endif  // defined(DART_ENABLE_AOT_PATCHING)
+
+TEST_CASE(DartAPI_AotPatchingConfiguration) {
+  const char patch[] = R"json({
+  "format": "open-aot-vmcode-encrypted-v1",
+  "metadata": {
+    "app_id": "app.test",
+    "app_build_id": "1",
+    "base_flavor_id": "free",
+    "base_license_type": "free",
+    "flavor_id": "pro",
+    "license_type": "pro",
+    "sdk_hash": "sdk",
+    "base_snapshot_hash": "cae662172fd450bb0cd710a769079c05bfc5d8e35efa6576edc7d0377afdd4a2",
+    "patch_snapshot_hash": "05d9426b9dd03e5cc3404aab6c7c45ac24e0b90e840f4bd6da83c342430533dc",
+    "target_os": "windows",
+    "target_arch": "x64"
+  },
+  "payload_kind": "full-snapshot",
+  "reconstructed_size": 13,
+  "payload_sha256": "05d9426b9dd03e5cc3404aab6c7c45ac24e0b90e840f4bd6da83c342430533dc",
+  "encrypted_payload_base64": "hNOLmjSh9YbgIyRuVQ==",
+  "encryption": {
+    "algorithm": "AES-256-GCM",
+    "key_id": "test-key",
+    "nonce_base64": "AAAAAAAAAAAAAAAA",
+    "tag_base64": "W8uOg/f+g2SS3Ahxfaeuyg==",
+    "aad_sha256": "1a0c6003fec49bbc26fbaaf0a6dfcd557061b4ae5f22e4b1114afe3b1a8d9796"
+  }
+})json";
+  Dart_AotPatchInstallOptions options = {};
+  options.app_id = "app.test";
+  options.app_build_id = "1";
+  options.base_flavor_id = "free";
+  options.base_license_type = "free";
+  options.flavor_id = "pro";
+  options.license_type = "pro";
+  options.sdk_hash = "sdk";
+  options.base_snapshot_hash =
+      "cae662172fd450bb0cd710a769079c05bfc5d8e35efa6576edc7d0377afdd4a2";
+  options.patch_snapshot_hash =
+      "05d9426b9dd03e5cc3404aab6c7c45ac24e0b90e840f4bd6da83c342430533dc";
+  options.target_os = "windows";
+  options.target_arch = "x64";
+
+  uint8_t* patch_payload = nullptr;
+  intptr_t patch_payload_length = 0;
+#if defined(DART_ENABLE_AOT_PATCHING)
+  EXPECT(Dart_AotPatchingEnabled());
+  Dart_SetAotPatchKeyCallback(TestAotPatchKeyCallback);
+  Dart_Handle result = Dart_InstallAotPatch(
+      reinterpret_cast<const uint8_t*>(patch), strlen(patch), &options,
+      &patch_payload, &patch_payload_length);
+  EXPECT_VALID(result);
+  EXPECT_EQ(13, patch_payload_length);
+  EXPECT_EQ(0, memcmp("patch-payload", patch_payload, patch_payload_length));
+  Dart_FreeAotPatchPayload(patch_payload);
+  Dart_SetAotPatchKeyCallback(nullptr);
+#else
+  EXPECT(!Dart_AotPatchingEnabled());
+  Dart_Handle result = Dart_InstallAotPatch(
+      reinterpret_cast<const uint8_t*>(patch), strlen(patch), &options,
+      &patch_payload, &patch_payload_length);
+  EXPECT_ERROR(result, "Compact AOT patching is not enabled");
+#endif
 }
 
 TEST_CASE(DartAPI_UserTags) {

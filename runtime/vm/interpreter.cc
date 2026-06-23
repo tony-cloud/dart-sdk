@@ -2078,7 +2078,7 @@ SwitchDispatch:
 #undef TARGET
 #endif  // !defined(PRODUCT)
     default:
-      FATAL1("Undefined opcode: %d\n", op);
+      FATAL("Undefined opcode: %d\n", op);
   }
 #if !defined(PRODUCT)
 SwitchDispatchNoSingleStep:
@@ -2089,7 +2089,7 @@ SwitchDispatchNoSingleStep:
     KERNEL_BYTECODES_LIST(TARGET)
 #undef TARGET
     default:
-      FATAL1("Undefined opcode: %d\n", op);
+      FATAL("Undefined opcode: %d\n", op);
   }
 #endif  // !defined(PRODUCT)
 #endif  // defined(DART_HAS_COMPUTED_GOTO)

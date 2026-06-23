@@ -8,6 +8,9 @@ import("runtime_args.gni")
 
 import("//build/config/sysroot.gni")
 
+assert(!dart_enable_aot_patching || !dart_dynamic_modules,
+       "dart_enable_aot_patching must be built without dart_dynamic_modules.")
+
 config("dart_public_config") {
   include_dirs = [
     ".",
@@ -231,6 +234,10 @@ config("dart_config") {
     defines += [ "DART_DYNAMIC_MODULES" ]
   }
 
+  if (dart_enable_aot_patching) {
+    defines += [ "DART_ENABLE_AOT_PATCHING" ]
+  }
+
   if (include_experimental_vm_service) {
     defines += [ "EXPERIMENTAL_VM_SERVICE" ]
   }
@@ -371,6 +378,9 @@ library_for_all_configs("libdart") {
   if (dart_support_perfetto) {
     extra_deps += [ "//third_party/perfetto:libprotozero" ]
   }
+  if (dart_enable_aot_patching) {
+    extra_deps += [ "//third_party/boringssl" ]
+  }
   if (is_fuchsia) {
     extra_deps += [
       "$fuchsia_sdk/pkg/fdio",
@@ -385,6 +395,9 @@ library_for_all_configs("libdart") {
   compiler_lib = "vm:libdart_compiler"
   extra_configs = [ ":dart_shared_lib" ]
   include_dirs = [ "." ]
+  if (dart_enable_aot_patching) {
+    include_dirs += [ "//third_party/boringssl/src/include" ]
+  }
   public_configs = [ ":dart_public_config" ]
   sources = [
     "$target_gen_dir/version.cc",

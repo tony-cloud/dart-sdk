@@ -9,6 +9,11 @@
 #include <memory>
 #include <utility>
 
+#if defined(DART_ENABLE_AOT_PATCHING)
+#include <openssl/aead.h>
+#include <openssl/sha.h>
+#endif
+
 #include "lib/stacktrace.h"
 #include "platform/address_sanitizer.h"
 #include "platform/assert.h"
@@ -16,6 +21,7 @@
 #include "platform/thread_sanitizer.h"
 #include "platform/unicode.h"
 #include "vm/app_snapshot.h"
+#include "vm/base64.h"
 #include "vm/bytecode_reader.h"
 #include "vm/class_finalizer.h"
 #include "vm/compiler/jit/compiler.h"
@@ -6721,9 +6727,10 @@ static void CreateAppAOTSnapshotHelper(
   };
 
   Dwarf* const dwarf =
-      (format == Dart_AotBinaryFormat_Assembly || strip) ? nullptr
-      : generate_debug ? debug_dwarf
-                       : new (Z) Dwarf(Z, deobfuscation_trie, identifier);
+      (format == Dart_AotBinaryFormat_Assembly || strip)
+          ? nullptr
+          : generate_debug ? debug_dwarf
+                           : new (Z) Dwarf(Z, deobfuscation_trie, identifier);
   SharedObjectWriter* so = nullptr;
   if (format == Dart_AotBinaryFormat_Elf) {
     so = new (Z)
@@ -7122,6 +7129,126 @@ Dart_CreateAppJITSnapshotAsBlobs(uint8_t** isolate_snapshot_data_buffer,
 #endif
 }
 
+#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+static bool IsObfuscationNameChar(char c) {
+  return (('a' <= c) && (c <= 'z')) || (('A' <= c) && (c <= 'Z'));
+}
+
+static intptr_t ObfuscationNameCharRank(char c) {
+  if (('a' <= c) && (c <= 'z')) {
+    return c - 'a';
+  }
+  ASSERT(('A' <= c) && (c <= 'Z'));
+  return 26 + (c - 'A');
+}
+
+static bool IsObfuscationNameGreater(const char* left, const char* right) {
+  const intptr_t left_length = strlen(left);
+  const intptr_t right_length = strlen(right);
+  if (left_length != right_length) {
+    return left_length > right_length;
+  }
+  for (intptr_t i = left_length - 1; i >= 0; i--) {
+    const intptr_t left_rank = ObfuscationNameCharRank(left[i]);
+    const intptr_t right_rank = ObfuscationNameCharRank(right[i]);
+    if (left_rank != right_rank) {
+      return left_rank > right_rank;
+    }
+  }
+  return false;
+}
+
+static bool ExtractObfuscationRenameStem(const char* rename,
+                                         char* stem,
+                                         intptr_t stem_length) {
+  ASSERT(stem_length > 0);
+  const char* cursor = rename;
+  if (strncmp(cursor, "get:", 4) == 0 || strncmp(cursor, "set:", 4) == 0) {
+    cursor += 4;
+  }
+  if (*cursor == '_') {
+    cursor++;
+  }
+  intptr_t written = 0;
+  while (*cursor != '\0' && *cursor != '@') {
+    if (!IsObfuscationNameChar(*cursor)) {
+      return false;
+    }
+    if (written >= stem_length - 1) {
+      return false;
+    }
+    stem[written++] = *cursor++;
+  }
+  if (written == 0) {
+    return false;
+  }
+  stem[written] = '\0';
+  return true;
+}
+#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+
+DART_EXPORT Dart_Handle Dart_SetObfuscationMap(const char* const* map,
+                                               intptr_t map_length) {
+#if defined(DART_PRECOMPILED_RUNTIME)
+  return Api::NewError("No obfuscation map to load on an AOT runtime.");
+#elif !defined(DART_PRECOMPILER)
+  return Api::NewError("Obfuscation is only supported for AOT compiler.");
+#elif defined(TARGET_ARCH_IA32)
+  return Api::NewError("Obfuscation is not supported on IA32.");
+#else
+  Thread* thread = Thread::Current();
+  DARTSCOPE(thread);
+  auto isolate_group = thread->isolate_group();
+
+  if (map == nullptr) {
+    RETURN_NULL_ERROR(map);
+  }
+  if (map_length < 0 || (map_length % 2) != 0) {
+    return Api::NewError(
+        "Obfuscation map must contain an even number of strings.");
+  }
+  if (!isolate_group->obfuscate()) {
+    return Api::NewError(
+        "Obfuscation map can only be loaded when --obfuscate is enabled.");
+  }
+
+  const intptr_t map_entries = map_length / 2;
+  const intptr_t initial_capacity =
+      Utils::Maximum(map_entries, static_cast<intptr_t>(16));
+  ObfuscationMap renames(
+      HashTables::New<ObfuscationMap>(initial_capacity, Heap::kOld));
+  String& key = String::Handle(Z);
+  String& value = String::Handle(Z);
+  char last_name[100];
+  last_name[0] = '\0';
+
+  for (intptr_t i = 0; i < map_length; i += 2) {
+    if (map[i] == nullptr || map[i + 1] == nullptr) {
+      renames.Release();
+      return Api::NewError("Obfuscation map contains a null string.");
+    }
+    key = Symbols::New(thread, map[i]);
+    value = Symbols::New(thread, map[i + 1]);
+    renames.UpdateOrInsert(key, value);
+
+    if (strcmp(map[i], map[i + 1]) != 0) {
+      char stem[100];
+      if (ExtractObfuscationRenameStem(map[i + 1], stem, sizeof(stem)) &&
+          (last_name[0] == '\0' || IsObfuscationNameGreater(stem, last_name))) {
+        strncpy(last_name, stem, sizeof(last_name));
+        last_name[sizeof(last_name) - 1] = '\0';
+      }
+    }
+  }
+
+  Array& state = Array::Handle(Z, Array::New(2, Heap::kOld));
+  state.SetAt(0, String::Handle(Z, String::New(last_name, Heap::kOld)));
+  state.SetAt(1, renames.Release());
+  isolate_group->object_store()->set_obfuscation_map(state);
+  return Api::Success();
+#endif
+}
+
 DART_EXPORT Dart_Handle Dart_GetObfuscationMap(uint8_t** buffer,
                                                intptr_t* buffer_length) {
 #if defined(DART_PRECOMPILED_RUNTIME)
@@ -7161,6 +7288,489 @@ DART_EXPORT Dart_Handle Dart_GetObfuscationMap(uint8_t** buffer,
   *reinterpret_cast<char**>(buffer) = text_buffer.buffer();
   return Api::Success();
 #endif
+}
+
+Dart_AotPatchKeyCallback g_aot_patch_key_callback = nullptr;
+
+#if defined(DART_ENABLE_AOT_PATCHING) && defined(DART_DYNAMIC_MODULES)
+#error DART_ENABLE_AOT_PATCHING must be built without DART_DYNAMIC_MODULES.
+#endif
+
+#if defined(DART_ENABLE_AOT_PATCHING)
+struct AotPatchJsonString {
+  const char* chars;
+  intptr_t length;
+};
+
+static bool IsAotPatchJsonWhitespace(char c) {
+  return c == ' ' || c == '\n' || c == '\r' || c == '\t';
+}
+
+static void SkipAotPatchJsonWhitespace(const char* json,
+                                       intptr_t json_length,
+                                       intptr_t* cursor) {
+  while (*cursor < json_length && IsAotPatchJsonWhitespace(json[*cursor])) {
+    (*cursor)++;
+  }
+}
+
+static bool ParseAotPatchJsonString(const char* json,
+                                    intptr_t json_length,
+                                    intptr_t* cursor,
+                                    AotPatchJsonString* out) {
+  if (*cursor >= json_length || json[*cursor] != '"') {
+    return false;
+  }
+  (*cursor)++;
+  const intptr_t start = *cursor;
+  while (*cursor < json_length) {
+    const char c = json[*cursor];
+    if (c == '\\') {
+      // Open patch artifacts use stable ASCII metadata. Reject escaped fields
+      // in the VM validator instead of accepting ambiguous raw comparisons.
+      return false;
+    }
+    if (c == '"') {
+      out->chars = json + start;
+      out->length = *cursor - start;
+      (*cursor)++;
+      return true;
+    }
+    if (static_cast<unsigned char>(c) < 0x20) {
+      return false;
+    }
+    (*cursor)++;
+  }
+  return false;
+}
+
+static bool AotPatchJsonStringEquals(const AotPatchJsonString& value,
+                                     const char* expected) {
+  const intptr_t expected_length = strlen(expected);
+  return value.length == expected_length &&
+         strncmp(value.chars, expected, value.length) == 0;
+}
+
+static bool FindAotPatchJsonString(const char* json,
+                                   intptr_t json_length,
+                                   const char* key,
+                                   AotPatchJsonString* out) {
+  intptr_t cursor = 0;
+  while (cursor < json_length) {
+    if (json[cursor] != '"') {
+      cursor++;
+      continue;
+    }
+
+    AotPatchJsonString current_key;
+    if (!ParseAotPatchJsonString(json, json_length, &cursor, &current_key)) {
+      return false;
+    }
+    SkipAotPatchJsonWhitespace(json, json_length, &cursor);
+    if (cursor >= json_length || json[cursor] != ':') {
+      continue;
+    }
+    cursor++;
+    SkipAotPatchJsonWhitespace(json, json_length, &cursor);
+
+    if (!AotPatchJsonStringEquals(current_key, key)) {
+      continue;
+    }
+    return ParseAotPatchJsonString(json, json_length, &cursor, out);
+  }
+  return false;
+}
+
+static Dart_Handle ValidateAotPatchJsonField(const char* json,
+                                             intptr_t json_length,
+                                             const char* field,
+                                             const char* expected) {
+  AotPatchJsonString actual;
+  if (!FindAotPatchJsonString(json, json_length, field, &actual)) {
+    return Api::NewError("AOT patch artifact is missing field \"%s\".", field);
+  }
+  if (!AotPatchJsonStringEquals(actual, expected)) {
+    return Api::NewError("AOT patch artifact field \"%s\" does not match.",
+                         field);
+  }
+  return Api::Success();
+}
+
+static char* CopyAotPatchJsonString(Thread* thread,
+                                    const AotPatchJsonString& value) {
+  char* copy = thread->zone()->Alloc<char>(value.length + 1);
+  memmove(copy, value.chars, value.length);
+  copy[value.length] = '\0';
+  return copy;
+}
+
+struct AotPatchOwnedBuffer {
+  uint8_t* data = nullptr;
+  intptr_t length = 0;
+
+  ~AotPatchOwnedBuffer() { free(data); }
+
+  uint8_t* Release() {
+    uint8_t* result = data;
+    data = nullptr;
+    length = 0;
+    return result;
+  }
+};
+
+static Dart_Handle DecodeAotPatchBase64(Thread* thread,
+                                        const AotPatchJsonString& value,
+                                        const char* field,
+                                        AotPatchOwnedBuffer* out) {
+  if (value.length == 0) {
+    out->data = reinterpret_cast<uint8_t*>(malloc(1));
+    out->length = 0;
+    if (out->data == nullptr) {
+      return Api::NewError("Unable to allocate AOT patch field \"%s\".", field);
+    }
+    return Api::Success();
+  }
+
+  intptr_t decoded_length = 0;
+  uint8_t* decoded =
+      DecodeBase64(CopyAotPatchJsonString(thread, value), &decoded_length);
+  if (decoded == nullptr) {
+    return Api::NewError("AOT patch field \"%s\" is not valid base64.", field);
+  }
+  out->data = decoded;
+  out->length = decoded_length;
+  return Api::Success();
+}
+
+static intptr_t AotPatchHexDigit(char c) {
+  if ('0' <= c && c <= '9') return c - '0';
+  if ('a' <= c && c <= 'f') return 10 + (c - 'a');
+  if ('A' <= c && c <= 'F') return 10 + (c - 'A');
+  return -1;
+}
+
+static bool AotPatchDigestEqualsHex(const uint8_t* digest,
+                                    intptr_t digest_length,
+                                    const AotPatchJsonString& expected) {
+  if (expected.length != digest_length * 2) {
+    return false;
+  }
+  for (intptr_t i = 0; i < digest_length; i++) {
+    const intptr_t high = AotPatchHexDigit(expected.chars[i * 2]);
+    const intptr_t low = AotPatchHexDigit(expected.chars[(i * 2) + 1]);
+    if (high < 0 || low < 0) {
+      return false;
+    }
+    if (digest[i] != static_cast<uint8_t>((high << 4) | low)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static void AppendAotPatchJsonString(ZoneTextBuffer* buffer,
+                                     const AotPatchJsonString& value) {
+  buffer->AddChar('"');
+  buffer->AddEscapedUTF8(value.chars, value.length);
+  buffer->AddChar('"');
+}
+
+static Dart_Handle AppendAotPatchMetadataField(ZoneTextBuffer* buffer,
+                                               const char* json,
+                                               intptr_t json_length,
+                                               const char* field,
+                                               bool required,
+                                               bool* first) {
+  AotPatchJsonString value;
+  if (!FindAotPatchJsonString(json, json_length, field, &value)) {
+    if (required) {
+      return Api::NewError("AOT patch artifact is missing field \"%s\".",
+                           field);
+    }
+    return Api::Success();
+  }
+  if (!*first) {
+    buffer->AddChar(',');
+  }
+  *first = false;
+  buffer->Printf("\"%s\":", field);
+  AppendAotPatchJsonString(buffer, value);
+  return Api::Success();
+}
+
+static Dart_Handle BuildAotPatchMetadataAad(const char* json,
+                                            intptr_t json_length,
+                                            ZoneTextBuffer* out) {
+  bool first = true;
+  out->AddChar('{');
+#define APPEND_FIELD(name, required)                                           \
+  do {                                                                         \
+    Dart_Handle append_result = AppendAotPatchMetadataField(                   \
+        out, json, json_length, name, required, &first);                       \
+    if (Api::IsError(append_result)) return append_result;                     \
+  } while (0)
+
+  APPEND_FIELD("app_build_id", true);
+  APPEND_FIELD("app_id", true);
+  APPEND_FIELD("base_flavor_id", false);
+  APPEND_FIELD("base_license_type", false);
+  APPEND_FIELD("base_snapshot_hash", true);
+  APPEND_FIELD("flavor_id", true);
+  APPEND_FIELD("license_type", true);
+  APPEND_FIELD("obfuscation_map_hash", false);
+  APPEND_FIELD("patch_snapshot_hash", true);
+  APPEND_FIELD("sdk_hash", true);
+  APPEND_FIELD("target_arch", true);
+  APPEND_FIELD("target_os", true);
+#undef APPEND_FIELD
+  out->AddChar('}');
+  return Api::Success();
+}
+#endif  // defined(DART_ENABLE_AOT_PATCHING)
+
+DART_EXPORT bool Dart_AotPatchingEnabled() {
+#if defined(DART_ENABLE_AOT_PATCHING)
+  return true;
+#else
+  return false;
+#endif
+}
+
+DART_EXPORT void Dart_SetAotPatchKeyCallback(
+    Dart_AotPatchKeyCallback callback) {
+  g_aot_patch_key_callback = callback;
+}
+
+DART_EXPORT Dart_Handle
+Dart_InstallAotPatch(const uint8_t* patch_buffer,
+                     intptr_t patch_buffer_length,
+                     const Dart_AotPatchInstallOptions* options,
+                     uint8_t** patch_payload_buffer,
+                     intptr_t* patch_payload_length) {
+#if !defined(DART_ENABLE_AOT_PATCHING)
+  return Api::NewError(
+      "Compact AOT patching is not enabled in this VM. Rebuild with "
+      "dart_enable_aot_patching=true.");
+#else
+  Thread* thread = Thread::Current();
+  DARTSCOPE(thread);
+  API_TIMELINE_DURATION(thread);
+
+  if (patch_buffer == nullptr) {
+    RETURN_NULL_ERROR(patch_buffer);
+  }
+  if (patch_buffer_length <= 0) {
+    return Api::NewError("Patch buffer must not be empty.");
+  }
+  if (options == nullptr) {
+    RETURN_NULL_ERROR(options);
+  }
+  if (patch_payload_buffer == nullptr) {
+    RETURN_NULL_ERROR(patch_payload_buffer);
+  }
+  if (patch_payload_length == nullptr) {
+    RETURN_NULL_ERROR(patch_payload_length);
+  }
+  *patch_payload_buffer = nullptr;
+  *patch_payload_length = 0;
+  if (options->app_id == nullptr || options->app_build_id == nullptr ||
+      options->flavor_id == nullptr || options->license_type == nullptr ||
+      options->sdk_hash == nullptr || options->base_snapshot_hash == nullptr ||
+      options->patch_snapshot_hash == nullptr ||
+      options->target_os == nullptr || options->target_arch == nullptr) {
+    return Api::NewError("AOT patch install options are incomplete.");
+  }
+  if (g_aot_patch_key_callback == nullptr) {
+    return Api::NewError("No AOT patch AES key callback has been configured.");
+  }
+
+  const char* json = reinterpret_cast<const char*>(patch_buffer);
+  Dart_Handle result = ValidateAotPatchJsonField(
+      json, patch_buffer_length, "format", "open-aot-vmcode-encrypted-v1");
+  if (Api::IsError(result)) return result;
+
+  result = ValidateAotPatchJsonField(json, patch_buffer_length, "app_id",
+                                     options->app_id);
+  if (Api::IsError(result)) return result;
+  result = ValidateAotPatchJsonField(json, patch_buffer_length, "app_build_id",
+                                     options->app_build_id);
+  if (Api::IsError(result)) return result;
+  if (options->base_flavor_id != nullptr) {
+    result = ValidateAotPatchJsonField(
+        json, patch_buffer_length, "base_flavor_id", options->base_flavor_id);
+    if (Api::IsError(result)) return result;
+  }
+  if (options->base_license_type != nullptr) {
+    result = ValidateAotPatchJsonField(json, patch_buffer_length,
+                                       "base_license_type",
+                                       options->base_license_type);
+    if (Api::IsError(result)) return result;
+  }
+  result = ValidateAotPatchJsonField(json, patch_buffer_length, "flavor_id",
+                                     options->flavor_id);
+  if (Api::IsError(result)) return result;
+  result = ValidateAotPatchJsonField(json, patch_buffer_length, "license_type",
+                                     options->license_type);
+  if (Api::IsError(result)) return result;
+  result = ValidateAotPatchJsonField(json, patch_buffer_length, "sdk_hash",
+                                     options->sdk_hash);
+  if (Api::IsError(result)) return result;
+  result =
+      ValidateAotPatchJsonField(json, patch_buffer_length, "base_snapshot_hash",
+                                options->base_snapshot_hash);
+  if (Api::IsError(result)) return result;
+  result = ValidateAotPatchJsonField(json, patch_buffer_length,
+                                     "patch_snapshot_hash",
+                                     options->patch_snapshot_hash);
+  if (Api::IsError(result)) return result;
+  result = ValidateAotPatchJsonField(json, patch_buffer_length, "target_os",
+                                     options->target_os);
+  if (Api::IsError(result)) return result;
+  result = ValidateAotPatchJsonField(json, patch_buffer_length, "target_arch",
+                                     options->target_arch);
+  if (Api::IsError(result)) return result;
+  if (options->obfuscation_map_hash != nullptr) {
+    result = ValidateAotPatchJsonField(json, patch_buffer_length,
+                                       "obfuscation_map_hash",
+                                       options->obfuscation_map_hash);
+    if (Api::IsError(result)) return result;
+  }
+
+  AotPatchJsonString key_id;
+  if (!FindAotPatchJsonString(json, patch_buffer_length, "key_id", &key_id)) {
+    return Api::NewError("AOT patch artifact is missing encryption key_id.");
+  }
+  if (key_id.length == 0) {
+    return Api::NewError("AOT patch artifact encryption key_id is empty.");
+  }
+  result = ValidateAotPatchJsonField(json, patch_buffer_length, "algorithm",
+                                     "AES-256-GCM");
+  if (Api::IsError(result)) return result;
+  AotPatchJsonString encrypted_payload;
+  if (!FindAotPatchJsonString(json, patch_buffer_length,
+                              "encrypted_payload_base64", &encrypted_payload)) {
+    return Api::NewError(
+        "AOT patch artifact is missing encrypted_payload_base64.");
+  }
+  AotPatchJsonString nonce;
+  if (!FindAotPatchJsonString(json, patch_buffer_length, "nonce_base64",
+                              &nonce)) {
+    return Api::NewError("AOT patch artifact is missing nonce_base64.");
+  }
+  AotPatchJsonString tag;
+  if (!FindAotPatchJsonString(json, patch_buffer_length, "tag_base64", &tag)) {
+    return Api::NewError("AOT patch artifact is missing tag_base64.");
+  }
+  AotPatchJsonString aad_sha256;
+  if (!FindAotPatchJsonString(json, patch_buffer_length, "aad_sha256",
+                              &aad_sha256)) {
+    return Api::NewError("AOT patch artifact is missing aad_sha256.");
+  }
+  AotPatchJsonString payload_sha256;
+  if (!FindAotPatchJsonString(json, patch_buffer_length, "payload_sha256",
+                              &payload_sha256)) {
+    return Api::NewError("AOT patch artifact is missing payload_sha256.");
+  }
+
+  AotPatchOwnedBuffer encrypted_payload_buffer;
+  result = DecodeAotPatchBase64(thread, encrypted_payload,
+                                "encrypted_payload_base64",
+                                &encrypted_payload_buffer);
+  if (Api::IsError(result)) return result;
+  AotPatchOwnedBuffer nonce_buffer;
+  result = DecodeAotPatchBase64(thread, nonce, "nonce_base64", &nonce_buffer);
+  if (Api::IsError(result)) return result;
+  if (nonce_buffer.length != 12) {
+    return Api::NewError("AOT patch AES-GCM nonce must be 12 bytes.");
+  }
+  AotPatchOwnedBuffer tag_buffer;
+  result = DecodeAotPatchBase64(thread, tag, "tag_base64", &tag_buffer);
+  if (Api::IsError(result)) return result;
+  if (tag_buffer.length != 16) {
+    return Api::NewError("AOT patch AES-GCM tag must be 16 bytes.");
+  }
+
+  ZoneTextBuffer aad(thread->zone(), 512);
+  result = BuildAotPatchMetadataAad(json, patch_buffer_length, &aad);
+  if (Api::IsError(result)) return result;
+  uint8_t aad_digest[SHA256_DIGEST_LENGTH];
+  SHA256(reinterpret_cast<const uint8_t*>(aad.buffer()), aad.length(),
+         aad_digest);
+  if (!AotPatchDigestEqualsHex(aad_digest, SHA256_DIGEST_LENGTH, aad_sha256)) {
+    return Api::NewError("AOT patch artifact metadata AAD hash mismatch.");
+  }
+
+  uint8_t key_buffer[32];
+  intptr_t key_length = 0;
+  const bool key_ok =
+      g_aot_patch_key_callback(CopyAotPatchJsonString(thread, key_id),
+                               key_buffer, sizeof(key_buffer), &key_length);
+  if (!key_ok || key_length != 32) {
+    memset(key_buffer, 0, sizeof(key_buffer));
+    return Api::NewError(
+        "AOT patch AES key callback failed to provide a 32-byte key.");
+  }
+
+  AotPatchOwnedBuffer sealed_payload;
+  sealed_payload.length = encrypted_payload_buffer.length + tag_buffer.length;
+  sealed_payload.data = reinterpret_cast<uint8_t*>(
+      malloc(Utils::Maximum<intptr_t>(sealed_payload.length, 1)));
+  if (sealed_payload.data == nullptr) {
+    return Api::NewError("Unable to allocate AOT patch sealed payload.");
+  }
+  memmove(sealed_payload.data, encrypted_payload_buffer.data,
+          encrypted_payload_buffer.length);
+  memmove(sealed_payload.data + encrypted_payload_buffer.length,
+          tag_buffer.data, tag_buffer.length);
+
+  AotPatchOwnedBuffer decrypted_payload_buffer;
+  decrypted_payload_buffer.length = sealed_payload.length;
+  decrypted_payload_buffer.data = reinterpret_cast<uint8_t*>(
+      malloc(Utils::Maximum<intptr_t>(decrypted_payload_buffer.length, 1)));
+  if (decrypted_payload_buffer.data == nullptr) {
+    return Api::NewError("Unable to allocate AOT patch payload.");
+  }
+
+  EVP_AEAD_CTX ctx;
+  memset(&ctx, 0, sizeof(ctx));
+  if (EVP_AEAD_CTX_init(&ctx, EVP_aead_aes_256_gcm(), key_buffer,
+                        sizeof(key_buffer), tag_buffer.length, nullptr) != 1) {
+    memset(key_buffer, 0, sizeof(key_buffer));
+    return Api::NewError("Failed to initialize AOT patch AES-GCM context.");
+  }
+  size_t decrypted_length = 0;
+  const int decrypt_ok = EVP_AEAD_CTX_open(
+      &ctx, decrypted_payload_buffer.data, &decrypted_length,
+      decrypted_payload_buffer.length, nonce_buffer.data, nonce_buffer.length,
+      sealed_payload.data, sealed_payload.length,
+      reinterpret_cast<const uint8_t*>(aad.buffer()), aad.length());
+  EVP_AEAD_CTX_cleanup(&ctx);
+  memset(key_buffer, 0, sizeof(key_buffer));
+  if (decrypt_ok != 1) {
+    return Api::NewError("AOT patch AES-GCM decryption failed.");
+  }
+  decrypted_payload_buffer.length = decrypted_length;
+
+  uint8_t payload_digest[SHA256_DIGEST_LENGTH];
+  SHA256(decrypted_payload_buffer.data, decrypted_payload_buffer.length,
+         payload_digest);
+  if (!AotPatchDigestEqualsHex(payload_digest, SHA256_DIGEST_LENGTH,
+                               payload_sha256)) {
+    return Api::NewError("AOT patch decrypted payload hash mismatch.");
+  }
+
+  // This VM API validates the open artifact envelope and key contract. The
+  // iOS-safe AOT patch model maps patched isolate data/instructions before
+  // isolate startup, so embedders should install the decrypted artifact through
+  // their snapshot mapping path rather than mutating executable code here.
+  *patch_payload_buffer = decrypted_payload_buffer.Release();
+  *patch_payload_length = static_cast<intptr_t>(decrypted_length);
+  return Api::Success();
+#endif
+}
+
+DART_EXPORT void Dart_FreeAotPatchPayload(uint8_t* patch_payload_buffer) {
+  free(patch_payload_buffer);
 }
 
 DART_EXPORT bool Dart_IsPrecompiledRuntime() {

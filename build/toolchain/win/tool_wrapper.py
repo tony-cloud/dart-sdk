@@ -17,6 +17,11 @@ import sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(errors='replace')
+
 # A regex matching an argument corresponding to the output filename passed to
 # link.exe.
 _LINK_EXE_OUT_ARG = re.compile('/OUT:(?P<out>.+)$', re.IGNORECASE)
@@ -142,7 +147,8 @@ class WinTool(object):
                                 env=env,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT,
-                                universal_newlines=True)
+                                universal_newlines=True,
+                                errors='replace')
         # Read output one line at a time as it shows up to avoid OOM failures when
         # GBs of output is produced.
         for line in link.stdout:
