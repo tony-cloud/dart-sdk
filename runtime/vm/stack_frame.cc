@@ -176,7 +176,7 @@ const char* StackFrame::ToCString() const {
   const char* name = nullptr;
   uword start = 0;
   if (is_interpreted()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     if (IsEntryFrame()) {
       name = "[Interpreter] Entry frame";
     } else if (IsExitFrame()) {
@@ -192,7 +192,7 @@ const char* StackFrame::ToCString() const {
     }
 #else
     UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
   } else if (IsEntryFrame()) {
     name = "[Stub] Entry frame";
   } else if (IsExitFrame()) {
@@ -606,7 +606,7 @@ void StackFrameIterator::SetupLastExitFrameData() {
   frames_.fp_ = exit_marker;
   frames_.sp_ = 0;
   frames_.pc_ = 0;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   frames_.CheckIfInterpreted(exit_marker);
 #endif
   frames_.Unpoison();
@@ -622,7 +622,7 @@ void StackFrameIterator::SetupNextExitFrameData() {
   frames_.fp_ = exit_marker;
   frames_.sp_ = 0;
   frames_.pc_ = 0;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   frames_.CheckIfInterpreted(exit_marker);
 #endif
   frames_.Unpoison();
@@ -657,7 +657,7 @@ StackFrameIterator::StackFrameIterator(uword last_fp,
   frames_.fp_ = last_fp;
   frames_.sp_ = 0;
   frames_.pc_ = 0;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   frames_.CheckIfInterpreted(last_fp);
 #endif
   frames_.Unpoison();
@@ -680,7 +680,7 @@ StackFrameIterator::StackFrameIterator(uword fp,
   frames_.fp_ = fp;
   frames_.sp_ = sp;
   frames_.pc_ = pc;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   frames_.CheckIfInterpreted(fp);
 #endif
   frames_.Unpoison();
@@ -753,14 +753,14 @@ StackFrame* StackFrameIterator::NextFrame() {
   return current_frame_;
 }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 void StackFrameIterator::FrameSetIterator::CheckIfInterpreted(
     uword exit_marker) {
   Interpreter* interpreter = thread_->interpreter();
   is_interpreted_ =
       (interpreter != nullptr) && interpreter->HasFrame(exit_marker);
 }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
 // Tell MemorySanitizer that generated code initializes part of the stack.
 void StackFrameIterator::FrameSetIterator::Unpoison() {
@@ -794,7 +794,7 @@ StackFrame* StackFrameIterator::FrameSetIterator::NextFrame(bool validate) {
   frame->sp_ = sp_;
   frame->fp_ = fp_;
   frame->pc_ = pc_;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   frame->is_interpreted_ = is_interpreted();
 #endif
   sp_ = frame->GetCallerSp();
@@ -810,7 +810,7 @@ ExitFrame* StackFrameIterator::NextExitFrame() {
   exit_.sp_ = frames_.sp_;
   exit_.fp_ = frames_.fp_;
   exit_.pc_ = frames_.pc_;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   exit_.is_interpreted_ = frames_.is_interpreted();
 #endif
   frames_.sp_ = exit_.GetCallerSp();
@@ -827,7 +827,7 @@ EntryFrame* StackFrameIterator::NextEntryFrame() {
   entry_.sp_ = frames_.sp_;
   entry_.fp_ = frames_.fp_;
   entry_.pc_ = frames_.pc_;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   entry_.is_interpreted_ = frames_.is_interpreted();
 #endif
   SetupNextExitFrameData();  // Setup data for next exit frame in chain.

@@ -2595,6 +2595,11 @@ class CodeSerializationCluster : public SerializationCluster {
 #if defined(DART_PRECOMPILER)
       auto const calls_array = code->untag()->static_calls_target_table_;
       if (calls_array != Array::null()) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+        // Keep the full table in Shorebird interpreter snapshots. Runtime
+        // static-call resolution needs Function targets, not just Code reachability.
+        s->Push(calls_array);
+#else
         // Some Code entries in the static calls target table may only be
         // accessible via here, so push the Code objects.
         array_ = calls_array;
@@ -2616,6 +2621,7 @@ class CodeSerializationCluster : public SerializationCluster {
               s->Push(destination);
           }
         }
+#endif  // defined(DART_SHOREBIRD_INTERPRETER)
       }
 #else
       UNREACHABLE();
@@ -2922,6 +2928,10 @@ class CodeSerializationCluster : public SerializationCluster {
     if (kind == Snapshot::kFullJIT) {
       WriteField(code, deopt_info_array_);
       WriteField(code, static_calls_target_table_);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    } else if (kind == Snapshot::kFullAOT) {
+      WriteField(code, static_calls_target_table_);
+#endif
     }
 
 #if !defined(PRODUCT)
@@ -3048,6 +3058,10 @@ class CodeDeserializationCluster : public DeserializationCluster {
       code->untag()->deopt_info_array_ = static_cast<ArrayPtr>(d->ReadRef());
       code->untag()->static_calls_target_table_ =
           static_cast<ArrayPtr>(d->ReadRef());
+#elif defined(DART_SHOREBIRD_INTERPRETER)
+      ASSERT(d->kind() == Snapshot::kFullAOT);
+      code->untag()->static_calls_target_table_ =
+          static_cast<ArrayPtr>(d->ReadRef());
 #endif  // !DART_PRECOMPILED_RUNTIME
 
 #if !defined(PRODUCT)
@@ -3099,7 +3113,7 @@ class CodeDeserializationCluster : public DeserializationCluster {
   intptr_t deferred_stop_index_;
 };
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 #if !defined(DART_PRECOMPILED_RUNTIME)
 class BytecodeSerializationCluster : public SerializationCluster {
  public:
@@ -3172,7 +3186,7 @@ class BytecodeDeserializationCluster : public DeserializationCluster {
     }
   }
 };
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
 class ObjectPoolSerializationCluster : public SerializationCluster {
@@ -8220,7 +8234,7 @@ SerializationCluster* Serializer::NewClusterForClass(intptr_t cid,
       return new (Z) KernelProgramInfoSerializationCluster();
     case kCodeCid:
       return new (Z) CodeSerializationCluster(heap_);
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     case kBytecodeCid:
       return new (Z) BytecodeSerializationCluster();
 #endif
@@ -9461,7 +9475,7 @@ DeserializationCluster* Deserializer::ReadCluster() {
       ASSERT(!is_canonical);
       ASSERT(!is_deeply_immutable);
       return new (Z) CodeDeserializationCluster();
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     case kBytecodeCid:
       ASSERT(!is_canonical);
       ASSERT(!is_deeply_immutable);

@@ -443,7 +443,7 @@ void SourceReport::PrintPossibleBreakpointsData(JSONObject* jsobj,
   BitVector possible(zone(), func_length);
 
   if (func.HasBytecode()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     const auto& bytecode = Bytecode::Handle(zone(), func.GetBytecode());
     // Currently, every source position is a possible breakpoint.
     bytecode::BytecodeSourcePositionsIterator iter(zone(), bytecode);

@@ -5,7 +5,7 @@
 #include "vm/bytecode_reader.h"
 
 #include "vm/globals.h"
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 
 #include "vm/bit_vector.h"
 #include "vm/bootstrap.h"
@@ -23,6 +23,7 @@
 #include "vm/hash_table.h"
 #include "vm/longjump.h"
 #include "vm/object.h"
+#include "vm/os.h"
 #include "vm/object_store.h"
 #include "vm/resolver.h"
 #include "vm/reusable_handles.h"
@@ -117,6 +118,22 @@ FunctionPtr BytecodeLoader::LoadBytecode(bool load_code) {
   AlternativeReadingScope alt2(&bytecode_reader.reader(),
                                bytecode_component.GetMainOffset());
   return Function::RawCast(bytecode_reader.ReadObject());
+}
+
+intptr_t BytecodeLoader::LoadBytecodePatch() {
+  ASSERT(IsolateGroup::Current()->program_lock()->IsCurrentThreadWriter());
+
+  if (bytecode_component_array_.IsNull()) {
+    BytecodeReaderHelper component_reader(thread_, binary_);
+    bytecode_component_array_ = component_reader.ReadBytecodeComponent();
+  }
+
+  BytecodeComponentData bytecode_component(bytecode_component_array_);
+  BytecodeReaderHelper bytecode_reader(thread_, &bytecode_component);
+  AlternativeReadingScope alt(&bytecode_reader.reader(),
+                              bytecode_component.GetLibraryIndexOffset());
+  return bytecode_reader.ReadLoadedLibraryBytecodePatch(
+      bytecode_component.GetNumLibraries());
 }
 
 void BytecodeLoader::LoadPendingCode() {
@@ -2577,6 +2594,318 @@ void BytecodeReaderHelper::ReadLibraryDeclarations(
   }
 }
 
+intptr_t BytecodeReaderHelper::ReadLoadedLibraryBytecodePatch(
+    intptr_t num_libraries) {
+  intptr_t installed_functions = 0;
+  auto& library = Library::Handle(Z);
+  auto& uri = String::Handle(Z);
+
+  for (intptr_t i = 0; i < num_libraries; ++i) {
+    uri ^= ReadObject();
+    const intptr_t library_offset =
+        bytecode_component_->GetLibrariesOffset() + reader_.ReadUInt();
+
+    library = Library::LookupLibrary(thread_, uri);
+    if (library.IsNull()) {
+      continue;
+    }
+
+    AlternativeReadingScope alt(&reader_, library_offset);
+    ReadLoadedLibraryPatchDeclaration(library, &installed_functions);
+  }
+
+  return installed_functions;
+}
+
+void BytecodeReaderHelper::ReadLoadedLibraryPatchDeclaration(
+    const Library& library,
+    intptr_t* installed_functions) {
+  reader_.ReadUInt();  // Flags.
+
+  ReadObject();  // Library name.
+  ReadObject();  // Script.
+
+  const intptr_t num_classes = reader_.ReadUInt();
+  auto& cls = Class::Handle(Z);
+  auto& name = String::Handle(Z);
+
+  for (intptr_t i = 0; i < num_classes; ++i) {
+    name ^= ReadObject();
+    const intptr_t class_offset =
+        bytecode_component_->GetClassesOffset() + reader_.ReadUInt();
+
+    if (i == 0) {
+      cls = library.toplevel_class();
+    } else {
+      cls = library.LookupClass(name);
+    }
+    if (cls.IsNull()) {
+      continue;
+    }
+
+    AlternativeReadingScope alt(&reader_, class_offset);
+    ReadLoadedClassPatchDeclaration(cls, installed_functions);
+  }
+}
+
+void BytecodeReaderHelper::ReadLoadedClassPatchDeclaration(
+    const Class& cls,
+    intptr_t* installed_functions) {
+  const int kHasTypeParamsFlag = 1 << 2;
+  const int kHasTypeArgumentsFlag = 1 << 3;
+  const int kHasSourcePositionsFlag = 1 << 5;
+  const int kHasAnnotationsFlag = 1 << 6;
+
+  const intptr_t flags = reader_.ReadUInt();
+
+  ReadObject();  // Script.
+
+  if ((flags & kHasSourcePositionsFlag) != 0) {
+    reader_.ReadPosition();
+    reader_.ReadPosition();
+  }
+
+  if ((flags & kHasTypeArgumentsFlag) != 0) {
+    reader_.ReadUInt();
+  }
+
+  if ((flags & kHasTypeParamsFlag) != 0) {
+    SkipTypeParametersDeclaration();
+  }
+
+  ReadObject();  // Super type.
+
+  const intptr_t num_interfaces = reader_.ReadUInt();
+  for (intptr_t i = 0; i < num_interfaces; ++i) {
+    ReadObject();
+  }
+
+  if ((flags & kHasAnnotationsFlag) != 0) {
+    SkipAnnotations();
+  }
+
+  const intptr_t members_offset =
+      bytecode_component_->GetMembersOffset() + reader_.ReadUInt();
+  AlternativeReadingScope alt(&reader_, members_offset);
+  ReadLoadedMembersPatch(cls, installed_functions);
+}
+
+void BytecodeReaderHelper::ReadLoadedMembersPatch(
+    const Class& cls,
+    intptr_t* installed_functions) {
+  reader_.ReadUInt();  // Total function count, including field accessors.
+  ReadLoadedFieldPatchDeclarations(cls, installed_functions);
+  ReadLoadedFunctionPatchDeclarations(cls, installed_functions);
+}
+
+void BytecodeReaderHelper::ReadLoadedFieldPatchDeclarations(
+    const Class& cls,
+    intptr_t* installed_functions) {
+  const int kIsStaticFlag = 1 << 0;
+  const int kIsLateFlag = 1 << 3;
+  const int kHasGetterFlag = 1 << 8;
+  const int kHasSetterFlag = 1 << 9;
+  const int kHasNontrivialInitializerFlag = 1 << 11;
+  const int kHasInitializerCodeFlag = 1 << 12;
+  const int kHasSourcePositionsFlag = 1 << 13;
+  const int kHasAnnotationsFlag = 1 << 14;
+  const int kHasCustomScriptFlag = 1 << 16;
+
+  const intptr_t num_fields = reader_.ReadListLength();
+  auto& name = String::Handle(Z);
+  auto& field = Field::Handle(Z);
+  auto& initializer = Function::Handle(Z);
+
+  for (intptr_t i = 0; i < num_fields; ++i) {
+    const intptr_t flags = reader_.ReadUInt();
+    const bool has_nontrivial_initializer =
+        (flags & kHasNontrivialInitializerFlag) != 0;
+    const bool is_static = (flags & kIsStaticFlag) != 0;
+    const bool is_late = (flags & kIsLateFlag) != 0;
+
+    name ^= ReadObject();
+    ReadObject();  // Field type.
+    field = cls.LookupField(name);
+
+    if ((flags & kHasCustomScriptFlag) != 0) {
+      ReadObject();
+    }
+
+    if ((flags & kHasSourcePositionsFlag) != 0) {
+      reader_.ReadPosition();
+      reader_.ReadPosition();
+    }
+
+    if (!has_nontrivial_initializer) {
+      ReadObject();
+    }
+
+    if ((flags & kHasInitializerCodeFlag) != 0) {
+      const intptr_t code_offset =
+          bytecode_component_->GetCodesOffset() + reader_.ReadUInt();
+      if (!field.IsNull() && (is_static || is_late)) {
+        initializer = field.EnsureInitializerFunction();
+        InstallLoadedFunctionPatch(initializer, code_offset,
+                                   installed_functions);
+      }
+    }
+
+    if ((flags & kHasGetterFlag) != 0) {
+      ReadObject();
+    }
+    if ((flags & kHasSetterFlag) != 0) {
+      ReadObject();
+    }
+
+    if ((flags & kHasAnnotationsFlag) != 0) {
+      SkipAnnotations();
+    }
+  }
+}
+
+void BytecodeReaderHelper::ReadLoadedFunctionPatchDeclarations(
+    const Class& cls,
+    intptr_t* installed_functions) {
+  const int kIsStaticFlag = 1 << 0;
+  const int kIsAbstractFlag = 1 << 1;
+  const int kIsGetterFlag = 1 << 2;
+  const int kIsConstructorFlag = 1 << 4;
+  const int kIsFactoryFlag = 1 << 5;
+  const int kHasOptionalPositionalParamsFlag = 1 << 7;
+  const int kHasOptionalNamedParamsFlag = 1 << 8;
+  const int kHasTypeParamsFlag = 1 << 9;
+  const int kHasParameterFlagsFlag = 1 << 10;
+  const int kIsNativeFlag = 1 << 19;
+  const int kHasSourcePositionsFlag = 1 << 20;
+  const int kHasAnnotationsFlag = 1 << 21;
+  const int kHasCustomScriptFlag = 1 << 23;
+
+  const intptr_t num_functions = reader_.ReadListLength();
+  auto& name = String::Handle(Z);
+  auto& function = Function::Handle(Z);
+  auto& error = Error::Handle(Z);
+
+  for (intptr_t i = 0; i < num_functions; ++i) {
+    const intptr_t flags = reader_.ReadUInt();
+    const bool is_static = (flags & kIsStaticFlag) != 0;
+    const bool is_constructor =
+        (flags & (kIsConstructorFlag | kIsFactoryFlag)) != 0;
+    const bool has_optional_named_params =
+        (flags & kHasOptionalNamedParamsFlag) != 0;
+
+    name ^= ReadObject();
+
+    if ((flags & kHasCustomScriptFlag) != 0) {
+      ReadObject();
+    }
+
+    if ((flags & kHasSourcePositionsFlag) != 0) {
+      reader_.ReadPosition();
+      reader_.ReadPosition();
+    }
+
+    if (is_constructor) {
+      name = ConstructorName(cls, name);
+    }
+
+    error = is_constructor ? cls.EnsureIsAllocateFinalized(thread_)
+                           : cls.EnsureIsFinalized(thread_);
+    if (!error.IsNull()) {
+      Exceptions::PropagateError(error);
+      UNREACHABLE();
+    }
+    function = Resolver::ResolveFunction(Z, cls, name);
+    if (function.IsNull() && ((flags & kIsGetterFlag) != 0)) {
+      String& method_name = String::Handle(Z, Field::NameFromGetter(name));
+      function = Resolver::ResolveFunction(Z, cls, method_name);
+      if (!function.IsNull()) {
+        function = Function::Handle(Z, function.ptr()).GetMethodExtractor(name);
+      }
+    }
+
+    FunctionType& signature = FunctionType::Handle(Z);
+    if (function.IsNull()) {
+      signature = FunctionType::null();
+    } else {
+      signature = function.signature();
+    }
+    FunctionTypeScope function_type_scope(this, signature);
+
+    if ((flags & kHasTypeParamsFlag) != 0) {
+      SkipTypeParametersDeclaration();
+    }
+
+    const intptr_t num_implicit_params = is_static ? 0 : 1;
+    const intptr_t num_params = num_implicit_params + reader_.ReadUInt();
+    intptr_t num_required_params = num_params;
+    if ((flags & (kHasOptionalPositionalParamsFlag |
+                  kHasOptionalNamedParamsFlag)) != 0) {
+      num_required_params = num_implicit_params + reader_.ReadUInt();
+    }
+
+    for (intptr_t param_index = num_implicit_params; param_index < num_params;
+         ++param_index) {
+      name ^= ReadObject();
+      USE(name);
+      ReadObject();
+    }
+
+    if ((flags & kHasParameterFlagsFlag) != 0) {
+      RELEASE_ASSERT(has_optional_named_params);
+      const intptr_t length = reader_.ReadUInt();
+      for (intptr_t j = 0; j < length; j++) {
+        reader_.ReadUInt();
+      }
+    }
+
+    ReadObject();  // Result type.
+
+    if ((flags & kIsNativeFlag) != 0) {
+      ReadObject();
+    }
+
+    if ((flags & kIsAbstractFlag) == 0) {
+      const intptr_t code_offset =
+          bytecode_component_->GetCodesOffset() + reader_.ReadUInt();
+      InstallLoadedFunctionPatch(function, code_offset, installed_functions);
+    }
+
+    if ((flags & kHasAnnotationsFlag) != 0) {
+      SkipAnnotations();
+    }
+  }
+}
+
+void BytecodeReaderHelper::InstallLoadedFunctionPatch(
+    const Function& function,
+    intptr_t code_offset,
+    intptr_t* installed_functions) {
+  if (function.IsNull() || function.is_abstract()) {
+    return;
+  }
+
+  OS::PrintErr("Dart bytecode patch: installing %s\n",
+               function.ToFullyQualifiedCString());
+  ReadCode(function, code_offset);
+  *installed_functions += 1;
+}
+
+void BytecodeReaderHelper::SkipTypeParametersDeclaration() {
+  const intptr_t num_type_params = reader_.ReadUInt();
+  ASSERT(num_type_params > 0);
+  for (intptr_t i = 0; i < num_type_params; ++i) {
+    ReadObject();
+  }
+  for (intptr_t i = 0; i < num_type_params; ++i) {
+    ReadObject();
+    ReadObject();
+  }
+}
+
+void BytecodeReaderHelper::SkipAnnotations() {
+  reader_.ReadUInt();
+}
+
 void BytecodeReaderHelper::ReadPendingCode(
     const GrowableObjectArray& pending_objects) {
   auto& obj = Object::Handle(Z);
@@ -3167,4 +3496,4 @@ LocalVarDescriptorsPtr BytecodeReader::ComputeLocalVarDescriptors(
 }  // namespace bytecode
 }  // namespace dart
 
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)

@@ -384,6 +384,16 @@ void ProgramVisitor::BindStaticCalls(Thread* thread) {
         // Cf. runtime entry PatchStaticCall called from CallStaticFunction
         // stub.
         const auto& fun = Function::Cast(target_);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+        if (FLAG_precompiled_mode) {
+          // Precompiler::ReplaceFunctionStaticCallEntries has already converted
+          // non-patchable Function targets to Code targets. Any remaining
+          // Function target must stay indirect so runtime dispatch observes the
+          // current Function::entry_point without executable writes.
+          only_call_via_code = false;
+          continue;
+        }
+#endif
         ASSERT(!FLAG_precompiled_mode || fun.HasCode());
         target_code_ = fun.HasCode() ? fun.CurrentCode()
                                      : StubCode::CallStaticFunction().ptr();

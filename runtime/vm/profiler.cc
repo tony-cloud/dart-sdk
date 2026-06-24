@@ -509,7 +509,7 @@ void Profiler::DumpStackTrace(uword sp, uword fp, uword pc, bool for_crash) {
       StackFrame::DumpCurrentTrace();
     } else if (thread->execution_state() == Thread::kThreadInGenerated) {
       // No exit frame, walk from the crash's registers.
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
       if (thread->vm_tag() == VMTag::kDartInterpretedTagId) {
         Interpreter* interpreter = thread->interpreter();
         sp = interpreter->get_sp();
@@ -517,7 +517,7 @@ void Profiler::DumpStackTrace(uword sp, uword fp, uword pc, bool for_crash) {
         pc = interpreter->get_pc();
         StackFrame::DumpCurrentTrace(sp, fp, pc);
       }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
       if (thread->vm_tag() == VMTag::kDartTagId) {
         StackFrame::DumpCurrentTrace(sp, fp, pc);
       }
@@ -1098,7 +1098,7 @@ class ProfilerDartStackWalker : public ProfilerStackWalker {
   }
 
   bool IsInterpretedFrame() const {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     Interpreter* interpreter = thread_->interpreter();
     return (interpreter != nullptr) &&
            interpreter->HasFrame(reinterpret_cast<uword>(fp_));
@@ -1366,7 +1366,7 @@ void Profiler::SampleThread(Thread* thread,
       lr = simulator->get_lr();
     }
 #endif
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     if (thread->vm_tag() == VMTag::kDartInterpretedTagId) {
       sp = 0;
       pc = thread->interpreter()->get_pc();

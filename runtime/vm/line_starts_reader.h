@@ -5,7 +5,7 @@
 #ifndef RUNTIME_VM_LINE_STARTS_READER_H_
 #define RUNTIME_VM_LINE_STARTS_READER_H_
 
-#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 
 #include <memory>
 
@@ -56,5 +56,5 @@ class LineStartsReader : public ValueObject {
 
 }  // namespace dart
 
-#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 #endif  // RUNTIME_VM_LINE_STARTS_READER_H_

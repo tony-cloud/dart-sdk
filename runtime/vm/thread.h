@@ -1325,7 +1325,7 @@ class Thread : public ThreadState, public IntrusiveDListEntry<Thread> {
 #endif
   }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   Interpreter* interpreter() const { return interpreter_; }
   void set_interpreter(Interpreter* value) { interpreter_ = value; }
 
@@ -1646,7 +1646,7 @@ class Thread : public ThreadState, public IntrusiveDListEntry<Thread> {
   HeapProfileSampler heap_sampler_;
 #endif
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   Interpreter* interpreter_ = nullptr;
   bytecode::BytecodeLoader* bytecode_loader_ = nullptr;
 #endif

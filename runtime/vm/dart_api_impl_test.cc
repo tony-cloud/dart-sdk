@@ -10960,6 +10960,40 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
     "aad_sha256": "1a0c6003fec49bbc26fbaaf0a6dfcd557061b4ae5f22e4b1114afe3b1a8d9796"
   }
 })json";
+  const char ios_native_patch[] = R"json({
+  "format": "open-aot-vmcode-encrypted-v1",
+  "metadata": {
+    "app_id": "app.test",
+    "app_build_id": "1",
+    "base_flavor_id": "free",
+    "base_license_type": "free",
+    "flavor_id": "pro",
+    "license_type": "pro",
+    "sdk_hash": "sdk",
+    "base_snapshot_hash": "cae662172fd450bb0cd710a769079c05bfc5d8e35efa6576edc7d0377afdd4a2",
+    "patch_snapshot_hash": "05d9426b9dd03e5cc3404aab6c7c45ac24e0b90e840f4bd6da83c342430533dc",
+    "target_os": "ios",
+    "target_arch": "arm64"
+  }
+})json";
+  const char ios_interpreter_compact_patch[] = R"json({
+  "format": "open-aot-vmcode-encrypted-v1",
+  "metadata": {
+    "app_id": "app.test",
+    "app_build_id": "1",
+    "base_flavor_id": "free",
+    "base_license_type": "free",
+    "flavor_id": "pro",
+    "license_type": "pro",
+    "sdk_hash": "sdk",
+    "base_snapshot_hash": "cae662172fd450bb0cd710a769079c05bfc5d8e35efa6576edc7d0377afdd4a2",
+    "patch_snapshot_hash": "05d9426b9dd03e5cc3404aab6c7c45ac24e0b90e840f4bd6da83c342430533dc",
+    "target_os": "ios",
+    "target_arch": "arm64",
+    "runtime_mode": "dart-bytecode-interpreter"
+  },
+  "payload_kind": "binary-diff-v1"
+})json";
   Dart_AotPatchInstallOptions options = {};
   options.app_id = "app.test";
   options.app_build_id = "1";
@@ -10987,6 +11021,35 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
   EXPECT_EQ(13, patch_payload_length);
   EXPECT_EQ(0, memcmp("patch-payload", patch_payload, patch_payload_length));
   Dart_FreeAotPatchPayload(patch_payload);
+
+  Dart_AotPatchInstallOptions ios_options = options;
+  ios_options.target_os = "ios";
+  ios_options.target_arch = "arm64";
+  ios_options.runtime_mode = "native-aot";
+  result =
+      Dart_InstallAotPatch(reinterpret_cast<const uint8_t*>(ios_native_patch),
+                           strlen(ios_native_patch), &ios_options,
+                           &patch_payload, &patch_payload_length);
+  EXPECT_ERROR(result,
+               "iOS AOT patches must use the no-DDM interpreter runtime mode");
+
+  Dart_AotPatchInstallOptions ios_interpreter_options = ios_options;
+  ios_interpreter_options.runtime_mode = "dart-bytecode-interpreter";
+  result = Dart_InstallAotPatch(
+      reinterpret_cast<const uint8_t*>(ios_interpreter_compact_patch),
+      strlen(ios_interpreter_compact_patch), &ios_interpreter_options,
+      &patch_payload, &patch_payload_length);
+  EXPECT_ERROR(result,
+               "Dart bytecode interpreter AOT patches must use payload_kind "
+               "\"full-snapshot\"");
+
+  Dart_AotPatchInstallOptions dynamic_modules_options = options;
+  dynamic_modules_options.runtime_mode = "dart-dynamic-modules";
+  result = Dart_InstallAotPatch(reinterpret_cast<const uint8_t*>(patch),
+                                strlen(patch), &dynamic_modules_options,
+                                &patch_payload, &patch_payload_length);
+  EXPECT_ERROR(result,
+               "DART_DYNAMIC_MODULES is not supported for AOT patch artifacts");
   Dart_SetAotPatchKeyCallback(nullptr);
 #else
   EXPECT(!Dart_AotPatchingEnabled());
@@ -10994,6 +11057,22 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
       reinterpret_cast<const uint8_t*>(patch), strlen(patch), &options,
       &patch_payload, &patch_payload_length);
   EXPECT_ERROR(result, "Compact AOT patching is not enabled");
+#endif
+}
+
+TEST_CASE(DartAPI_BytecodePatchReloadConfiguration) {
+#if defined(DART_SUPPORT_RELOAD) && defined(DART_BYTECODE_INTERPRETER)
+  Dart_Handle result = Dart_ReloadBytecodePatch(nullptr, 0);
+  EXPECT_ERROR(result, "bytecode_buffer");
+
+  const uint8_t invalid_patch[] = {0x00, 0x01, 0x02, 0x03};
+  result = Dart_ReloadBytecodePatch(invalid_patch, sizeof(invalid_patch));
+  EXPECT_ERROR(result, "not a Dart bytecode program");
+#else
+  const uint8_t invalid_patch[] = {0x00, 0x01, 0x02, 0x03};
+  Dart_Handle result =
+      Dart_ReloadBytecodePatch(invalid_patch, sizeof(invalid_patch));
+  EXPECT_ERROR(result, "Dart bytecode patch reload is not enabled");
 #endif
 }
 

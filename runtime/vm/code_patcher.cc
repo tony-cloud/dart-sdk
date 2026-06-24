@@ -3,7 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 
 #include "vm/code_patcher.h"
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 #include "vm/constants_kbc.h"
 #endif
 #include "vm/cpu.h"
@@ -64,7 +64,7 @@ bool MatchesPattern(uword end, const int16_t* pattern, intptr_t size) {
   return true;
 }
 
-#if !defined(PRODUCT) && defined(DART_DYNAMIC_MODULES)
+#if !defined(PRODUCT) && defined(DART_BYTECODE_INTERPRETER)
 
 uint32_t BytecodePatcher::AddBreakpointAt(uword return_address,
                                           const Bytecode& bytecode) {
@@ -110,6 +110,6 @@ void BytecodePatcher::RemoveBreakpointAtWithMutatorsStopped(
                        static_cast<KernelBytecode::Opcode>(opcode)));
   *instr = opcode;
 }
-#endif  // !defined(PRODUCT) && defined(DART_DYNAMIC_MODULES)
+#endif  // !defined(PRODUCT) && defined(DART_BYTECODE_INTERPRETER)
 
 }  // namespace dart

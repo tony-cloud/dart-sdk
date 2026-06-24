@@ -12,11 +12,11 @@
 #define LOCAL_SYMBOL(x) .L##x
 #endif
 
-#if defined(__aarch64__) && (defined(SIMULATOR_FFI) || (defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)))
+#if defined(__aarch64__) && (defined(SIMULATOR_FFI) || (defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)))
 
 .text
 
-#if defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
 
 #if defined(__APPLE__)
 .globl _FfiCallTrampoline
@@ -73,7 +73,7 @@ LOCAL_SYMBOL(copy1):
 .size FfiCallTrampoline,.-FfiCallTrampoline
 #endif
 
-#endif  // defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
 
 #if defined(SIMULATOR_FFI)
 
@@ -216,4 +216,4 @@ SimulatorFfiCallbackTrampolineEnd:
 
 #endif  // defined(SIMULATOR_FFI)
 
-#endif  // defined(__aarch64__) && (defined(SIMULATOR_FFI) || (defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)))
+#endif  // defined(__aarch64__) && (defined(SIMULATOR_FFI) || (defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)))

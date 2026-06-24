@@ -218,7 +218,7 @@ class CodeBreakpoint {
   // Used by GroupDebugger to find CodeBreakpoint associated with
   // particular function.
   FunctionPtr function() const {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     if (bytecode_ != Bytecode::null()) {
       return Bytecode::Handle(bytecode_).function();
     }
@@ -1011,7 +1011,7 @@ class Debugger {
   // frame corresponds to this fp value, or if the top frame is
   // lower on the stack.
   uword stepping_fp_;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   bool stepping_fp_from_interpreted_frame_ = false;
 #endif
 

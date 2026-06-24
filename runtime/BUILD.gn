@@ -10,6 +10,8 @@ import("//build/config/sysroot.gni")
 
 assert(!dart_enable_aot_patching || !dart_dynamic_modules,
        "dart_enable_aot_patching must be built without dart_dynamic_modules.")
+assert(!dart_enable_shorebird_interpreter || !dart_dynamic_modules,
+       "dart_enable_shorebird_interpreter must be built without dart_dynamic_modules.")
 
 config("dart_public_config") {
   include_dirs = [
@@ -232,6 +234,12 @@ config("dart_config") {
 
   if (dart_dynamic_modules) {
     defines += [ "DART_DYNAMIC_MODULES" ]
+  }
+  if (dart_dynamic_modules || dart_enable_shorebird_interpreter) {
+    defines += [ "DART_BYTECODE_INTERPRETER=1" ]
+  }
+  if (dart_enable_shorebird_interpreter) {
+    defines += [ "DART_SHOREBIRD_INTERPRETER" ]
   }
 
   if (dart_enable_aot_patching) {

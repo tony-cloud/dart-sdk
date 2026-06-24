@@ -3768,6 +3768,26 @@ DART_EXPORT DART_API_WARN_UNUSED_RESULT Dart_Handle
 Dart_LoadLibraryFromBytecode(Dart_Handle bytecode_buffer);
 
 /**
+ * Applies a Dart bytecode reload patch to the current isolate group.
+ *
+ * The buffer must contain a bytecode delta/full-snapshot payload generated for
+ * the Dart bytecode interpreter. The VM copies the buffer before applying the
+ * reload, so the caller retains ownership of the input. This API does not use
+ * DART_DYNAMIC_MODULES and does not install downloaded native executable code.
+ *
+ * Requires there to be a current isolate.
+ *
+ * \param bytecode_buffer The bytecode patch buffer.
+ * \param bytecode_buffer_size Length of the passed in buffer.
+ *
+ * \return Success if the bytecode reload patch was applied. Otherwise, returns
+ *   an error.
+ */
+DART_EXPORT DART_API_WARN_UNUSED_RESULT Dart_Handle
+Dart_ReloadBytecodePatch(const uint8_t* bytecode_buffer,
+                         intptr_t bytecode_buffer_size);
+
+/**
  * Indicates that all outstanding load requests have been satisfied.
  * This finalizes all the new classes loaded and optionally completes
  * deferred library futures.
@@ -4272,6 +4292,13 @@ typedef struct {
   const char* obfuscation_map_hash;
   const char* target_os;
   const char* target_arch;
+  /*
+   * Optional execution mode expected by the embedder. Missing artifacts are
+   * treated as "native-aot" for backward compatibility. iOS App Store builds
+   * must use the no-DDM interpreter patch mode, not native AOT snapshot text or
+   * DART_DYNAMIC_MODULES.
+   */
+  const char* runtime_mode;
 } Dart_AotPatchInstallOptions;
 
 typedef bool (*Dart_AotPatchKeyCallback)(const char* key_id,
@@ -4283,7 +4310,7 @@ typedef bool (*Dart_AotPatchKeyCallback)(const char* key_id,
  * Returns whether this VM was built with compact AOT patching support.
  *
  * This feature is intentionally independent of DART_DYNAMIC_MODULES and does
- * not enable the bytecode interpreter.
+ * not include the dynamic-module runtime.
  */
 DART_EXPORT bool Dart_AotPatchingEnabled(void);
 
@@ -4301,9 +4328,9 @@ DART_EXPORT void Dart_SetAotPatchKeyCallback(Dart_AotPatchKeyCallback callback);
  * artifact key id, then decrypts the AES-256-GCM compact payload into an owned
  * buffer. A success result means the artifact is accepted for embedder
  * installation. The caller owns `patch_payload_buffer` and must release it with
- * Dart_FreeAotPatchPayload. iOS-safe AOT patch loading maps patched isolate
- * snapshot data/instructions before isolate startup; this API does not mutate
- * live executable code.
+ * Dart_FreeAotPatchPayload. On iOS, native AOT patch payloads are rejected; the
+ * App Store-safe path is an interpreter payload executed by already-reviewed VM
+ * code and remains independent of DART_DYNAMIC_MODULES.
  */
 DART_EXPORT DART_API_WARN_UNUSED_RESULT Dart_Handle
 Dart_InstallAotPatch(const uint8_t* patch_buffer,

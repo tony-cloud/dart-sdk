@@ -844,7 +844,7 @@ void CallSiteResetter::Reset(const ICData& ic) {
   }
 }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 static ArrayPtr PrepareNoSuchMethodErrorArguments(const Function& target,
                                                   bool incompatible_arguments) {
   InvocationMirror::Kind kind = InvocationMirror::Kind::kMethod;
@@ -891,10 +891,10 @@ static ArrayPtr PrepareNoSuchMethodErrorArguments(const Function& target,
   args.SetAt(6, Object::null_object());
   return args.ptr();
 }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
 void CallSiteResetter::RebindBytecode(const Bytecode& bytecode) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   pool_ = bytecode.object_pool();
   ASSERT(!pool_.IsNull());
 
@@ -991,7 +991,7 @@ void CallSiteResetter::RebindBytecode(const Bytecode& bytecode) {
   }
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 #endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)

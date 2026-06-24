@@ -342,33 +342,33 @@ void AsyncAwareStackUnwinder::Unwind(
       code_ = SuspendState::Cast(awaiter_frame_.next).GetCodeObject();
       pc_offset = pc - code_.PayloadStart();
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
       if (pc == StubCode::ResumeInterpreter().EntryPoint()) {
         bytecode_ = Interpreter::Current()->GetSuspendedLocation(
             SuspendState::Cast(awaiter_frame_.next), &pc_offset);
         ASSERT(!bytecode_.IsNull());
         code_ = Code::null();
       }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
     } else {
       // This is an asynchronous continuation represented by a closure which
       // will handle successful completion. This function is not yet executing
       // so we have to use artificial marker offset (1).
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
       if (function_.IsInterpreted()) {
         bytecode_ = function_.GetBytecode();
         code_ = Code::null();
         pc_offset = StackTraceUtils::kFutureListenerPcOffset;
       } else {
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
         code_ = function_.EnsureHasCode();
         RELEASE_ASSERT(!code_.IsNull());
         pc_offset = (function_.entry_point() +
                      StackTraceUtils::kFutureListenerPcOffset) -
                     code_.PayloadStart();
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
       }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
     }
 
     handle_frame(gap_frame);

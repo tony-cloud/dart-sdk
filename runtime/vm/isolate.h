@@ -523,8 +523,7 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
     isolate_group_flags_.UpdateBool<DwarfStackTracesBit>(value);
   }
 
-#if !defined(PRODUCT)
-#if !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
   bool HasAttemptedReload() const {
     return isolate_group_flags_.Read<HasAttemptedReloadBit>();
   }
@@ -537,8 +536,7 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
   }
 #else
   bool HasAttemptedReload() const { return false; }
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
-#endif  // !defined(PRODUCT)
+#endif  // defined(DART_SUPPORT_RELOAD)
 
   bool has_seen_oom() const {
     return isolate_group_flags_.Read<HasSeenOOMBit>();
@@ -587,9 +585,9 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
   Mutex* unlinked_call_map_mutex() { return &unlinked_call_map_mutex_; }
 #endif
 
-#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
   Mutex* initializer_functions_mutex() { return &initializer_functions_mutex_; }
-#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 
   SafepointRwLock* shared_field_initializer_rwlock() {
     return &shared_field_initializer_rwlock_;
@@ -678,7 +676,7 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
   void PrintMemoryUsageJSON(JSONStream* stream);
 #endif
 
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
   // By default the reload context is deleted. This parameter allows
   // the caller to delete is separately if it is still needed.
   bool ReloadSources(JSONStream* js,
@@ -710,10 +708,10 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
   bool CanReload();
 #else
   bool CanReload() { return false; }
-#endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_SUPPORT_RELOAD)
 
   bool IsReloading() const {
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
     return group_reload_context_ != nullptr;
 #else
     return false;
@@ -926,7 +924,7 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
   bool is_system_isolate_group_;
   bool bootstrapping_ = true;
 
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
   int64_t last_reload_timestamp_;
   std::shared_ptr<IsolateGroupReloadContext> group_reload_context_;
   // Per-isolate-group copy of FLAG_reload_every.
@@ -992,9 +990,9 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
   Mutex unlinked_call_map_mutex_;
 #endif
 
-#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
   Mutex initializer_functions_mutex_;
-#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 
   // Ensure exclusive execution of shared field initializers.
   SafepointRwLock shared_field_initializer_rwlock_;

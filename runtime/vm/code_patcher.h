@@ -94,7 +94,7 @@ class CodePatcher : public AllStatic {
   static intptr_t GetSubtypeTestCachePoolIndex(uword return_address);
 };
 
-#if !defined(PRODUCT) && defined(DART_DYNAMIC_MODULES)
+#if !defined(PRODUCT) && defined(DART_BYTECODE_INTERPRETER)
 class BytecodePatcher : public AllStatic {
  public:
   // Patch call instruction prior to return_address to add a breakpoint.
@@ -118,7 +118,7 @@ class BytecodePatcher : public AllStatic {
                                                     const Bytecode& bytecode,
                                                     uint32_t opcode);
 };
-#endif  // !defined(PRODUCT) && defined(DART_DYNAMIC_MODULES)
+#endif  // !defined(PRODUCT) && defined(DART_BYTECODE_INTERPRETER)
 
 // Beginning from [end - size] we compare [size] bytes with [pattern]. All
 // [0..255] values in [pattern] have to match, negative values are skipped.

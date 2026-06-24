@@ -11,7 +11,7 @@
 #include "vm/bytecode_reader.h"
 #include "vm/compiler/jit/compiler.h"
 #include "vm/dart_api_impl.h"
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
 #include "vm/hash.h"
 #endif
 #include "vm/hash_table.h"
@@ -38,7 +38,7 @@ namespace dart {
 DEFINE_FLAG(int, reload_every, 0, "Reload every N stack overflow checks.");
 DEFINE_FLAG(bool, trace_reload, false, "Trace isolate reloading");
 
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
 DEFINE_FLAG(bool,
             trace_reload_verbose,
             false,
@@ -735,7 +735,7 @@ class KernelDeltaProgram : public DeltaProgram {
   std::unique_ptr<kernel::Program> kernel_program_;
 };
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 class BytecodeDeltaProgram : public DeltaProgram {
  public:
   explicit BytecodeDeltaProgram(const ExternalTypedData& typed_data)
@@ -769,7 +769,7 @@ class BytecodeDeltaProgram : public DeltaProgram {
  private:
   bytecode::BytecodeLoader loader_;
 };
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
 std::unique_ptr<DeltaProgram> DeltaProgram::ReadFromTypedData(
     const ExternalTypedData& typed_data) {
@@ -781,12 +781,12 @@ std::unique_ptr<DeltaProgram> DeltaProgram::ReadFromTypedData(
     }
     return std::make_unique<KernelDeltaProgram>(std::move(kernel_program));
   }
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   if (Dart_IsBytecode(reinterpret_cast<const uint8_t*>(typed_data.DataAddr(0)),
                       typed_data.LengthInBytes())) {
     return std::make_unique<BytecodeDeltaProgram>(typed_data);
   }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
   return nullptr;
 }
 
@@ -2194,12 +2194,12 @@ ErrorPtr ProgramReloadContext::RunInvalidationVisitors() {
   StackZone stack_zone(thread);
   Zone* zone = stack_zone.GetZone();
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   Interpreter* interpreter = thread->interpreter();
   if (interpreter != nullptr) {
     interpreter->ClearLookupCache();
   }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
   GrowableArray<const Function*> functions(4 * KB);
   GrowableArray<const KernelProgramInfo*> kernel_infos(KB);
@@ -2275,9 +2275,9 @@ void ProgramReloadContext::InvalidateFunctions(
   Library& owning_lib = Library::Handle(zone);
   Code& code = Code::Handle(zone);
   Field& field = Field::Handle(zone);
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   Bytecode& bytecode = Bytecode::Handle(zone);
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
   SafepointWriteRwLocker ml(thread, thread->isolate_group()->program_lock());
   for (intptr_t i = 0; i < functions.length(); i++) {
@@ -2316,12 +2316,12 @@ void ProgramReloadContext::InvalidateFunctions(
     // they're held.
     resetter.ZeroEdgeCounters(func);
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     if (func.HasBytecode()) {
       bytecode = func.GetBytecode();
       resetter.RebindBytecode(bytecode);
     }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
     if (stub_code) {
       // Nothing to reset.
@@ -2925,6 +2925,6 @@ void ProgramReloadContext::RestoreClassHierarchyInvariants() {
   }
 }
 
-#endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_SUPPORT_RELOAD)
 
 }  // namespace dart

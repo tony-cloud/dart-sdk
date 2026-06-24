@@ -456,7 +456,7 @@ ISOLATE_UNIT_TEST_CASE(Service_LocalVarDescriptors) {
   EXPECT(!function_c.IsNull());
   LocalVarDescriptors& descriptors = LocalVarDescriptors::Handle();
   if (function_c.IsInterpreted()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     const Bytecode& bytecode_c = Bytecode::Handle(function_c.GetBytecode());
     EXPECT(!bytecode_c.IsNull());
     descriptors = bytecode_c.var_descriptors();

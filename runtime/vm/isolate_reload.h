@@ -30,7 +30,7 @@ DECLARE_FLAG(bool, trace_reload_verbose);
 #define VTIR_Print(format, ...)                                                \
   if (FLAG_trace_reload_verbose) Log::Current()->Print(format, ##__VA_ARGS__)
 
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
 
 namespace dart {
 
@@ -458,6 +458,6 @@ class CallSiteResetter : public ValueObject {
 
 }  // namespace dart
 
-#endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_SUPPORT_RELOAD)
 
 #endif  // RUNTIME_VM_ISOLATE_RELOAD_H_

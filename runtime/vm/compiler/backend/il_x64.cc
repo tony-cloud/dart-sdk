@@ -6528,7 +6528,7 @@ void ClosureCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
     // RAX: Closure with cached entry point.
     __ movq(RCX, compiler::FieldAddress(
                      RAX, compiler::target::Closure::entry_point_offset()));
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     ASSERT(FUNCTION_REG != RCX);
     __ LoadCompressed(FUNCTION_REG,
                       compiler::FieldAddress(

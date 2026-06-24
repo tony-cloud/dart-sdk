@@ -47,7 +47,7 @@ Thread::~Thread() {
   ASSERT(!ActiveMutatorStolenField::decode(safepoint_state_));
   ASSERT(deopt_context_ ==
          nullptr);  // No deopt in progress when thread is deleted.
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   delete interpreter_;
   interpreter_ = nullptr;
 #endif
@@ -1135,7 +1135,7 @@ void Thread::VisitObjectPointers(ObjectPointerVisitor* visitor,
   visitor->VisitPointer(reinterpret_cast<ObjectPtr*>(&active_stacktrace_));
   visitor->VisitPointer(reinterpret_cast<ObjectPtr*>(&sticky_error_));
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   if (interpreter() != nullptr) {
     interpreter()->VisitObjectPointers(visitor);
   }
@@ -1409,7 +1409,7 @@ bool Thread::TopErrorHandlerIsSetJump() const {
   // False positives: simulator stack and native stack are unordered.
   return true;
 #else
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   // False positives: interpreter stack and native stack are unordered.
   if ((interpreter_ != nullptr) && interpreter_->HasFrame(top_exit_frame_info_))
     return true;
@@ -1425,7 +1425,7 @@ bool Thread::TopErrorHandlerIsExitFrame() const {
   // False positives: simulator stack and native stack are unordered.
   return true;
 #else
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   // False positives: interpreter stack and native stack are unordered.
   if ((interpreter_ != nullptr) && interpreter_->HasFrame(top_exit_frame_info_))
     return true;

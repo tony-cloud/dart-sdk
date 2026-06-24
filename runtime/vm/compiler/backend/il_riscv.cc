@@ -690,7 +690,7 @@ void ClosureCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
     // T0: Closure with a cached entry point.
     __ LoadFieldFromOffset(A1, T0,
                            compiler::target::Closure::entry_point_offset());
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     ASSERT(FUNCTION_REG != A1);
     __ LoadCompressedFieldFromOffset(
         FUNCTION_REG, T0, compiler::target::Closure::function_offset());

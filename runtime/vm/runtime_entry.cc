@@ -637,7 +637,7 @@ static void ThrowIfError(const Object& result) {
 // Return value: newly allocated object.
 DEFINE_RUNTIME_ENTRY(AllocateObject, 2) {
   const Class& cls = Class::CheckedHandle(zone, arguments.ArgAt(0));
-#if defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
   if (!cls.is_allocate_finalized()) {
     const Error& error =
         Error::Handle(zone, cls.EnsureIsAllocateFinalized(thread));
@@ -1004,13 +1004,13 @@ DEFINE_RUNTIME_ENTRY(CloneSuspendState, 1) {
 // Allocate a new SubtypeTestCache for use in interpreted implicit setters.
 // Return value: newly allocated SubtypeTestCache.
 DEFINE_RUNTIME_ENTRY(AllocateSubtypeTestCache, 0) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const auto& cache = SubtypeTestCache::Handle(
       zone, SubtypeTestCache::New(SubtypeTestCache::kMaxInputs));
   arguments.SetReturn(cache);
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Invoke field getter before dispatch.
@@ -1018,7 +1018,7 @@ DEFINE_RUNTIME_ENTRY(AllocateSubtypeTestCache, 0) {
 // Arg1: field name (may be demangled during call).
 // Return value: field value.
 DEFINE_RUNTIME_ENTRY(GetFieldForDispatch, 2) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const Instance& receiver = Instance::CheckedHandle(zone, arguments.ArgAt(0));
   String& name = String::CheckedHandle(zone, arguments.ArgAt(1));
   const Class& receiver_class = Class::Handle(zone, receiver.clazz());
@@ -1043,7 +1043,7 @@ DEFINE_RUNTIME_ENTRY(GetFieldForDispatch, 2) {
   arguments.SetReturn(result);
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Converts arguments descriptor passed to an implicit closure
@@ -1053,7 +1053,7 @@ DEFINE_RUNTIME_ENTRY(GetFieldForDispatch, 2) {
 // Arg2: new type args length
 // Return value: target arguments descriptor
 DEFINE_RUNTIME_ENTRY(AdjustArgumentsDesciptorForImplicitClosure, 3) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const auto& descriptor = Array::CheckedHandle(zone, arguments.ArgAt(0));
   const auto& target = Function::CheckedHandle(zone, arguments.ArgAt(1));
   intptr_t type_args_len = Smi::CheckedHandle(zone, arguments.ArgAt(2)).Value();
@@ -1079,7 +1079,7 @@ DEFINE_RUNTIME_ENTRY(AdjustArgumentsDesciptorForImplicitClosure, 3) {
   arguments.SetReturn(result);
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Converts type arguments passed to a constructor tear-off
@@ -1088,7 +1088,7 @@ DEFINE_RUNTIME_ENTRY(AdjustArgumentsDesciptorForImplicitClosure, 3) {
 // Arg1: type arguments
 // Return value: instance type arguments
 DEFINE_RUNTIME_ENTRY(ConvertToInstanceTypeArguments, 2) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const auto& cls = Class::CheckedHandle(zone, arguments.ArgAt(0));
   const auto& type_args =
       TypeArguments::CheckedHandle(zone, arguments.ArgAt(1));
@@ -1097,7 +1097,7 @@ DEFINE_RUNTIME_ENTRY(ConvertToInstanceTypeArguments, 2) {
   arguments.SetReturn(result);
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Check that arguments are valid for the given closure.
@@ -1105,7 +1105,7 @@ DEFINE_RUNTIME_ENTRY(ConvertToInstanceTypeArguments, 2) {
 // Arg1: arguments descriptor
 // Return value: whether the arguments are valid
 DEFINE_RUNTIME_ENTRY(ClosureArgumentsValid, 2) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const auto& closure = Closure::CheckedHandle(zone, arguments.ArgAt(0));
   const auto& descriptor = Array::CheckedHandle(zone, arguments.ArgAt(1));
 
@@ -1122,7 +1122,7 @@ DEFINE_RUNTIME_ENTRY(ClosureArgumentsValid, 2) {
   }
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Resolve 'call' function of receiver.
@@ -1130,7 +1130,7 @@ DEFINE_RUNTIME_ENTRY(ClosureArgumentsValid, 2) {
 // Arg1: arguments descriptor
 // Return value: 'call' function'.
 DEFINE_RUNTIME_ENTRY(ResolveCallFunction, 2) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const Instance& receiver = Instance::CheckedHandle(zone, arguments.ArgAt(0));
   const Array& descriptor = Array::CheckedHandle(zone, arguments.ArgAt(1));
   ArgumentsDescriptor args_desc(descriptor);
@@ -1143,14 +1143,14 @@ DEFINE_RUNTIME_ENTRY(ResolveCallFunction, 2) {
   arguments.SetReturn(call_function);
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Resolve external method call from the interpreter.
 // Arg0: function.
 // Arg1: pool index to store resolved trampoline and native function.
 DEFINE_RUNTIME_ENTRY(ResolveExternalCall, 2) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const auto& function = Function::CheckedHandle(zone, arguments.ArgAt(0));
   const intptr_t pool_index =
       Smi::CheckedHandle(zone, arguments.ArgAt(1)).Value();
@@ -1194,10 +1194,10 @@ DEFINE_RUNTIME_ENTRY(ResolveExternalCall, 2) {
   pool.SetRawValueAt(pool_index + 1, reinterpret_cast<uword>(target_function));
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
-#if defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
 
 struct FfiCallArguments {
   uword stack_area;
@@ -1442,13 +1442,13 @@ static uword ResolveFfiNativeTarget(Thread* thread, const Function& function) {
   return static_cast<uword>(Integer::Cast(result).Value());
 }
 
-#endif  // defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
 
 // Perform FFI call from the interpreter.
 // Arg0: function.
 // Arg1: constant pool index to store resolved target.
 DEFINE_RUNTIME_ENTRY(FfiCall, 2) {
-#if defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
   const auto& function = Function::CheckedZoneHandle(zone, arguments.ArgAt(0));
   const intptr_t pool_index =
       Smi::CheckedHandle(zone, arguments.ArgAt(1)).Value();
@@ -1533,7 +1533,7 @@ DEFINE_RUNTIME_ENTRY(FfiCall, 2) {
       Object::Handle(zone, ReceiveFfiCallResult(thread, marshaller, &args)));
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
 }
 
 // Check that argument types are valid for the given function.
@@ -1542,7 +1542,7 @@ DEFINE_RUNTIME_ENTRY(FfiCall, 2) {
 // Arg2: arguments
 // Return value: whether the arguments are valid
 DEFINE_RUNTIME_ENTRY(CheckFunctionArgumentTypes, 3) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const auto& function = Function::CheckedHandle(zone, arguments.ArgAt(0));
   const auto& descriptor = Array::CheckedHandle(zone, arguments.ArgAt(1));
   const auto& args = Array::CheckedHandle(zone, arguments.ArgAt(2));
@@ -1560,7 +1560,7 @@ DEFINE_RUNTIME_ENTRY(CheckFunctionArgumentTypes, 3) {
   }
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Helper routine for tracing a type check.
@@ -1608,7 +1608,7 @@ static void PrintTypeCheck(const char* message,
   }
 }
 
-#if defined(TARGET_ARCH_IA32) || defined(DART_DYNAMIC_MODULES)
+#if defined(TARGET_ARCH_IA32) || defined(DART_BYTECODE_INTERPRETER)
 static BoolPtr CheckHashBasedSubtypeTestCache(
     Zone* zone,
     Thread* thread,
@@ -1660,7 +1660,7 @@ static BoolPtr CheckHashBasedSubtypeTestCache(
 
   return Bool::null();
 }
-#endif  // defined(TARGET_ARCH_IA32) || defined(DART_DYNAMIC_MODULES)
+#endif  // defined(TARGET_ARCH_IA32) || defined(DART_BYTECODE_INTERPRETER)
 
 // This updates the type test cache, an array containing 8 elements:
 // - instance class (or function if the instance is a closure)
@@ -1897,7 +1897,7 @@ DEFINE_RUNTIME_ENTRY(TypeCheck, 7) {
   ASSERT(mode == kTypeCheckFromInline);
 #endif
 
-#if defined(TARGET_ARCH_IA32) || defined(DART_DYNAMIC_MODULES)
+#if defined(TARGET_ARCH_IA32) || defined(DART_BYTECODE_INTERPRETER)
   // Hash-based caches are not handled by the inline AssertAssignable
   // on IA32 and in the interpreter.
   if ((mode == kTypeCheckFromInline) && cache.IsHash()) {
@@ -1911,7 +1911,7 @@ DEFINE_RUNTIME_ENTRY(TypeCheck, 7) {
       return;
     }
   }
-#endif  // defined(TARGET_ARCH_IA32) || defined(DART_DYNAMIC_MODULES)
+#endif  // defined(TARGET_ARCH_IA32) || defined(DART_BYTECODE_INTERPRETER)
 
   // This is guaranteed on the calling side.
   ASSERT(!dst_type.IsDynamicType());
@@ -2175,7 +2175,20 @@ DEFINE_RUNTIME_ENTRY(ReThrow, 3) {
 // Patches static call in optimized code with the target's entry point.
 // Compiles target if necessary.
 DEFINE_RUNTIME_ENTRY(PatchStaticCall, 0) {
-#if !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_PRECOMPILED_RUNTIME) && defined(DART_SHOREBIRD_INTERPRETER)
+  DartFrameIterator iterator(thread,
+                             StackFrameIterator::kNoCrossThreadIteration);
+  StackFrame* caller_frame = iterator.NextFrame();
+  ASSERT(caller_frame != nullptr);
+  ASSERT(!caller_frame->is_interpreted());
+  const Code& caller_code = Code::Handle(zone, caller_frame->LookupDartCode());
+  ASSERT(!caller_code.IsNull());
+  const Function& target_function = Function::Handle(
+      zone, caller_code.GetStaticCallTargetFunctionAt(caller_frame->pc()));
+  RELEASE_ASSERT(!target_function.IsNull());
+  ASSERT(target_function.HasCode());
+  arguments.SetReturn(target_function);
+#elif !defined(DART_PRECOMPILED_RUNTIME)
   DartFrameIterator iterator(thread,
                              StackFrameIterator::kNoCrossThreadIteration);
   StackFrame* caller_frame = iterator.NextFrame();
@@ -2252,7 +2265,7 @@ DEFINE_RUNTIME_ENTRY(SingleStepHandler, 0) {
 }
 
 DEFINE_RUNTIME_ENTRY(ResumptionBreakpointHandler, 0) {
-#if defined(DART_DYNAMIC_MODULES) && !defined(PRODUCT)
+#if defined(DART_BYTECODE_INTERPRETER) && !defined(PRODUCT)
   isolate->debugger()->ResumptionBreakpoint();
 #else
   UNREACHABLE();
@@ -3459,7 +3472,7 @@ DEFINE_RUNTIME_ENTRY(SwitchableCallMiss, 2) {
 //   Returns: target function (can only be null in AOT runtime)
 // Modifies the instance call table in current interpreter.
 DEFINE_RUNTIME_ENTRY(InterpretedInstanceCallMissHandler, 3) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const Instance& receiver = Instance::CheckedHandle(zone, arguments.ArgAt(0));
   const String& target_name = String::CheckedHandle(zone, arguments.ArgAt(1));
   const Array& arg_desc = Array::CheckedHandle(zone, arguments.ArgAt(2));
@@ -3491,7 +3504,7 @@ DEFINE_RUNTIME_ENTRY(InterpretedInstanceCallMissHandler, 3) {
   arguments.SetReturn(target_function);
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 #if defined(DART_PRECOMPILED_RUNTIME)
@@ -3739,7 +3752,7 @@ DEFINE_RUNTIME_ENTRY(NoSuchMethodError, 1) {
 // Arg2: arguments descriptor array.
 // Arg3: arguments array.
 DEFINE_RUNTIME_ENTRY(InvokeNoSuchMethod, 4) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const Instance& receiver = Instance::CheckedHandle(zone, arguments.ArgAt(0));
   const String& original_function_name =
       String::CheckedHandle(zone, arguments.ArgAt(1));
@@ -3763,7 +3776,7 @@ DEFINE_RUNTIME_ENTRY(InvokeNoSuchMethod, 4) {
   arguments.SetReturn(result);
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 #if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
@@ -3976,13 +3989,13 @@ DEFINE_RUNTIME_ENTRY(InterruptOrStackOverflow, 0) {
   uword stack_overflow_flags = thread->GetAndClearStackOverflowFlags();
 
   bool interpreter_stack_overflow = false;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   Interpreter* interpreter = thread->interpreter();
   if (interpreter != nullptr) {
     interpreter_stack_overflow =
         interpreter->get_sp() >= interpreter->overflow_stack_limit();
   }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
   // If an interrupt happens at the same time as a stack overflow, we
   // process the stack overflow now and leave the interrupt for next
@@ -3993,13 +4006,13 @@ DEFINE_RUNTIME_ENTRY(InterruptOrStackOverflow, 0) {
       OS::PrintErr("Stack overflow\n");
       OS::PrintErr("  Native SP = %" Px ", stack limit = %" Px "\n", stack_pos,
                    thread->saved_stack_limit());
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
       if (thread->interpreter() != nullptr) {
         OS::PrintErr("  Interpreter SP = %" Px ", stack limit = %" Px "\n",
                      thread->interpreter()->get_sp(),
                      thread->interpreter()->overflow_stack_limit());
       }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
       OS::PrintErr("Call stack:\n");
       OS::PrintErr("size | frame\n");
@@ -4821,7 +4834,7 @@ DEFINE_LEAF_RUNTIME_ENTRY(MemoryMove,
                           /*argument_count=*/3,
                           static_cast<MemMoveCFunction>(memmove));
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 // Interpret a function call. Should be called only for non-jitted functions.
 // argc indicates the number of arguments, including the type arguments.
 // argv points to the first argument.
@@ -4867,10 +4880,10 @@ extern "C" uword /*ObjectPtr*/ InterpretCall(uword /*FunctionPtr*/ function_in,
   }
   return static_cast<uword>(result);
 }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
 uword RuntimeEntry::InterpretCallEntry() {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   uword entry = reinterpret_cast<uword>(InterpretCall);
 #if defined(DART_INCLUDE_SIMULATOR)
   if (FLAG_use_simulator) {
@@ -4881,7 +4894,7 @@ uword RuntimeEntry::InterpretCallEntry() {
   return entry;
 #else
   return 0;
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Restore suspended interpreter frame and resume execution.
@@ -4890,7 +4903,7 @@ uword RuntimeEntry::InterpretCallEntry() {
 // Arg1: exception
 // Arg2: stack trace
 DEFINE_RUNTIME_ENTRY(ResumeInterpreter, 3) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const Instance& value = Instance::CheckedHandle(zone, arguments.ArgAt(0));
   const Instance& exception = Instance::CheckedHandle(zone, arguments.ArgAt(1));
   const Instance& stack_trace =
@@ -4928,14 +4941,14 @@ DEFINE_RUNTIME_ENTRY(ResumeInterpreter, 3) {
   arguments.SetReturn(result);
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Lazily allocates a coverage array for bytecode prior to recording coverage.
 //
 // Arg0: Bytecode object that needs an allocated coverage array.
 DEFINE_RUNTIME_ENTRY(AllocateBytecodeCoverageArray, 1) {
-#if defined(DART_DYNAMIC_MODULES) && !defined(PRODUCT) &&                      \
+#if defined(DART_BYTECODE_INTERPRETER) && !defined(PRODUCT) &&                      \
     !defined(DART_PRECOMPILED_RUNTIME)
   const auto& bytecode = Bytecode::CheckedHandle(zone, arguments.ArgAt(0));
   const auto& coverage_array =
@@ -4943,7 +4956,7 @@ DEFINE_RUNTIME_ENTRY(AllocateBytecodeCoverageArray, 1) {
   arguments.SetReturn(coverage_array);
 #else
   UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES) && !defined(PRODUCT) &&
+#endif  // defined(DART_BYTECODE_INTERPRETER) && !defined(PRODUCT) &&
         // !defined(DART_PRECOMPILED_RUNTIME)
 }
 

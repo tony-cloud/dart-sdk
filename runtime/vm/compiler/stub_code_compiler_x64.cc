@@ -804,6 +804,16 @@ void StubCodeCompiler::GenerateCallStaticFunctionStub() {
   // Setup space on stack for return value.
   __ pushq(Immediate(0));
   __ CallRuntime(kPatchStaticCallRuntimeEntry, 0);
+#if defined(DART_PRECOMPILED_RUNTIME) && defined(DART_SHOREBIRD_INTERPRETER)
+  __ popq(FUNCTION_REG);  // Get Function object result.
+  __ popq(ARGS_DESC_REG);  // Restore arguments descriptor array.
+  // Remove the stub frame as we are about to jump to the dart function.
+  __ LeaveStubFrame();
+
+  __ LoadCompressed(
+      CODE_REG, FieldAddress(FUNCTION_REG, target::Function::code_offset()));
+  __ jmp(FieldAddress(FUNCTION_REG, target::Function::entry_point_offset()));
+#else
   __ popq(CODE_REG);       // Get Code object result.
   __ popq(ARGS_DESC_REG);  // Restore arguments descriptor array.
   // Remove the stub frame as we are about to jump to the dart function.
@@ -811,6 +821,7 @@ void StubCodeCompiler::GenerateCallStaticFunctionStub() {
 
   __ movq(RBX, FieldAddress(CODE_REG, target::Code::entry_point_offset()));
   __ jmp(RBX);
+#endif
 }
 
 // Called from a static call only when an invalid code has been entered
@@ -1606,7 +1617,7 @@ void StubCodeCompiler::GenerateInvokeDartCodeStub() {
 //   RDX : address of first argument.
 //   RCX : current thread.
 void StubCodeCompiler::GenerateInvokeDartCodeFromBytecodeStub() {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   __ EnterFrame(0);
 
   const Register kTargetReg = CallingConventions::kArg1Reg;
@@ -1750,7 +1761,7 @@ void StubCodeCompiler::GenerateInvokeDartCodeFromBytecodeStub() {
 
 #else
   __ Stop("Not using Dart dynamic modules");
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Helper to generate space allocation of context stub.
@@ -3022,7 +3033,7 @@ void StubCodeCompiler::GenerateLazyCompileStub() {
 // ARGS_DESC_REG: Arguments descriptor.
 // FUNCTION_REG: Function.
 void StubCodeCompiler::GenerateInterpretCallStub() {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 
   __ EnterStubFrame();
 
@@ -3106,7 +3117,7 @@ void StubCodeCompiler::GenerateInterpretCallStub() {
 
 #else
   __ Stop("Not using Dart dynamic modules");
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // RBX: Contains an ICData.

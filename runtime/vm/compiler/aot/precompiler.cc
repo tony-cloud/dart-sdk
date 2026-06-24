@@ -603,7 +603,7 @@ void Precompiler::DoCompileAll() {
         IG->object_store()->set_simple_instance_of_true_function(null_function);
         IG->object_store()->set_simple_instance_of_false_function(
             null_function);
-#if !defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_BYTECODE_INTERPRETER)
         IG->object_store()->set_async_star_stream_controller(null_class);
 #endif
         IG->object_store()->set_native_assets_library(null_library);
@@ -1953,14 +1953,14 @@ void Precompiler::TraceForRetainedFunctions() {
         function.DropUncompiledImplicitClosureFunction();
 
         bool retained = possibly_retained_functions_.ContainsKey(function);
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
         // Retain abstract functions annotated with entry point
         // pragmas as they can be used as targets of interface calls.
         if (function.is_abstract() &&
             functions_with_entry_point_pragmas_.ContainsKey(function)) {
           retained = true;
         }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
         if (retained) {
           AddTypesOf(function);
         }
@@ -2066,6 +2066,7 @@ void Precompiler::FinalizeDispatchTable() {
 
 void Precompiler::ReplaceFunctionStaticCallEntries() {
   PRECOMPILER_TIMER_SCOPE(this, ReplaceFunctionStaticCallEntries);
+
   class StaticCallTableEntryFixer : public CodeVisitor {
    public:
     explicit StaticCallTableEntryFixer(Zone* zone)
@@ -2106,6 +2107,19 @@ void Precompiler::ReplaceFunctionStaticCallEntries() {
 
         ASSERT(view.Get<Code::kSCallTableCodeOrTypeTarget>() == Code::null());
         ASSERT(target_function_.HasCode());
+#if defined(DART_SHOREBIRD_INTERPRETER)
+        if (target_function_.IsShorebirdPatchable()) {
+          // Keep patchable functions as Function targets. Runtime dispatch will
+          // read the current Function::entry_point, which can point at
+          // InterpretCall after a bytecode patch is loaded.
+          if (FLAG_trace_precompiler) {
+            THR_Print("Kept patchable static call entry for %s in \"%s\"\n",
+                      target_function_.ToFullyQualifiedCString(),
+                      code.ToCString());
+          }
+          continue;
+        }
+#endif
         target_code_ = target_function_.CurrentCode();
         ASSERT(!target_code_.IsStubCode());
         view.Set<Code::kSCallTableCodeOrTypeTarget>(target_code_);
@@ -2583,13 +2597,13 @@ void Precompiler::DropTransitiveUserDefinedConstants() {
         if (cls.constants() == Array::null()) {
           continue;
         }
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
         // Retain constant tables of exported classes to allow constant
         // canonicalization at runtime.
         if (HasApiUse(cls)) {
           continue;
         }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
         typedef UnorderedHashSet<CanonicalInstanceTraits> CanonicalInstancesSet;
 
@@ -2929,6 +2943,7 @@ void Precompiler::DiscardCodeObjects() {
           loading_unit_(LoadingUnit::Handle(zone)),
           static_calls_target_table_(Array::Handle(zone)),
           kind_and_offset_(Smi::Handle(zone)),
+          function_target_(Function::Handle(zone)),
           call_target_(Code::Handle(zone)),
           targets_of_calls_via_code_(
               GrowableObjectArray::Handle(zone, GrowableObjectArray::New())),
@@ -2947,6 +2962,16 @@ void Precompiler::DiscardCodeObjects() {
         kind_and_offset_ = view.Get<Code::kSCallTableKindAndOffset>();
         auto const kind = Code::KindField::decode(kind_and_offset_.Value());
         if (kind == Code::kCallViaCode) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+          function_target_ =
+              view.Get<Code::kSCallTableFunctionTarget>();
+          if (!function_target_.IsNull()) {
+            ASSERT(function_target_.HasCode());
+            call_target_ = function_target_.CurrentCode();
+            targets_of_calls_via_code_.Add(call_target_);
+            continue;
+          }
+#endif
           call_target_ =
               Code::RawCast(view.Get<Code::kSCallTableCodeOrTypeTarget>());
           ASSERT(!call_target_.IsNull());
@@ -3070,6 +3095,7 @@ void Precompiler::DiscardCodeObjects() {
     LoadingUnit& loading_unit_;
     Array& static_calls_target_table_;
     Smi& kind_and_offset_;
+    Function& function_target_;
     Code& call_target_;
     GrowableObjectArray& targets_of_calls_via_code_;
     const FunctionSet& functions_to_retain_;

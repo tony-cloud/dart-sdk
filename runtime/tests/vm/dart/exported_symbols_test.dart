@@ -287,6 +287,7 @@ main() {
     "Dart_PrepareToAbort",
     "Dart_PropagateError",
     "Dart_RecordTimelineEvent",
+    "Dart_ReloadBytecodePatch",
     "Dart_RegisterHeapSamplingCallback",
     "Dart_RegisterIsolateServiceRequestCallback",
     "Dart_RegisterRootServiceRequestCallback",

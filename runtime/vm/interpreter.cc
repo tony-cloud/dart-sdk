@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 #include "vm/globals.h"
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 
 #include "vm/interpreter.h"
 
@@ -44,7 +44,7 @@ DEFINE_FLAG(uint64_t,
             100 * MB,
             "Maximum size in bytes of the interpreter trace file");
 
-#if defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_PRECOMPILED_RUNTIME) && !defined(DART_SHOREBIRD_INTERPRETER)
 constexpr bool kDefaultCheckDynamicCalls = true;
 #else
 constexpr bool kDefaultCheckDynamicCalls = false;
@@ -4827,4 +4827,4 @@ void Interpreter::VisitObjectPointers(ObjectPointerVisitor* visitor) {
 
 }  // namespace dart
 
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)

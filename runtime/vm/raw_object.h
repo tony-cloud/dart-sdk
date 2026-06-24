@@ -2058,8 +2058,12 @@ class UntaggedCode : public UntaggedObject {
   POINTER_FIELD(CodeSourceMapPtr, code_source_map)
   NOT_IN_PRECOMPILED(POINTER_FIELD(InstructionsPtr, active_instructions))
   NOT_IN_PRECOMPILED(POINTER_FIELD(ArrayPtr, deopt_info_array))
-  // (code-offset, function, code) triples.
-  NOT_IN_PRECOMPILED(POINTER_FIELD(ArrayPtr, static_calls_target_table))
+  // (code-offset, function, code) triples. Normally omitted from the
+  // precompiled runtime, but retained for Shorebird interpreter patching so
+  // static calls can resolve the current Function::entry_point at runtime.
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_SHOREBIRD_INTERPRETER)
+  POINTER_FIELD(ArrayPtr, static_calls_target_table)
+#endif
   // If return_address_metadata_ is a Smi, it is the offset to the prologue.
   // Else, return_address_metadata_ is null.
   NOT_IN_PRODUCT(POINTER_FIELD(ObjectPtr, return_address_metadata))
@@ -2068,7 +2072,7 @@ class UntaggedCode : public UntaggedObject {
 
 #if !defined(PRODUCT)
   VISIT_TO(comments);
-#elif defined(DART_PRECOMPILED_RUNTIME)
+#elif defined(DART_PRECOMPILED_RUNTIME) && !defined(DART_SHOREBIRD_INTERPRETER)
   VISIT_TO(code_source_map);
 #else
   VISIT_TO(static_calls_target_table);

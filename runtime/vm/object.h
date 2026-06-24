@@ -1772,14 +1772,14 @@ class Class : public Object {
   bool is_loaded() const { return IsLoadedBit::decode(state_bits()); }
   void set_is_loaded(bool value) const;
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   bool is_declared_in_bytecode() const {
     return IsDeclaredInBytecodeBit::decode(state_bits());
   }
   void set_is_declared_in_bytecode(bool value) const;
 #else
   bool is_declared_in_bytecode() const { return false; }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
   uint16_t num_native_fields() const { return untag()->num_native_fields_; }
   void set_num_native_fields(uint16_t value) const {
@@ -3176,6 +3176,10 @@ class Function : public Object {
   bool HasCode() const;
   static bool HasCode(FunctionPtr function);
 
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  bool IsShorebirdPatchable() const;
+#endif
+
   static intptr_t code_offset() { return OFFSET_OF(UntaggedFunction, code_); }
 
   uword entry_point() const { return EntryPointOf(ptr()); }
@@ -3199,7 +3203,7 @@ class Function : public Object {
     return OFFSET_OF(UntaggedFunction, unchecked_entry_point_);
   }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   void AttachBytecode(const Bytecode& bytecode) const;
   void ClearBytecode() const;
   inline BytecodePtr GetBytecode() const;
@@ -3537,11 +3541,11 @@ class Function : public Object {
 
 #undef DEFINE_GETTERS_AND_SETTERS
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   bool is_declared_in_bytecode() const;
 #else
   bool is_declared_in_bytecode() const { return false; }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
   intptr_t kernel_offset() const {
 #if defined(DART_PRECOMPILED_RUNTIME)
@@ -4034,7 +4038,7 @@ class Function : public Object {
 
   static StringPtr CreateDynamicInvocationForwarderName(const String& name);
 
-#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
   FunctionPtr CreateDynamicInvocationForwarder(
       const String& mangled_name) const;
 
@@ -4507,11 +4511,11 @@ class Field : public Object {
     return untag()->kind_bits_.Read<IsDynamicallyCallableBit>();
   }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   bool is_declared_in_bytecode() const;
 #else
   bool is_declared_in_bytecode() const { return false; }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
   intptr_t kernel_offset() const {
 #if defined(DART_PRECOMPILED_RUNTIME)
@@ -4832,10 +4836,10 @@ class Field : public Object {
     return OFFSET_OF(UntaggedField, initializer_function_);
   }
 
-#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
   FunctionPtr CreateFieldInitializerFunction(Thread* thread) const;
   void SetInitializerFunction(const Function& initializer) const;
-#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 
   // Constructs getter and setter names for fields and vice versa.
   static StringPtr GetterName(const String& field_name);
@@ -5067,19 +5071,19 @@ class Script : public Object {
 
   ArrayPtr CollectConstConstructorCoverageFrom() const;
 #if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   void set_collected_constant_coverage(const Array& value) const;
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 #endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
 
  private:
 #if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
   TypedDataViewPtr kernel_constant_coverage() const;
   ArrayPtr CollectConstConstructorCoverageFromKernel() const;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   ArrayPtr collected_constant_coverage() const;
   bool HasCollectedConstantCoverage() const;
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 #endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
 
   void set_debug_positions(const Array& value) const;
@@ -7122,7 +7126,7 @@ class Code : public Object {
 
   void set_static_calls_target_table(const Array& value) const;
   ArrayPtr static_calls_target_table() const {
-#if defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_PRECOMPILED_RUNTIME) && !defined(DART_SHOREBIRD_INTERPRETER)
     UNREACHABLE();
     return nullptr;
 #else
@@ -13555,7 +13559,7 @@ void Object::setPtr(ObjectPtr value, intptr_t default_cid) {
   set_vtable(builtin_vtables_[cid]);
 }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 BytecodePtr Function::GetBytecode() const {
   return GetBytecode(ptr());
 }
@@ -13571,7 +13575,7 @@ bool Function::HasBytecode() const {
 bool Function::HasBytecode(FunctionPtr function) {
   return function.untag()->ic_data_array_or_bytecode()->IsBytecode();
 }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
 intptr_t Field::HostOffset() const {
   ASSERT(is_instance());  // Valid only for dart instance fields.

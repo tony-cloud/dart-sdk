@@ -1134,7 +1134,7 @@ void StubCodeCompiler::GenerateInvokeDartCodeStub() {
 //   ESP + 12: address of first argument.
 //   ESP + 16 : current thread.
 void StubCodeCompiler::GenerateInvokeDartCodeFromBytecodeStub() {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   const intptr_t kTargetCodeOffset = 2 * target::kWordSize;
   const intptr_t kArgumentsDescOffset = 3 * target::kWordSize;
   const intptr_t kArgumentsOffset = 4 * target::kWordSize;
@@ -1254,7 +1254,7 @@ void StubCodeCompiler::GenerateInvokeDartCodeFromBytecodeStub() {
 
 #else
   __ Stop("Not using Dart dynamic modules");
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Helper to generate space allocation of context stub.
@@ -2432,7 +2432,7 @@ void StubCodeCompiler::GenerateLazyCompileStub() {
 // EDX: Arguments descriptor.
 // EAX: Function.
 void StubCodeCompiler::GenerateInterpretCallStub() {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 
   __ EnterStubFrame();
 
@@ -2505,7 +2505,7 @@ void StubCodeCompiler::GenerateInterpretCallStub() {
 
 #else
   __ Stop("Not using Dart dynamic modules");
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 // ECX: Contains an ICData.

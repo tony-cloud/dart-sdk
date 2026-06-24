@@ -619,6 +619,20 @@ void StubCodeCompiler::GenerateCallStaticFunctionStub() {
         Address(SP, 1 * target::kWordSize));      // Preserve args descriptor.
   __ sx(ZR, Address(SP, 0 * target::kWordSize));  // Result slot.
   __ CallRuntime(kPatchStaticCallRuntimeEntry, 0);
+#if defined(DART_PRECOMPILED_RUNTIME) && defined(DART_SHOREBIRD_INTERPRETER)
+  __ lx(FUNCTION_REG, Address(SP, 0 * target::kWordSize));  // Result.
+  __ lx(ARGS_DESC_REG,
+        Address(SP, 1 * target::kWordSize));  // Restore args descriptor.
+  __ addi(SP, SP, 2 * target::kWordSize);
+  __ LeaveStubFrame();
+  // Jump through Function::entry_point so bytecode-attached functions enter
+  // the interpreter without rewriting executable AOT instructions.
+  __ LoadCompressedFieldFromOffset(CODE_REG, FUNCTION_REG,
+                                   target::Function::code_offset());
+  __ LoadFieldFromOffset(TMP, FUNCTION_REG,
+                         target::Function::entry_point_offset());
+  __ jr(TMP);
+#else
   __ lx(CODE_REG, Address(SP, 0 * target::kWordSize));  // Result.
   __ lx(ARGS_DESC_REG,
         Address(SP, 1 * target::kWordSize));  // Restore args descriptor.
@@ -627,6 +641,7 @@ void StubCodeCompiler::GenerateCallStaticFunctionStub() {
   // Jump to the dart function.
   __ LoadFieldFromOffset(TMP, CODE_REG, target::Code::entry_point_offset());
   __ jr(TMP);
+#endif
 }
 
 // Called from a static call only when an invalid code has been entered

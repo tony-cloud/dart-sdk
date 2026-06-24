@@ -112,7 +112,7 @@ class StackFrame : public ValueObject {
   virtual bool IsEntryFrame() const { return false; }
   virtual bool IsExitFrame() const { return false; }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   bool is_interpreted() const { return is_interpreted_; }
 #else
   bool is_interpreted() const { return false; }
@@ -182,7 +182,7 @@ class StackFrame : public ValueObject {
   uword pc_;
   Thread* thread_;
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   bool is_interpreted_ = false;
 #endif
 
@@ -308,7 +308,7 @@ class StackFrameIterator {
     explicit FrameSetIterator(Thread* thread)
         : fp_(0), sp_(0), pc_(0), stack_frame_(thread), thread_(thread) {}
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     bool is_interpreted() const { return is_interpreted_; }
     void CheckIfInterpreted(uword exit_marker);
 #else
@@ -323,7 +323,7 @@ class StackFrameIterator {
     StackFrame stack_frame_;  // Singleton frame returned by NextFrame().
     Thread* thread_;
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     bool is_interpreted_ = false;
 #endif
 

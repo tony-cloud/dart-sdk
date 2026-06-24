@@ -3,7 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 
 #include "vm/globals.h"
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 
 #include "vm/compiler/assembler/disassembler_kbc.h"
 
@@ -583,4 +583,4 @@ void KernelBytecodeDisassembler::PrintLocalVariablesInfo(
 
 }  // namespace dart
 
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)

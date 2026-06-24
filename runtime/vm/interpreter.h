@@ -6,7 +6,7 @@
 #define RUNTIME_VM_INTERPRETER_H_
 
 #include "vm/globals.h"
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 
 #include "platform/utils.h"
 #include "vm/class_table.h"
@@ -326,6 +326,6 @@ class Interpreter {
 
 }  // namespace dart
 
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
 #endif  // RUNTIME_VM_INTERPRETER_H_

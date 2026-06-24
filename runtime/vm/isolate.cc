@@ -70,11 +70,11 @@ DECLARE_FLAG(int, old_gen_growth_time_ratio);
 
 // Reload flags.
 DECLARE_FLAG(int, reload_every);
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
 DECLARE_FLAG(bool, check_reloaded);
 DECLARE_FLAG(bool, reload_every_back_off);
 DECLARE_FLAG(bool, trace_reload);
-#endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_SUPPORT_RELOAD)
 
 static void DeterministicModeHandler(bool value) {
   if (value) {
@@ -315,7 +315,7 @@ IsolateGroup::IsolateGroup(std::shared_ptr<IsolateGroupSource> source,
       mutators_(),
       start_time_micros_(OS::GetCurrentMonotonicMicros()),
       is_system_isolate_group_(source->flags.is_system_isolate),
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
       last_reload_timestamp_(OS::GetCurrentTimeMillis()),
       reload_every_n_stack_overflow_checks_(FLAG_reload_every),
 #endif
@@ -392,10 +392,10 @@ IsolateGroup::IsolateGroup(std::shared_ptr<IsolateGroupSource> source,
     : IsolateGroup(source, embedder_data, nullptr, api_flags) {}
 
 IsolateGroup::~IsolateGroup() {
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
   RELEASE_ASSERT(group_reload_context_ == nullptr);
   RELEASE_ASSERT(program_reload_context_ == nullptr);
-#endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_SUPPORT_RELOAD)
 
   // Ensure we destroy the heap before the other members.
   heap_ = nullptr;
@@ -789,12 +789,12 @@ Bequest::~Bequest() {
 }
 
 void IsolateGroup::RegisterClass(const Class& cls) {
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
   if (IsReloading()) {
     program_reload_context()->RegisterClass(cls);
     return;
   }
-#endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_SUPPORT_RELOAD)
   if (cls.IsTopLevel()) {
     class_table()->RegisterTopLevel(cls);
   } else {
@@ -872,7 +872,7 @@ void IsolateGroup::RegisterStaticField(const Field& field,
 }
 
 void IsolateGroup::FreeStaticField(const Field& field) {
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
   // This can only be called during hot-reload.
   ASSERT(program_reload_context() != nullptr);
 #endif
@@ -1385,7 +1385,7 @@ ErrorPtr IsolateMessageHandler::HandleLibMessage(const Array& message) {
     }
     case Isolate::kCheckForReload: {
       // [ OOB, kCheckForReload, ignored ]
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
       {
         ReloadParticipationScope allow_reload(T);
         T->CheckForSafepoint();
@@ -2075,7 +2075,7 @@ void Isolate::BuildName(const char* name_prefix) {
   }
 }
 
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
 bool IsolateGroup::CanReload() {
   // We only call this method on the mutator thread. Normally the caller is
   // inside of the "reloadSources" service OOB message handler. Though
@@ -2172,7 +2172,7 @@ void IsolateGroup::DeleteReloadContext() {
   delete program_reload_context_;
   program_reload_context_ = nullptr;
 }
-#endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_SUPPORT_RELOAD)
 
 const char* Isolate::MakeRunnable() {
   MutexLocker ml(&mutex_);
@@ -2565,7 +2565,7 @@ void Isolate::LowLevelShutdown() {
   }
 }
 
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
 void IsolateGroup::MaybeIncreaseReloadEveryNStackOverflowChecks() {
   if (FLAG_reload_every_back_off) {
     if (reload_every_n_stack_overflow_checks_ < 5000) {
@@ -2580,7 +2580,7 @@ void IsolateGroup::MaybeIncreaseReloadEveryNStackOverflowChecks() {
     }
   }
 }
-#endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_SUPPORT_RELOAD)
 
 void Isolate::Shutdown() {
   Thread* thread = Thread::Current();
@@ -2601,7 +2601,7 @@ void Isolate::Shutdown() {
 #endif
   }
 
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
   if (FLAG_check_reloaded && is_runnable() && !Isolate::IsSystemIsolate(this)) {
     if (!group()->HasAttemptedReload()) {
       FATAL(
@@ -2609,7 +2609,7 @@ void Isolate::Shutdown() {
           "--check-reloaded is enabled.\n");
     }
   }
-#endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_SUPPORT_RELOAD)
 
   // Then, proceed with low-level teardown.
   Isolate::UnMarkIsolateReady(this);
@@ -2985,13 +2985,13 @@ void IsolateGroup::VisitSharedPointers(ObjectPointerVisitor* visitor,
 #endif
       break;
     case kReloadContext:
-#if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SUPPORT_RELOAD)
       if (program_reload_context() != nullptr) {
         program_reload_context()->VisitObjectPointers(visitor);
         program_reload_context()->group_reload_context()->VisitObjectPointers(
             visitor);
       }
-#endif  // !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(DART_SUPPORT_RELOAD)
       break;
     case kLoadedBlobs:
       if (source()->loaded_blobs_ != nullptr) {

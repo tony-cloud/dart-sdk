@@ -1101,7 +1101,7 @@ class ProfileBuilder : public ValueObject {
       }
     }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     if (profile_code->code().IsBytecode()) {
       const auto& bytecode =
           Bytecode::CheckedHandle(zone, profile_code->code().ptr());

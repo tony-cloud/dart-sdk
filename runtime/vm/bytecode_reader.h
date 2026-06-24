@@ -6,7 +6,7 @@
 #define RUNTIME_VM_BYTECODE_READER_H_
 
 #include "vm/globals.h"
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 
 #include "vm/bit_vector.h"
 #include "vm/constants_kbc.h"
@@ -24,6 +24,7 @@ class BytecodeLoader {
   ~BytecodeLoader();
 
   FunctionPtr LoadBytecode(bool load_code = true);
+  intptr_t LoadBytecodePatch();
   void LoadPendingCode();
 
   TypedDataBasePtr binary() const { return binary_.ptr(); }
@@ -250,6 +251,7 @@ class BytecodeReaderHelper : public ValueObject {
   void ReadLibraryDeclarations(intptr_t num_libraries,
                                const GrowableObjectArray& pending_objects,
                                bool load_code);
+  intptr_t ReadLoadedLibraryBytecodePatch(intptr_t num_libraries);
   void ReadPendingCode(const GrowableObjectArray& pending_objects);
   void FindModifiedLibraries(BitVector* modified_libs, intptr_t num_libraries);
 
@@ -368,6 +370,20 @@ class BytecodeReaderHelper : public ValueObject {
   };
 
   void ReadClosureDeclaration(const Function& function, intptr_t closureIndex);
+  void ReadLoadedLibraryPatchDeclaration(const Library& library,
+                                         intptr_t* installed_functions);
+  void ReadLoadedClassPatchDeclaration(const Class& cls,
+                                       intptr_t* installed_functions);
+  void ReadLoadedMembersPatch(const Class& cls, intptr_t* installed_functions);
+  void ReadLoadedFieldPatchDeclarations(const Class& cls,
+                                        intptr_t* installed_functions);
+  void ReadLoadedFunctionPatchDeclarations(const Class& cls,
+                                           intptr_t* installed_functions);
+  void InstallLoadedFunctionPatch(const Function& function,
+                                  intptr_t code_offset,
+                                  intptr_t* installed_functions);
+  void SkipTypeParametersDeclaration();
+  void SkipAnnotations();
   FunctionTypePtr ReadFunctionSignature(const FunctionType& signature,
                                         const Function& closure_function,
                                         bool has_optional_positional_params,
@@ -773,5 +789,5 @@ class BytecodeRecordedCoverageIterator : ValueObject {
 }  // namespace bytecode
 }  // namespace dart
 
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 #endif  // RUNTIME_VM_BYTECODE_READER_H_

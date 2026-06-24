@@ -211,7 +211,11 @@ namespace dart {
   F(TypedDataView, typed_data_)                                                \
   F(TypedDataView, offset_in_bytes_)
 
+#if defined(DART_SHOREBIRD_INTERPRETER)
+#define AOT_CLASSES_AND_FIELDS(F) F(Code, static_calls_target_table_)
+#else
 #define AOT_CLASSES_AND_FIELDS(F)
+#endif
 
 #define AOT_NON_PRODUCT_CLASSES_AND_FIELDS(F)                                  \
   F(Class, direct_implementors_)                                               \

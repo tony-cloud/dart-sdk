@@ -188,7 +188,7 @@ class NativeArguments {
   friend class NativeEntry;
   friend class Simulator;
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   NativeArguments(Thread* thread,
                   int argc_tag,
                   ObjectPtr* argv,
@@ -198,7 +198,7 @@ class NativeArguments {
         argv_(argv),
         retval_(retval) {}
   NativeArguments() = default;
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
   // Since this function is passed an ObjectPtr directly, we need to be
   // exceedingly careful when we use it.  If there are any other side

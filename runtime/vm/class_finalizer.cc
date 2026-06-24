@@ -439,7 +439,7 @@ AbstractTypePtr ClassFinalizer::FinalizeType(const AbstractType& type,
   }
 }
 
-#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 
 #if defined(TARGET_ARCH_X64)
 static bool IsPotentialExactGeneric(const AbstractType& type) {
@@ -531,7 +531,7 @@ void ClassFinalizer::FinalizeMemberTypes(const Class& cls) {
     }
   }
 }
-#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 
 void ClassFinalizer::FinalizeTypesInClass(const Class& cls) {
   Thread* thread = Thread::Current();
@@ -541,7 +541,7 @@ void ClassFinalizer::FinalizeTypesInClass(const Class& cls) {
     return;
   }
 
-#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
   Zone* zone = thread->zone();
   SafepointWriteRwLocker ml(thread, thread->isolate_group()->program_lock());
   if (cls.is_type_finalized()) {
@@ -603,7 +603,7 @@ void ClassFinalizer::FinalizeTypesInClass(const Class& cls) {
 
 #else
   UNREACHABLE();
-#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 }
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
@@ -700,7 +700,7 @@ void ClassFinalizer::FinalizeClass(const Class& cls) {
     return;
   }
 
-#if defined(DART_PRECOMPILED_RUNTIME) && !defined(DART_DYNAMIC_MODULES)
+#if defined(DART_PRECOMPILED_RUNTIME) && !defined(DART_BYTECODE_INTERPRETER)
   UNREACHABLE();
 #else
   Thread* thread = Thread::Current();
@@ -724,7 +724,7 @@ void ClassFinalizer::FinalizeClass(const Class& cls) {
          (cls.kernel_offset() > 0));
   if (!cls.is_loaded()) {
     if (cls.is_declared_in_bytecode()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
       bytecode::BytecodeReader::FinishClassLoading(cls);
 #else
       UNREACHABLE();
@@ -772,7 +772,7 @@ void ClassFinalizer::FinalizeClass(const Class& cls) {
     cls.set_is_allocate_finalized();
   }
 #endif  // defined(DART_PRECOMPILED_RUNTIME)
-#endif  // defined(DART_PRECOMPILED_RUNTIME) && !defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_PRECOMPILED_RUNTIME) && !defined(DART_BYTECODE_INTERPRETER)
 }
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
@@ -830,7 +830,7 @@ ErrorPtr ClassFinalizer::AllocateFinalizeClass(const Class& cls) {
 
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
-#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 ErrorPtr ClassFinalizer::LoadClassMembers(const Class& cls) {
   ASSERT(IsolateGroup::Current()->program_lock()->IsCurrentThreadWriter());
   ASSERT(!cls.is_finalized());
@@ -894,7 +894,7 @@ void ClassFinalizer::PrintClassInformation(const Class& cls) {
   }
 }
 #endif  // !defined(PRODUCT)
-#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
 

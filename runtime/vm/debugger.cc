@@ -500,7 +500,7 @@ ActivationFrame::Relation ActivationFrame::CompareTo(bool is_interpreted,
   if (fp == other_fp) {
     return kSelf;
   }
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   if (is_interpreted) {
     // Unlike compiled code, interpreted stacks grow towards higher addresses.
     return fp > other_fp ? kCallee : kCaller;
@@ -641,7 +641,7 @@ void ActivationFrame::PrintContextLevelError(const char* message) {
   OS::PrintErr("context_level_ %" Px "\n", context_level_);
   OS::PrintErr("token_pos_ %s\n", token_pos_.ToCString());
   if (IsInterpreted() && bytecode().HasLocalVariablesInfo()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     Zone* const zone = Thread::Current()->zone();
     ZoneTextBuffer buffer(zone);
     KernelBytecodeDisassembler::PrintLocalVariablesInfo(
@@ -672,7 +672,7 @@ intptr_t ActivationFrame::ContextLevel() {
     ASSERT(IsInterpreted() || !code().is_optimized());
     bool found = false;
     if (IsInterpreted()) {
-#if defined(DART_DYNAMIC_MODULES) && !defined(PRODUCT) &&                      \
+#if defined(DART_BYTECODE_INTERPRETER) && !defined(PRODUCT) &&                      \
     !defined(DART_PRECOMPILED_RUNTIME)
       const intptr_t pc_offset = pc() - PayloadStart();
       DEBUG_ONLY(intptr_t closest_start = 0);
@@ -1475,7 +1475,7 @@ CodeBreakpoint::~CodeBreakpoint() {
 void CodeBreakpoint::Enable() {
   if (enabled_count_ == 0) {
     if (bytecode_ != Bytecode::null()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
       ASSERT_EQUAL(saved_opcode_, kMaxUint32);
       saved_opcode_ =
           BytecodePatcher::AddBreakpointAt(pc_, Bytecode::Handle(bytecode_));
@@ -1492,7 +1492,7 @@ void CodeBreakpoint::Enable() {
 void CodeBreakpoint::Disable() {
   if (enabled_count_ == 1) {
     if (bytecode_ != Bytecode::null()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
       BytecodePatcher::RemoveBreakpointAt(pc_, Bytecode::Handle(bytecode_),
                                           saved_opcode_);
       saved_opcode_ = kMaxUint32;
@@ -2318,11 +2318,11 @@ static TokenPosition ResolveBreakpointPos(const Function& func,
   Zone* zone = Thread::Current()->zone();
   Script& script = Script::Handle(zone, func.script());
   PcDescriptors& desc = PcDescriptors::Handle(zone);
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   auto& bytecode = Bytecode::Handle(zone);
 #endif
   if (func.HasBytecode()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     bytecode = func.GetBytecode();
     ASSERT(!bytecode.IsNull());
     if (!bytecode.HasSourcePositions()) {
@@ -2345,7 +2345,7 @@ static TokenPosition ResolveBreakpointPos(const Function& func,
   intptr_t best_line = INT_MAX;
 
   if (func.HasBytecode()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     // Only compiled code has synthetic token positions.
     ASSERT(!requested_token_pos.IsSynthetic());
     bytecode::BytecodeSourcePositionsIterator iter(zone, bytecode);
@@ -2424,7 +2424,7 @@ static TokenPosition ResolveBreakpointPos(const Function& func,
 
     uword lowest_pc_offset = kUwordMax;
     if (func.HasBytecode()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
       bytecode::BytecodeSourcePositionsIterator iter(zone, bytecode);
       while (iter.MoveNext()) {
         const TokenPosition& pos = iter.TokenPos();
@@ -2528,7 +2528,7 @@ void GroupDebugger::MakeCodeBreakpointAtUnsafe(Thread* thread,
   // Find the safe point with the lowest compiled code address
   // that maps to the token position of the source breakpoint.
   if (func.HasBytecode()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     bytecode = func.GetBytecode();
     ASSERT(!bytecode.IsNull());
     if (!bytecode.HasSourcePositions()) {
@@ -3497,7 +3497,7 @@ void Debugger::EnterSingleStepMode() {
 
 void Debugger::ResetSteppingFramePointer() {
   stepping_fp_ = 0;
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   stepping_fp_from_interpreted_frame_ = false;
 #endif
 }
@@ -3533,7 +3533,7 @@ bool Debugger::MatchesLastSteppingInformation(ActivationFrame* frame) {
 
 void Debugger::SetSyncSteppingFramePointer(ActivationFrame* frame) {
   stepping_fp_ = frame->fp();
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   stepping_fp_from_interpreted_frame_ = frame->IsInterpreted();
 #endif
 }
@@ -3963,7 +3963,7 @@ static bool IsAtAsyncJump(ActivationFrame* top_frame) {
     return false;
   }
   if (top_frame->IsInterpreted()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     const auto& bytecode = top_frame->bytecode();
     ASSERT(bytecode.HasSourcePositions());
     const uword pc_offset = top_frame->pc() - bytecode.PayloadStart();
@@ -3998,7 +3998,7 @@ static bool IsAtAsyncJump(ActivationFrame* top_frame) {
   return false;
 }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 static ActivationFrame::Relation CompareTopDartFrameTo(uword other_fp,
                                                        bool is_interpreted) {
   StackFrameIterator iterator(ValidationPolicy::kDontValidateFrames,
@@ -4041,7 +4041,7 @@ ErrorPtr Debugger::PauseStepping() {
     // interested in. If we saved the frame pointer of a stack frame
     // the user is interested in, we ignore the single step if we are
     // in a callee of that frame.
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     auto const relation =
         stepping_fp_from_interpreted_frame_ == frame->IsInterpreted()
             ? frame->CompareTo(stepping_fp_)

@@ -1133,7 +1133,7 @@ class RetainingPath {
     Function& function = Function::Handle(zone_);
 #if !defined(DART_PRECOMPILED_RUNTIME) && !defined(PRODUCT)
     Code& code = Code::Handle(zone_);
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     Bytecode& bytecode = Bytecode::Handle(zone_);
 #endif
     LocalVarDescriptors& var_descriptors = LocalVarDescriptors::Handle(zone_);
@@ -1194,12 +1194,12 @@ class RetainingPath {
             // Attempt to convert "instance <- Context+ <- Closure" into
             // "instance <- local var name in Closure".
             if (function.is_declared_in_bytecode()) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
               bytecode = function.GetBytecode();
               var_descriptors = bytecode.GetLocalVarDescriptors();
 #else
               UNREACHABLE();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
             } else {
               if (!function.ForceOptimize()) {
                 function.EnsureHasCompiledUnoptimizedCode();

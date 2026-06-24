@@ -139,14 +139,14 @@ ObjectPtr DartEntry::InvokeFunction(const Function& function,
   ASSERT(thread->IsDartMutatorThread());
   ASSERT(!function.IsNull());
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   if (function.IsInterpreted()) {
     // SuspendLongJumpScope suspend_long_jump_scope(thread);
     TransitionToGenerated transition(thread);
     return Interpreter::Current()->Call(function, arguments_descriptor,
                                         arguments, thread);
   }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
   if (!function.HasCode()) {

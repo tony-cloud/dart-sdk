@@ -809,7 +809,7 @@ void ClosureCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
     // R0: Closure with a cached entry point.
     __ ldr(R2, compiler::FieldAddress(
                    R0, compiler::target::Closure::entry_point_offset()));
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     ASSERT(FUNCTION_REG != R2);
     __ ldr(FUNCTION_REG, compiler::FieldAddress(
                              R0, compiler::target::Closure::function_offset()));

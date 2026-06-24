@@ -87,7 +87,7 @@ void _printGeneratedStackTrace(uword fp, uword sp, uword pc) {
   }
 }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 // Like _printDartStackTrace, but works in the interpreter loop.
 // Must be called with the current interpreter fp, sp, and pc.
 // Note that sp[0] is not modified, but sp[1] will be trashed.
@@ -107,7 +107,7 @@ void _printInterpreterStackTrace(ObjectPtr* fp,
   thread->set_execution_state(Thread::kThreadInGenerated);
   thread->set_top_exit_frame_info(0);
 }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
 class PrintObjectPointersVisitor : public ObjectPointerVisitor {
  public:

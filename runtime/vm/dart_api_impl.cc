@@ -39,6 +39,7 @@
 #include "vm/heap/verifier.h"
 #include "vm/image_snapshot.h"
 #include "vm/isolate_reload.h"
+#include "vm/json_stream.h"
 #include "vm/kernel_isolate.h"
 #include "vm/lockers.h"
 #include "vm/mach_o.h"
@@ -5600,7 +5601,7 @@ DART_EXPORT Dart_Handle Dart_LoadScriptFromKernel(const uint8_t* buffer,
 
 DART_EXPORT Dart_Handle Dart_LoadScriptFromBytecode(const uint8_t* buffer,
                                                     intptr_t buffer_size) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   DARTSCOPE(Thread::Current());
   API_TIMELINE_DURATION(T);
   StackZone zone(T);
@@ -5634,9 +5635,9 @@ DART_EXPORT Dart_Handle Dart_LoadScriptFromBytecode(const uint8_t* buffer,
   return Api::NewHandle(T, library.ptr());
 #else
   return Api::NewError(
-      "%s: Cannot load bytecode as dynamic modules are disabled.",
+      "%s: Cannot load bytecode because the bytecode interpreter is disabled.",
       CURRENT_FUNC);
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 DART_EXPORT DART_API_WARN_UNUSED_RESULT Dart_Handle
@@ -5998,7 +5999,7 @@ DART_EXPORT Dart_Handle Dart_LoadLibrary(Dart_Handle kernel_buffer) {
 
 DART_EXPORT Dart_Handle
 Dart_LoadLibraryFromBytecode(Dart_Handle bytecode_buffer) {
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   DARTSCOPE(Thread::Current());
   const ExternalTypedData& td =
       Api::UnwrapExternalTypedDataHandle(Z, bytecode_buffer);
@@ -6014,9 +6015,101 @@ Dart_LoadLibraryFromBytecode(Dart_Handle bytecode_buffer) {
   return Api::NewHandle(T, Class::Handle(function.Owner()).library());
 #else
   return Api::NewError(
-      "%s: Cannot load bytecode as dynamic modules are disabled.",
+      "%s: Cannot load bytecode because the bytecode interpreter is disabled.",
       CURRENT_FUNC);
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
+}
+
+DART_EXPORT Dart_Handle
+Dart_ReloadBytecodePatch(const uint8_t* bytecode_buffer,
+                         intptr_t bytecode_buffer_size) {
+#if defined(DART_SHOREBIRD_INTERPRETER) && defined(DART_BYTECODE_INTERPRETER) && \
+    defined(DART_PRECOMPILED_RUNTIME)
+  Thread* thread = Thread::Current();
+  DARTSCOPE(thread);
+  API_TIMELINE_DURATION(thread);
+
+  if (bytecode_buffer == nullptr) {
+    RETURN_NULL_ERROR(bytecode_buffer);
+  }
+  if (bytecode_buffer_size <= 0) {
+    return Api::NewError("Bytecode patch buffer must not be empty.");
+  }
+  if (!Dart_IsBytecode(bytecode_buffer, bytecode_buffer_size)) {
+    return Api::NewError(
+        "Bytecode patch buffer is not a Dart bytecode program.");
+  }
+
+  uint8_t* owned_buffer = reinterpret_cast<uint8_t*>(
+      malloc(Utils::Maximum<intptr_t>(bytecode_buffer_size, 1)));
+  if (owned_buffer == nullptr) {
+    return Api::NewError("Failed to allocate Dart bytecode patch buffer.");
+  }
+  memmove(owned_buffer, bytecode_buffer, bytecode_buffer_size);
+
+  const ExternalTypedData& typed_data = ExternalTypedData::Handle(
+      thread->zone(), ExternalTypedData::New(kExternalTypedDataUint8ArrayCid,
+                                             owned_buffer,
+                                             bytecode_buffer_size));
+  intptr_t installed_functions = 0;
+  {
+    SafepointWriteRwLocker ml(thread, thread->isolate_group()->program_lock());
+    bytecode::BytecodeLoader loader(thread, typed_data);
+    installed_functions = loader.LoadBytecodePatch();
+  }
+
+  if (installed_functions == 0) {
+    free(owned_buffer);
+    return Api::NewError(
+        "Dart bytecode patch did not match any loaded app functions.");
+  }
+  return Api::Success();
+#elif defined(DART_SUPPORT_RELOAD) && defined(DART_BYTECODE_INTERPRETER)
+  Thread* thread = Thread::Current();
+  DARTSCOPE(thread);
+  API_TIMELINE_DURATION(thread);
+
+  if (bytecode_buffer == nullptr) {
+    RETURN_NULL_ERROR(bytecode_buffer);
+  }
+  if (bytecode_buffer_size <= 0) {
+    return Api::NewError("Bytecode patch buffer must not be empty.");
+  }
+  if (!Dart_IsBytecode(bytecode_buffer, bytecode_buffer_size)) {
+    return Api::NewError(
+        "Bytecode patch buffer is not a Dart bytecode program.");
+  }
+
+  IsolateGroup* isolate_group = thread->isolate_group();
+  CHECK_ISOLATE_GROUP(isolate_group);
+  if (isolate_group->IsReloading()) {
+    return Api::NewError("A Dart bytecode patch reload is already active.");
+  }
+  if (!isolate_group->CanReload()) {
+    return Api::NewError(
+        "The current isolate group cannot apply a Dart bytecode patch reload.");
+  }
+
+  uint8_t* owned_buffer = reinterpret_cast<uint8_t*>(
+      malloc(Utils::Maximum<intptr_t>(bytecode_buffer_size, 1)));
+  if (owned_buffer == nullptr) {
+    return Api::NewError("Failed to allocate Dart bytecode patch buffer.");
+  }
+  memmove(owned_buffer, bytecode_buffer, bytecode_buffer_size);
+
+  JSONStream js;
+  const bool success = isolate_group->ReloadKernel(
+      &js, /*force_reload=*/false, owned_buffer, bytecode_buffer_size);
+  if (!success) {
+    return Api::NewError("Dart bytecode patch reload failed: %s",
+                         js.ToCString());
+  }
+  return Api::Success();
+#else
+  return Api::NewError(
+      "%s: Dart bytecode patch reload is not enabled in this VM.",
+      CURRENT_FUNC);
+#endif  // defined(DART_SUPPORT_RELOAD) && defined(DART_BYTECODE_INTERPRETER)
 }
 
 // Finalizes classes and invokes Dart core library function that completes
@@ -7297,6 +7390,18 @@ Dart_AotPatchKeyCallback g_aot_patch_key_callback = nullptr;
 #endif
 
 #if defined(DART_ENABLE_AOT_PATCHING)
+static constexpr const char* kAotPatchRuntimeModeNativeAot = "native-aot";
+static constexpr const char* kAotPatchRuntimeModeInterpreter =
+    "dart-bytecode-interpreter";
+static constexpr const char* kAotPatchRuntimeModeDynamicModules =
+    "dart-dynamic-modules";
+static constexpr const char* kAotPatchRuntimeModeDynamicModulesLegacy =
+    "dynamic-modules";
+static constexpr const char* kAotPatchPayloadKindEmpty = "empty";
+static constexpr const char* kAotPatchPayloadKindFullSnapshot =
+    "full-snapshot";
+static constexpr const char* kAotPatchPayloadKindBinaryDiff = "binary-diff-v1";
+
 struct AotPatchJsonString {
   const char* chars;
   intptr_t length;
@@ -7402,6 +7507,154 @@ static char* CopyAotPatchJsonString(Thread* thread,
   memmove(copy, value.chars, value.length);
   copy[value.length] = '\0';
   return copy;
+}
+
+static bool AotPatchRuntimeModeNameEquals(const char* actual,
+                                          const char* expected) {
+  return actual != nullptr && strcmp(actual, expected) == 0;
+}
+
+static bool IsAotPatchRuntimeModeDynamicModules(const char* runtime_mode) {
+  return AotPatchRuntimeModeNameEquals(runtime_mode,
+                                       kAotPatchRuntimeModeDynamicModules) ||
+         AotPatchRuntimeModeNameEquals(
+             runtime_mode, kAotPatchRuntimeModeDynamicModulesLegacy);
+}
+
+static bool IsAotPatchRuntimeModeDynamicModules(
+    const AotPatchJsonString& runtime_mode) {
+  return AotPatchJsonStringEquals(runtime_mode,
+                                  kAotPatchRuntimeModeDynamicModules) ||
+         AotPatchJsonStringEquals(runtime_mode,
+                                  kAotPatchRuntimeModeDynamicModulesLegacy);
+}
+
+static bool IsAotPatchRuntimeModeInterpreter(const char* runtime_mode) {
+  return AotPatchRuntimeModeNameEquals(runtime_mode,
+                                       kAotPatchRuntimeModeInterpreter);
+}
+
+static bool IsAotPatchRuntimeModeInterpreter(
+    const AotPatchJsonString& runtime_mode) {
+  return AotPatchJsonStringEquals(runtime_mode,
+                                  kAotPatchRuntimeModeInterpreter);
+}
+
+static bool IsAotPatchRuntimeModeSupported(const char* runtime_mode) {
+  return AotPatchRuntimeModeNameEquals(runtime_mode,
+                                       kAotPatchRuntimeModeNativeAot) ||
+         AotPatchRuntimeModeNameEquals(runtime_mode,
+                                       kAotPatchRuntimeModeInterpreter);
+}
+
+static bool IsAotPatchRuntimeModeSupported(
+    const AotPatchJsonString& runtime_mode) {
+  return AotPatchJsonStringEquals(runtime_mode,
+                                  kAotPatchRuntimeModeNativeAot) ||
+         AotPatchJsonStringEquals(runtime_mode,
+                                  kAotPatchRuntimeModeInterpreter);
+}
+
+static Dart_Handle ValidateAotPatchRuntimeMode(
+    const char* json,
+    intptr_t json_length,
+    const Dart_AotPatchInstallOptions* options) {
+  AotPatchJsonString runtime_mode;
+  const bool has_runtime_mode =
+      FindAotPatchJsonString(json, json_length, "runtime_mode", &runtime_mode);
+
+  if (options->runtime_mode != nullptr) {
+    if (IsAotPatchRuntimeModeDynamicModules(options->runtime_mode)) {
+      return Api::NewError(
+          "DART_DYNAMIC_MODULES is not supported for AOT patch artifacts.");
+    }
+    if (!IsAotPatchRuntimeModeSupported(options->runtime_mode)) {
+      return Api::NewError("Unsupported AOT patch runtime mode \"%s\".",
+                           options->runtime_mode);
+    }
+    if (has_runtime_mode) {
+      if (!AotPatchJsonStringEquals(runtime_mode, options->runtime_mode)) {
+        return Api::NewError(
+            "AOT patch artifact field \"runtime_mode\" does not match.");
+      }
+    } else if (!AotPatchRuntimeModeNameEquals(options->runtime_mode,
+                                              kAotPatchRuntimeModeNativeAot)) {
+      return Api::NewError(
+          "AOT patch artifact is missing field "
+          "\"runtime_mode\".");
+    }
+  }
+
+  if (has_runtime_mode) {
+    if (IsAotPatchRuntimeModeDynamicModules(runtime_mode)) {
+      return Api::NewError(
+          "DART_DYNAMIC_MODULES is not supported for AOT patch artifacts.");
+    }
+    if (!IsAotPatchRuntimeModeSupported(runtime_mode)) {
+      return Api::NewError("Unsupported AOT patch runtime mode.");
+    }
+  }
+
+  const bool is_native_aot =
+      !has_runtime_mode ||
+      AotPatchJsonStringEquals(runtime_mode, kAotPatchRuntimeModeNativeAot);
+  if (strcmp(options->target_os, "ios") == 0 && is_native_aot) {
+    return Api::NewError(
+        "iOS AOT patches must use the no-DDM interpreter runtime mode.");
+  }
+  return Api::Success();
+}
+
+static bool IsAotPatchPayloadKindSupported(
+    const AotPatchJsonString& payload_kind) {
+  return AotPatchJsonStringEquals(payload_kind, kAotPatchPayloadKindEmpty) ||
+         AotPatchJsonStringEquals(payload_kind,
+                                  kAotPatchPayloadKindFullSnapshot) ||
+         AotPatchJsonStringEquals(payload_kind,
+                                  kAotPatchPayloadKindBinaryDiff);
+}
+
+static bool AotPatchEffectiveRuntimeModeIsInterpreter(
+    const char* json,
+    intptr_t json_length,
+    const Dart_AotPatchInstallOptions* options) {
+  if (options->runtime_mode != nullptr) {
+    return IsAotPatchRuntimeModeInterpreter(options->runtime_mode);
+  }
+
+  AotPatchJsonString runtime_mode;
+  return FindAotPatchJsonString(json, json_length, "runtime_mode",
+                                &runtime_mode) &&
+         IsAotPatchRuntimeModeInterpreter(runtime_mode);
+}
+
+static Dart_Handle ValidateAotPatchPayloadKind(
+    const char* json,
+    intptr_t json_length,
+    const Dart_AotPatchInstallOptions* options) {
+  const bool is_interpreter =
+      AotPatchEffectiveRuntimeModeIsInterpreter(json, json_length, options);
+  AotPatchJsonString payload_kind;
+  if (!FindAotPatchJsonString(json, json_length, "payload_kind",
+                              &payload_kind)) {
+    if (is_interpreter) {
+      return Api::NewError(
+          "Dart bytecode interpreter AOT patches must declare payload_kind "
+          "\"full-snapshot\".");
+    }
+    return Api::Success();
+  }
+  if (!IsAotPatchPayloadKindSupported(payload_kind)) {
+    return Api::NewError("Unsupported AOT patch payload kind.");
+  }
+  if (is_interpreter &&
+      !AotPatchJsonStringEquals(payload_kind,
+                                kAotPatchPayloadKindFullSnapshot)) {
+    return Api::NewError(
+        "Dart bytecode interpreter AOT patches must use payload_kind "
+        "\"full-snapshot\" until runtime reconstruction is available.");
+  }
+  return Api::Success();
 }
 
 struct AotPatchOwnedBuffer {
@@ -7518,7 +7771,9 @@ static Dart_Handle BuildAotPatchMetadataAad(const char* json,
   APPEND_FIELD("flavor_id", true);
   APPEND_FIELD("license_type", true);
   APPEND_FIELD("obfuscation_map_hash", false);
+  APPEND_FIELD("offline_expires_at", false);
   APPEND_FIELD("patch_snapshot_hash", true);
+  APPEND_FIELD("runtime_mode", false);
   APPEND_FIELD("sdk_hash", true);
   APPEND_FIELD("target_arch", true);
   APPEND_FIELD("target_os", true);
@@ -7635,6 +7890,10 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
                                        options->obfuscation_map_hash);
     if (Api::IsError(result)) return result;
   }
+  result = ValidateAotPatchRuntimeMode(json, patch_buffer_length, options);
+  if (Api::IsError(result)) return result;
+  result = ValidateAotPatchPayloadKind(json, patch_buffer_length, options);
+  if (Api::IsError(result)) return result;
 
   AotPatchJsonString key_id;
   if (!FindAotPatchJsonString(json, patch_buffer_length, "key_id", &key_id)) {

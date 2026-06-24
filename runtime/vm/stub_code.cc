@@ -137,7 +137,7 @@ bool StubCode::InInvocationStub(Thread* T,
   Roots* roots = T->isolate_group()->roots();
   if (roots == nullptr) return false;
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   if (is_interpreted_frame) {
     // Recognize special marker set up by interpreter in entry frame.
     return Interpreter::IsEntryFrameMarker(
@@ -151,7 +151,7 @@ bool StubCode::InInvocationStub(Thread* T,
       return true;
     }
   }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
   const Code& stub = roots->x_stub_handle(kInvokeDartCodeIndex);
   uword entry = Code::StubEntryPointOf(stub.ptr());
   uword size = Code::StubPayloadSizeOf(stub.ptr());

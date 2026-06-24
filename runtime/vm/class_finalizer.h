@@ -65,13 +65,13 @@ class ClassFinalizer : public AllStatic {
   static ErrorPtr AllocateFinalizeClass(const Class& cls);
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
-#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
   // Completes loading of the class, this populates the function
   // and fields of the class.
   //
   // Returns Error::null() if there is no loading error.
   static ErrorPtr LoadClassMembers(const Class& cls);
-#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#endif  // !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
   // Verify that the classes have been properly prefinalized. This is
@@ -90,7 +90,7 @@ class ClassFinalizer : public AllStatic {
                                      const TypeParameters& type_params,
                                      FinalizationKind finalization);
 
-#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_DYNAMIC_MODULES)
+#if !defined(DART_PRECOMPILED_RUNTIME) || defined(DART_BYTECODE_INTERPRETER)
   static void FinalizeMemberTypes(const Class& cls);
 #if !defined(PRODUCT)
   static void PrintClassInformation(const Class& cls);

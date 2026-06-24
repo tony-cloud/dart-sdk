@@ -734,7 +734,7 @@ void GCMarker::Prologue() {
   isolate_group_->ReleaseStoreBuffers();
   new_marking_stack_.PushAll(tlab_deferred_marking_stack_.PopAll());
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   isolate_group_->ForEachIsolate(
       [&](Isolate* isolate) {
         Thread* mutator_thread = isolate->mutator_thread();
@@ -746,7 +746,7 @@ void GCMarker::Prologue() {
         }
       },
       /*at_safepoint=*/true);
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 void GCMarker::Epilogue() {}

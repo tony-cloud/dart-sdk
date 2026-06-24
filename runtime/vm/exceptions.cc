@@ -587,13 +587,13 @@ NO_SANITIZE_SAFE_STACK  // This function manipulates the safestack pointer.
   // in the previous frames.
   StackResource::Unwind(thread);
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   Interpreter* interpreter = thread->interpreter();
   if ((interpreter != nullptr) && interpreter->HasFrame(frame_pointer)) {
     interpreter->JumpToFrame(program_counter, stack_pointer, frame_pointer,
                              thread);
   }
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
   // If execution exited generated code through FFI then exit the safepoint
   // and transition back to kThreadInGenerated execution state. JumpToFrame

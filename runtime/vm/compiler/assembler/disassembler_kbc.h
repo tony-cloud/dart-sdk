@@ -6,7 +6,7 @@
 #define RUNTIME_VM_COMPILER_ASSEMBLER_DISASSEMBLER_KBC_H_
 
 #include "vm/globals.h"
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 
 #include "vm/compiler/assembler/disassembler.h"
 
@@ -114,6 +114,6 @@ class KernelBytecodeDisassembler : public AllStatic {
 
 }  // namespace dart
 
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
 #endif  // RUNTIME_VM_COMPILER_ASSEMBLER_DISASSEMBLER_KBC_H_

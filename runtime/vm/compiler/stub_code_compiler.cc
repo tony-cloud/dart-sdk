@@ -230,14 +230,14 @@ void StubCodeCompiler::GenerateInitLateInstanceFieldStub(bool is_final) {
   if (!FLAG_precompiled_mode) {
     __ LoadCompressedFieldFromOffset(CODE_REG, FUNCTION_REG,
                                      target::Function::code_offset());
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
     // InterpretCall stub needs arguments descriptor for all function calls.
     __ LoadObject(ARGS_DESC_REG, ArgumentsDescriptorBoxed(/*type_args_len=*/0,
                                                           /*num_arguments=*/1));
 #else
     // Load a GC-safe value for the arguments descriptor (unused but tagged).
     __ LoadImmediate(ARGS_DESC_REG, 0);
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
   }
   if (FLAG_target_thread_sanitizer) {
     __ TsanFuncEntry();
@@ -2481,7 +2481,7 @@ void StubCodeCompiler::GenerateResumeStub() {
   static_assert((kStackTrace != CODE_REG) && (kStackTrace != PP),
                 "should not interfere");
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
   Label resume_interpreter;
   __ CompareWithMemoryValue(
       kResumePc,
@@ -2489,7 +2489,7 @@ void StubCodeCompiler::GenerateResumeStub() {
                         compiler::target::Thread::
                             resume_interpreter_adjusted_entry_point_offset()));
   __ BranchIf(EQUAL, &resume_interpreter);
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 
   // Set return address as if suspended Dart function called
   // stub with kResumePc as a return address.
@@ -2516,7 +2516,7 @@ void StubCodeCompiler::GenerateResumeStub() {
     __ Ret();
   }
 
-#if defined(DART_DYNAMIC_MODULES)
+#if defined(DART_BYTECODE_INTERPRETER)
 #if defined(TARGET_ARCH_ARM) || defined(TARGET_ARCH_ARM64)
   // This case is used when Dart frame is still on the stack.
   if (FLAG_precompiled_mode) {
@@ -2535,7 +2535,7 @@ void StubCodeCompiler::GenerateResumeStub() {
   __ PopRegister(CallingConventions::kReturnReg);  // Get result.
   __ LeaveDartFrame();
   __ Ret();
-#endif  // defined(DART_DYNAMIC_MODULES)
+#endif  // defined(DART_BYTECODE_INTERPRETER)
 }
 
 void StubCodeCompiler::GenerateReturnStub(

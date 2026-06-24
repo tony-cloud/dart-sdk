@@ -387,6 +387,7 @@ typedef Dart_Handle (*Dart_LibraryHandleErrorType)(Dart_Handle, Dart_Handle);
 typedef Dart_Handle (*Dart_LoadLibraryFromKernelType)(const uint8_t*, intptr_t);
 typedef Dart_Handle (*Dart_LoadLibraryType)(Dart_Handle);
 typedef Dart_Handle (*Dart_LoadLibraryFromBytecodeType)(Dart_Handle);
+typedef Dart_Handle (*Dart_ReloadBytecodePatchType)(const uint8_t*, intptr_t);
 typedef Dart_Handle (*Dart_FinalizeLoadingType)(bool);
 typedef Dart_Handle (*Dart_GetPeerType)(Dart_Handle, void**);
 typedef Dart_Handle (*Dart_SetPeerType)(Dart_Handle, void*);
@@ -741,6 +742,7 @@ static Dart_LibraryHandleErrorType Dart_LibraryHandleErrorFn = NULL;
 static Dart_LoadLibraryFromKernelType Dart_LoadLibraryFromKernelFn = NULL;
 static Dart_LoadLibraryType Dart_LoadLibraryFn = NULL;
 static Dart_LoadLibraryFromBytecodeType Dart_LoadLibraryFromBytecodeFn = NULL;
+static Dart_ReloadBytecodePatchType Dart_ReloadBytecodePatchFn = NULL;
 static Dart_FinalizeLoadingType Dart_FinalizeLoadingFn = NULL;
 static Dart_GetPeerType Dart_GetPeerFn = NULL;
 static Dart_SetPeerType Dart_SetPeerFn = NULL;
@@ -1313,6 +1315,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
     Dart_LoadLibraryFromBytecodeFn =
         (Dart_LoadLibraryFromBytecodeType)GetProcAddress(
             process, "Dart_LoadLibraryFromBytecode");
+    Dart_ReloadBytecodePatchFn = (Dart_ReloadBytecodePatchType)GetProcAddress(
+        process, "Dart_ReloadBytecodePatch");
     Dart_FinalizeLoadingFn = (Dart_FinalizeLoadingType)GetProcAddress(
         process, "Dart_FinalizeLoading");
     Dart_GetPeerFn = (Dart_GetPeerType)GetProcAddress(process, "Dart_GetPeer");
@@ -2542,6 +2546,11 @@ Dart_Handle Dart_LoadLibrary(Dart_Handle kernel_buffer) {
 
 Dart_Handle Dart_LoadLibraryFromBytecode(Dart_Handle bytecode_buffer) {
   return Dart_LoadLibraryFromBytecodeFn(bytecode_buffer);
+}
+
+Dart_Handle Dart_ReloadBytecodePatch(const uint8_t* bytecode_buffer,
+                                     intptr_t bytecode_buffer_size) {
+  return Dart_ReloadBytecodePatchFn(bytecode_buffer, bytecode_buffer_size);
 }
 
 Dart_Handle Dart_FinalizeLoading(bool complete_futures) {
