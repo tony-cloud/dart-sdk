@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:analysis_server/lsp_protocol/protocol.dart';
 import 'package:analysis_server/src/lsp/constants.dart';
 import 'package:analysis_server/src/lsp/extensions/code_action.dart';
+import 'package:analysis_server/src/services/correction/assist.dart';
 import 'package:analysis_server/src/services/correction/assist_internal.dart';
 import 'package:analyzer/src/test_utilities/test_code_format.dart';
 import 'package:test/test.dart';
@@ -345,14 +346,14 @@ build() {
     );
 
     // Also ensure there was a single edit that was correctly marked
-    // as a SnippetTextEdit.
+    // as a SnippetableTextEdit.
     var textEdits = extractTextDocumentEdits(verifier.edit.documentChanges!)
         .expand((tde) => tde.edits)
         .map(
           (edit) => edit.map(
-            (e) => throw 'Expected SnippetTextEdit, got AnnotatedTextEdit',
+            (e) => throw 'Expected SnippetableTextEdit, got AnnotatedTextEdit',
             (e) => e,
-            (e) => throw 'Expected SnippetTextEdit, got TextEdit',
+            (e) => throw 'Expected SnippetableTextEdit, got TextEdit',
           ),
         )
         .toList();
@@ -397,7 +398,7 @@ build() {
     // Ensure the edit does _not_ have a format of Snippet, nor does it include
     // any $ characters that would indicate snippet text.
     for (var edit in textEdits) {
-      expect(edit, isNot(TypeMatcher<SnippetTextEdit>()));
+      expect(edit, isNot(TypeMatcher<SnippetableTextEdit>()));
       expect(edit.newText, isNot(contains(r'$')));
     }
   }
@@ -427,8 +428,8 @@ build() => Contai^ner(child: Container());
         // Check the ordering for two well-known assists that should always be
         // sorted this way.
         // https://github.com/Dart-Code/Dart-Code/issues/3646
-        'Wrap with widget...',
-        'Remove this widget',
+        DartAssistKind.flutterWrapGeneric.message,
+        DartAssistKind.flutterRemoveWidget.message,
       ]),
     );
   }
@@ -457,14 +458,14 @@ void f() {
     );
 
     // Also ensure there was a single edit that was correctly marked
-    // as a SnippetTextEdit.
+    // as a SnippetableTextEdit.
     var textEdits = extractTextDocumentEdits(verifier.edit.documentChanges!)
         .expand((tde) => tde.edits)
         .map(
           (edit) => edit.map(
-            (e) => throw 'Expected SnippetTextEdit, got AnnotatedTextEdit',
+            (e) => throw 'Expected SnippetableTextEdit, got AnnotatedTextEdit',
             (e) => e,
-            (e) => throw 'Expected SnippetTextEdit, got TextEdit',
+            (e) => throw 'Expected SnippetableTextEdit, got TextEdit',
           ),
         )
         .toList();

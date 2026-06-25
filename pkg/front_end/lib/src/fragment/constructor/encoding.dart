@@ -93,10 +93,10 @@ abstract class ConstructorEncoding {
   void registerFunctionBody({
     required Statement? body,
     Scope? scope,
-    Variable? thisVariable,
+    required ThisVariable? thisVariable,
   });
 
-  void registerNoBodyConstructor();
+  void registerNoBodyConstructor({required ThisVariable? thisVariable});
 
   void addSuperParameterDefaultValueCloners({
     required List<DelayedDefaultValueCloner> delayedDefaultValueCloners,
@@ -139,19 +139,23 @@ class RegularConstructorEncoding implements ConstructorEncoding {
   void registerFunctionBody({
     required Statement? body,
     Scope? scope,
-    Variable? thisVariable,
+    required ThisVariable? thisVariable,
   }) {
     if (body != null) {
       _constructor.function.registerFunctionBody(body);
     }
     _constructor.function.scope = scope;
-    _constructor.function.thisVariable = thisVariable;
+    _constructor.function.thisVariable = thisVariable
+      ?..parent = _constructor.function;
   }
 
   @override
-  void registerNoBodyConstructor() {
+  void registerNoBodyConstructor({required ThisVariable? thisVariable}) {
     if (!_isExternal) {
-      registerFunctionBody(body: extern.createEmptyStatement());
+      registerFunctionBody(
+        body: extern.createEmptyStatement(),
+        thisVariable: thisVariable,
+      );
     }
   }
 
@@ -528,19 +532,24 @@ mixin _ExtensionTypeConstructorEncodingMixin<T extends DeclarationBuilder>
   void registerFunctionBody({
     required Statement? body,
     Scope? scope,
-    Variable? thisVariable,
+    required ThisVariable? thisVariable,
   }) {
     if (body != null) {
       _constructor.function.registerFunctionBody(body);
     }
     _constructor.function.scope = scope;
-    _constructor.function.thisVariable = thisVariable;
+    _constructor.function.thisVariable =
+        // Coverage-ignore(suite): Not run.
+        thisVariable?..parent = _constructor.function;
   }
 
   @override
-  void registerNoBodyConstructor() {
+  void registerNoBodyConstructor({required ThisVariable? thisVariable}) {
     if (!_hasBuiltBody && !_isExternal) {
-      registerFunctionBody(body: extern.createEmptyStatement());
+      registerFunctionBody(
+        body: extern.createEmptyStatement(),
+        thisVariable: thisVariable,
+      );
     }
   }
 
@@ -633,15 +642,12 @@ mixin _ExtensionTypeConstructorEncodingMixin<T extends DeclarationBuilder>
         typeArguments = [];
       }
 
-      _thisVariable = intern.createPositionalParameter(
-        isClosureContextLoweringEnabled:
-            libraryBuilder.loader.isClosureContextLoweringEnabled,
-        cosmeticName: syntheticThisName,
+      _thisVariable = intern.createSyntheticVariable(
+        name: syntheticThisName,
         type: _computeThisType(declarationBuilder, typeArguments),
         isFinal: true,
         isLowered: true,
-        forSyntheticToken: false,
-        isImplicitlyTyped: false,
+        isSynthesized: false,
         fileOffset: fileOffset,
       );
 
@@ -796,6 +802,7 @@ mixin _ExtensionTypeConstructorEncodingMixin<T extends DeclarationBuilder>
           fileOffset: fileOffset,
           fileEndOffset: endOffset,
         ),
+        thisVariable: null,
       );
     }
     _hasBuiltBody = true;
@@ -1161,9 +1168,7 @@ abstract class ConstructorEncodingStrategy {
     switch (declarationBuilder) {
       case ClassBuilder():
         if (declarationBuilder.isEnum) {
-          return new EnumConstructorEncodingStrategy(
-            isClosureContextLoweringEnabled: isClosureContextLoweringEnabled,
-          );
+          return const EnumConstructorEncodingStrategy();
         } else {
           return const RegularConstructorEncodingStrategy();
         }
@@ -1225,9 +1230,7 @@ class RegularConstructorEncodingStrategy
 }
 
 class EnumConstructorEncodingStrategy implements ConstructorEncodingStrategy {
-  final bool isClosureContextLoweringEnabled;
-
-  const new({required this.isClosureContextLoweringEnabled});
+  const new();
 
   @override
   ConstructorEncoding createEncoding({required bool isExternal}) {
@@ -1254,7 +1257,6 @@ class EnumConstructorEncodingStrategy implements ConstructorEncodingStrategy {
         fileUri: fileUri,
         nameOffset: null,
         hasImmediatelyDeclaredInitializer: false,
-        isClosureContextLoweringEnabled: isClosureContextLoweringEnabled,
       ),
       new FormalParameterBuilder(
         kind: FormalParameterKind.requiredPositional,
@@ -1265,7 +1267,6 @@ class EnumConstructorEncodingStrategy implements ConstructorEncodingStrategy {
         fileUri: fileUri,
         nameOffset: null,
         hasImmediatelyDeclaredInitializer: false,
-        isClosureContextLoweringEnabled: isClosureContextLoweringEnabled,
       ),
       ...?formals,
     ];

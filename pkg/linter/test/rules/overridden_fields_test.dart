@@ -20,7 +20,7 @@ class OverriddenFieldsTest extends LintRuleTest {
 
   test_augmentationClass() async {
     var a = newFile('$testPackageLibPath/a.dart', r'''
-part 'b.dart';
+part 'test.dart';
 
 class O {
   final a = '';
@@ -29,21 +29,30 @@ class O {
 class A extends O { }
 ''');
 
-    var b = newFile('$testPackageLibPath/b.dart', r'''
+    await assertDiagnosticsFromMarkup(r'''
 part of 'a.dart';
 
 augment class A {
-  final a = '';
+  final [!a!] = '';
+}
+''');
+    await assertNoDiagnosticsInFile(a.path);
+  }
+
+  @FailingTest(
+    issue: 'https://github.com/dart-lang/sdk/issues/56174',
+    reason: 'There is a diagnostic in b.dart.',
+  )
+  test_augmentedField() async {
+    var b = newFile('$testPackageLibPath/b.dart', r'''
+part of 'test.dart';
+
+augment class A {
+  augment final a = '';
 }
 ''');
 
-    await assertNoDiagnosticsInFile(a.path);
-    await assertDiagnosticsInFile(b.path, [lint(45, 1)]);
-  }
-
-  @SkippedTest() // TODO(scheglov): implement augmentation
-  test_augmentedField() async {
-    var a = newFile('$testPackageLibPath/a.dart', r'''
+    await assertDiagnosticsFromMarkup(r'''
 part 'b.dart';
 
 class O {
@@ -52,19 +61,9 @@ class O {
 
 class A extends O {
   @override
-  final a = '';
+  final [!a!] = '';
 }
 ''');
-
-    var b = newFile('$testPackageLibPath/b.dart', r'''
-part of 'a.dart';
-
-augment class A {
-  augment final a = '';
-}
-''');
-
-    await assertDiagnosticsInFile(a.path, [lint(85, 1)]);
     await assertNoDiagnosticsInFile(b.path);
   }
 
@@ -97,7 +96,7 @@ class B extends A {
   }
 
   test_extendingClass_multipleDeclarations() async {
-    await assertDiagnosticsFromMarkdown(r'''
+    await assertDiagnosticsFromMarkup(r'''
 class A {
   int y = 1;
 }
@@ -131,7 +130,7 @@ class B extends A {
   }
 
   test_extendsClass_indirectly() async {
-    await assertDiagnosticsFromMarkdown(r'''
+    await assertDiagnosticsFromMarkup(r'''
 class A {
   int x = 0;
 }
@@ -149,7 +148,7 @@ class A {
   int? public;
 }
 ''');
-    await assertDiagnosticsFromMarkdown(r'''
+    await assertDiagnosticsFromMarkup(r'''
 import 'a.dart';
 class B extends A {
   int? [!public!];
@@ -196,7 +195,7 @@ class B implements A {
   }
 
   test_mixingInMixin() async {
-    await assertDiagnosticsFromMarkdown(r'''
+    await assertDiagnosticsFromMarkup(r'''
 mixin M {
   int x = 1;
 }
@@ -312,7 +311,7 @@ class GC34 extends GC33 {
   }
 
   test_mixinSuperclassConstraint() async {
-    await assertDiagnosticsFromMarkdown(r'''
+    await assertDiagnosticsFromMarkup(r'''
 class A {
   int x = 1;
 }
@@ -337,7 +336,7 @@ class B extends A {
   }
 
   test_privateFieldInSameLibrary() async {
-    await assertDiagnosticsFromMarkdown(r'''
+    await assertDiagnosticsFromMarkup(r'''
 class A {
   int _x = 0;
 }
@@ -349,7 +348,7 @@ class B extends A {
   }
 
   test_publicFieldFromDeclaringParameter() async {
-    await assertDiagnosticsFromMarkdown(r'''
+    await assertDiagnosticsFromMarkup(r'''
 class A {
   int x = 0;
 }
@@ -359,7 +358,7 @@ class B(var int [!x!]) extends A {}
   }
 
   test_publicFieldInSameLibrary() async {
-    await assertDiagnosticsFromMarkdown(r'''
+    await assertDiagnosticsFromMarkup(r'''
 class A {
   int x = 0;
 }

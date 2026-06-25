@@ -292,6 +292,7 @@ class ConstantsTransformer extends RemovingTransformer {
     constantEvaluator.withNewEnvironment(() {
       transformAnnotations(node.annotations, node);
       transformTypeParameterList(node.typeParameters, node);
+      transformProcedureList(node.procedures, node);
     });
     _staticTypeContext = oldStaticTypeContext;
     return node;
@@ -1109,14 +1110,15 @@ class ConstantsTransformer extends RemovingTransformer {
         // declared in the heads aren't compatible to each other.
         Map<String, VariableDeclaration> caseDeclaredVariableHelpersByName = {
           for (Variable variable in switchCase.jointVariables)
-            variable.name!: extern.createUninitializedVariableDeclaration(
-              type: const DynamicType(),
-              // Avoid step debugging on the declaration of intermediate
-              // variables.
-              // TODO(johnniwinther): Find a more systematic way of omitting
-              // offsets for better step debugging.
-              fileOffset: TreeNode.noOffset,
-            ),
+            variable.cosmeticName!: extern
+                .createUninitializedVariableDeclaration(
+                  type: const DynamicType(),
+                  // Avoid step debugging on the declaration of intermediate
+                  // variables.
+                  // TODO(johnniwinther): Find a more systematic way of omitting
+                  // offsets for better step debugging.
+                  fileOffset: TreeNode.noOffset,
+                ),
         };
 
         bool isContinueTarget = switchCaseIndex.containsKey(switchCase);
@@ -1148,11 +1150,15 @@ class ConstantsTransformer extends RemovingTransformer {
             }
 
             for (Variable variable in pattern.declaredVariables) {
-              (declaredVariablesByName[variable.name!] ??= []).add(variable);
+              (declaredVariablesByName[variable.cosmeticName!] ??= []).add(
+                variable,
+              );
             }
           } else {
             for (Variable variable in pattern.declaredVariables) {
-              (caseVariablesByName[variable.name!] ??= []).add(variable);
+              (caseVariablesByName[variable.cosmeticName!] ??= []).add(
+                variable,
+              );
             }
             caseVariables.addAll(pattern.declaredVariables);
           }
@@ -1173,7 +1179,7 @@ class ConstantsTransformer extends RemovingTransformer {
           }
 
           for (Variable declaredVariable in pattern.declaredVariables) {
-            String variableName = declaredVariable.name!;
+            String variableName = declaredVariable.cosmeticName!;
 
             VariableDeclaration? variableHelper =
                 caseDeclaredVariableHelpersByName[variableName];
@@ -1224,7 +1230,10 @@ class ConstantsTransformer extends RemovingTransformer {
             for (int i = 0; i < variables.length; i++) {
               Variable variable = variables[i];
               variable.isLowered = true;
-              variable.name = createJoinedIntermediateName(variable.name!, i);
+              variable.cosmeticName = createJoinedIntermediateName(
+                variable.cosmeticName!,
+                i,
+              );
             }
           }
         }
@@ -1242,7 +1251,8 @@ class ConstantsTransformer extends RemovingTransformer {
             //         `declaredVariableHelper`{`declaredVariable.type`}
             //   ==> `jointVariable` = HVAR{`declaredVariable.type`}
             jointVariable.initializer = extern.createVariableGet(
-              caseDeclaredVariableHelpersByName[jointVariable.name!]!.variable,
+              caseDeclaredVariableHelpersByName[jointVariable.cosmeticName!]!
+                  .variable,
               promotedType: jointVariable.type,
             )..parent = jointVariable;
           }
@@ -1387,7 +1397,7 @@ class ConstantsTransformer extends RemovingTransformer {
       for (List<Variable> variables in declaredVariablesByName.values) {
         if (variables.length > 1) {
           for (int i = 1; i < variables.length; i++) {
-            variables[i].name = '${variables[i].name}${"#$i"}';
+            variables[i].cosmeticName = '${variables[i].cosmeticName}${"#$i"}';
           }
         }
       }
@@ -3729,7 +3739,7 @@ class ConstantEvaluator
       }
       for (final Variable parameter in function.namedParameters) {
         final Constant value =
-            namedArguments[parameter.name] ??
+            namedArguments[parameter.cosmeticName] ??
             // TODO(johnniwinther): This should call [_evaluateSubexpression].
             _evaluateNullableSubexpression(parameter.initializer);
         if (value is AbortConstant) return value;
@@ -5067,7 +5077,7 @@ class ConstantEvaluator
 
   Constant _getFromEnvironmentDefaultValue(Procedure target) {
     Variable variable = target.function.namedParameters.singleWhere(
-      (v) => v.name == 'defaultValue',
+      (v) => v.cosmeticName == 'defaultValue',
     );
     return evaluateExpressionInContext(target, variable.initializer!);
   }
@@ -5359,7 +5369,7 @@ class ConstantEvaluator
       }
       for (final Variable parameter in function.namedParameters) {
         final Constant value =
-            namedArguments[parameter.name] ??
+            namedArguments[parameter.cosmeticName] ??
             // TODO(johnniwinther): This should call [_evaluateSubexpression].
             _evaluateNullableSubexpression(parameter.initializer);
         if (value is AbortConstant) return value;
@@ -6127,9 +6137,7 @@ class ConstantEvaluator
 }
 
 class StatementConstantEvaluator
-    with
-        StatementVisitorExperimentExclusionMixin<ExecutionStatus>,
-        VariableVisitorExperimentExclusionMixin<ExecutionStatus>
+    with StatementVisitorExperimentExclusionMixin<ExecutionStatus>
     implements
         StatementVisitor<ExecutionStatus>,
         VariableVisitor<ExecutionStatus> {
@@ -6473,20 +6481,44 @@ class StatementConstantEvaluator
       "Unsupported auxiliary statement ${node} (${node.runtimeType}).",
     );
   }
+
+  @override
+  // Coverage-ignore(suite): Not run.
+  ExecutionStatus visitCatchVariable(CatchVariable node) => visitVariable(node);
+
+  @override
+  // Coverage-ignore(suite): Not run.
+  ExecutionStatus visitLateVariable(LateVariable node) => visitVariable(node);
+
+  @override
+  ExecutionStatus visitLocalVariable(LocalVariable node) => visitVariable(node);
+
+  @override
+  // Coverage-ignore(suite): Not run.
+  ExecutionStatus visitNamedParameter(NamedParameter node) =>
+      visitVariable(node);
+
+  @override
+  // Coverage-ignore(suite): Not run.
+  ExecutionStatus visitPositionalParameter(PositionalParameter node) =>
+      visitVariable(node);
+
+  @override
+  // Coverage-ignore(suite): Not run.
+  ExecutionStatus visitSyntheticVariable(SyntheticVariable node) =>
+      visitVariable(node);
+
+  @override
+  // Coverage-ignore(suite): Not run.
+  ExecutionStatus visitThisVariable(ThisVariable node) => visitVariable(node);
 }
 
-class ConstantCoverage {
-  final Map<Uri, Set<Reference>> constructorCoverage;
+class ConstantCoverage(final Map<Uri, Set<Reference>> constructorCoverage);
 
-  new(this.constructorCoverage);
-}
-
-class ConstantEvaluationData {
-  final ConstantCoverage coverage;
-  final Set<Library> visitedLibraries;
-
-  new(this.coverage, this.visitedLibraries);
-}
+class ConstantEvaluationData(
+  final ConstantCoverage coverage,
+  final Set<Library> visitedLibraries,
+);
 
 /// Holds the necessary information for a constant object, namely
 ///   * the [klass] being instantiated
@@ -6641,204 +6673,113 @@ class RedundantFileUriExpressionRemover extends Transformer {
 }
 
 /// Location that stores a value in the [ConstantEvaluator].
-class EvaluationReference {
-  Constant value;
-
-  new(this.value);
-}
+class EvaluationReference(var Constant value);
 
 /// Represents a status for statement execution.
-abstract class ExecutionStatus {
-  const new();
-}
+abstract class const ExecutionStatus();
 
 /// Status that the statement completed execution successfully.
-class ProceedStatus extends ExecutionStatus {
-  const new();
-}
+class const ProceedStatus() extends ExecutionStatus;
 
 /// Status that the statement returned a valid [Constant] value.
-class ReturnStatus extends ExecutionStatus {
-  final Constant? value;
-
-  new(this.value);
-}
+class ReturnStatus(final Constant? value) extends ExecutionStatus;
 
 /// Status with an exception or error that the statement has thrown.
-class AbortStatus extends ExecutionStatus {
-  final AbortConstant error;
-
-  new(this.error);
-}
+class AbortStatus(final AbortConstant error) extends ExecutionStatus;
 
 /// Status that the statement breaks out of an enclosing [LabeledStatement].
-class BreakStatus extends ExecutionStatus {
-  final LabeledStatement target;
-
-  new(this.target);
-}
+class BreakStatus(final LabeledStatement target) extends ExecutionStatus;
 
 /// Mutable lists used within the [ConstantEvaluator].
-class MutableListConstant extends ListConstant {
-  new(DartType typeArgument, List<Constant> entries)
-    : super(typeArgument, entries);
-
+class MutableListConstant(super.typeArgument, super.entries)
+    extends ListConstant {
   @override
   String toString() => 'MutableListConstant(${toStringInternal()})';
 }
 
+abstract class _EvaluatorConstant implements AuxiliaryConstant {
+  @override
+  R accept<R>(ConstantVisitor<R> v) {
+    throw new UnimplementedError();
+  }
+
+  @override
+  R accept1<R, A>(ConstantVisitor1<R, A> v, A arg) {
+    throw new UnimplementedError();
+  }
+
+  @override
+  R acceptReference<R>(ConstantReferenceVisitor<R> v) {
+    throw new UnimplementedError();
+  }
+
+  @override
+  R acceptReference1<R, A>(ConstantReferenceVisitor1<R, A> v, A arg) {
+    throw new UnimplementedError();
+  }
+
+  @override
+  DartType getType(StaticTypeContext context) {
+    throw new UnimplementedError();
+  }
+
+  @override
+  String leakingDebugToString() {
+    throw new UnimplementedError();
+  }
+
+  @override
+  String toString() {
+    throw new UnimplementedError();
+  }
+
+  @override
+  String toStringInternal() {
+    throw new UnimplementedError();
+  }
+
+  @override
+  String toText(AstTextStrategy strategy) {
+    throw new UnimplementedError();
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    throw new UnimplementedError();
+  }
+
+  @override
+  void visitChildren(Visitor<dynamic> v) {
+    throw new UnimplementedError();
+  }
+}
+
 /// An intermediate result that is used for invoking function nodes with their
 /// respective environment within the [ConstantEvaluator].
-class FunctionValue implements AuxiliaryConstant {
-  final FunctionNode function;
-  final EvaluationEnvironment? environment;
+class FunctionValue(
+  final FunctionNode function,
+  final EvaluationEnvironment? environment,
+) extends _EvaluatorConstant;
 
-  new(this.function, this.environment);
+sealed class AbortConstant extends _EvaluatorConstant;
 
-  @override
-  R accept<R>(ConstantVisitor<R> v) {
-    throw new UnimplementedError();
-  }
+class _AbortDueToErrorConstant(
+  final TreeNode node,
+  final Message message, {
+  final List<LocatedMessage>? context,
+  required final bool isEvaluationError,
+}) extends AbortConstant;
 
-  @override
-  R accept1<R, A>(ConstantVisitor1<R, A> v, A arg) {
-    throw new UnimplementedError();
-  }
+class _AbortDueToInvalidExpressionConstant(final InvalidExpression node)
+    extends AbortConstant;
 
-  @override
-  R acceptReference<R>(ConstantReferenceVisitor<R> v) {
-    throw new UnimplementedError();
-  }
+class _AbortDueToInvalidInitializerConstant(final InvalidInitializer node)
+    extends AbortConstant;
 
-  @override
-  R acceptReference1<R, A>(ConstantReferenceVisitor1<R, A> v, A arg) {
-    throw new UnimplementedError();
-  }
+class _AbortDueToThrowConstant(final TreeNode node, final Object throwValue)
+    extends AbortConstant;
 
-  @override
-  DartType getType(StaticTypeContext context) {
-    throw new UnimplementedError();
-  }
-
-  @override
-  String leakingDebugToString() {
-    throw new UnimplementedError();
-  }
-
-  @override
-  String toString() {
-    throw new UnimplementedError();
-  }
-
-  @override
-  String toStringInternal() {
-    throw new UnimplementedError();
-  }
-
-  @override
-  String toText(AstTextStrategy strategy) {
-    throw new UnimplementedError();
-  }
-
-  @override
-  void toTextInternal(AstPrinter printer) {
-    throw new UnimplementedError();
-  }
-
-  @override
-  void visitChildren(Visitor<dynamic> v) {
-    throw new UnimplementedError();
-  }
-}
-
-sealed class AbortConstant implements AuxiliaryConstant {
-  @override
-  R accept<R>(ConstantVisitor<R> v) {
-    throw new UnimplementedError();
-  }
-
-  @override
-  R accept1<R, A>(ConstantVisitor1<R, A> v, A arg) {
-    throw new UnimplementedError();
-  }
-
-  @override
-  R acceptReference<R>(ConstantReferenceVisitor<R> v) {
-    throw new UnimplementedError();
-  }
-
-  @override
-  R acceptReference1<R, A>(ConstantReferenceVisitor1<R, A> v, A arg) {
-    throw new UnimplementedError();
-  }
-
-  @override
-  DartType getType(StaticTypeContext context) {
-    throw new UnimplementedError();
-  }
-
-  @override
-  String leakingDebugToString() {
-    throw new UnimplementedError();
-  }
-
-  @override
-  String toString() {
-    throw new UnimplementedError();
-  }
-
-  @override
-  String toStringInternal() {
-    throw new UnimplementedError();
-  }
-
-  @override
-  String toText(AstTextStrategy strategy) {
-    throw new UnimplementedError();
-  }
-
-  @override
-  void toTextInternal(AstPrinter printer) {
-    throw new UnimplementedError();
-  }
-
-  @override
-  void visitChildren(Visitor<dynamic> v) {
-    throw new UnimplementedError();
-  }
-}
-
-class _AbortDueToErrorConstant extends AbortConstant {
-  final TreeNode node;
-  final Message message;
-  final List<LocatedMessage>? context;
-  final bool isEvaluationError;
-
-  new(this.node, this.message, {this.context, required this.isEvaluationError});
-}
-
-class _AbortDueToInvalidExpressionConstant extends AbortConstant {
-  final InvalidExpression node;
-
-  new(this.node);
-}
-
-class _AbortDueToInvalidInitializerConstant extends AbortConstant {
-  final InvalidInitializer node;
-
-  new(this.node);
-}
-
-class _AbortDueToThrowConstant extends AbortConstant {
-  final TreeNode node;
-  final Object throwValue;
-
-  new(this.node, this.throwValue);
-}
-
-abstract class ErrorReporter {
-  const new();
-
+abstract class const ErrorReporter() {
   void report(LocatedMessage message, [List<LocatedMessage>? context]);
 
   /// `true` if the reporter supports a query to [hasSeenError].
@@ -6848,9 +6789,7 @@ abstract class ErrorReporter {
   bool get hasSeenError;
 }
 
-class SimpleErrorReporter implements ErrorReporter {
-  const new();
-
+class const SimpleErrorReporter() implements ErrorReporter {
   @override
   // Coverage-ignore(suite): Not run.
   bool get supportsTrackingReportedErrors => false;
@@ -6911,29 +6850,23 @@ class _InlinedBlock extends Block {
 }
 
 /// Information about a currently transformed [PatternSwitchStatement].
-class _PatternSwitchStatementInfo {
+class _PatternSwitchStatementInfo(
   /// The variable used as the switch expression in the generated
   /// [SwitchStatement].
-  final Variable switchIndexVariable;
+  final Variable switchIndexVariable,
 
   /// The labeled statement that wraps the case matching.
   ///
   /// This is used as a break target to jump to the generated switch statement
   /// for a continue statement from outside the generated switch statement.
-  final LabeledStatement innerLabeledStatement;
+  final LabeledStatement innerLabeledStatement,
 
   /// Map from [PatternSwitchCase]s that are continue targets to the index
   /// used for there body in the generated [SwitchStatement].
-  final Map<PatternSwitchCase, int> switchCaseIndexMap;
-
+  final Map<PatternSwitchCase, int> switchCaseIndexMap,
+) {
   /// The [PatternSwitchCase] currently being transformed.
   PatternSwitchCase? currentSwitchCase;
-
-  new(
-    this.switchIndexVariable,
-    this.innerLabeledStatement,
-    this.switchCaseIndexMap,
-  );
 }
 
 enum PrimitiveEquality { None, EqualsOnly, HashCodeOnly, EqualsAndHashCode }

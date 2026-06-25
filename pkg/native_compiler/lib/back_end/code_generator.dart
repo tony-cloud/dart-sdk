@@ -13,6 +13,7 @@ import 'package:cfg/utils/bit_vector.dart';
 import 'package:native_compiler/back_end/assembler.dart';
 import 'package:native_compiler/back_end/back_end_state.dart';
 import 'package:native_compiler/back_end/code.dart';
+import 'package:native_compiler/back_end/code_metadata.dart';
 import 'package:native_compiler/back_end/locations.dart';
 import 'package:native_compiler/back_end/stack_frame.dart';
 import 'package:native_compiler/runtime/object_layout.dart';
@@ -31,6 +32,9 @@ abstract base class CodeGenerator extends Pass
   /// Index of the current block in [codeGenBlockOrder].
   int _currentBlockIndex = -1;
 
+  /// Instruction being generated.
+  Instruction? _currentInstruction;
+
   /// Maps block preorder number to a preorder number of
   /// the first non-empty block.
   late final Int32List _firstNonEmptyBlock = _computeFirstNonEmptyBlock();
@@ -44,6 +48,18 @@ abstract base class CodeGenerator extends Pass
 
   /// Slow paths generated after all blocks.
   final List<SlowPath> _slowPaths = [];
+
+  /// Metadata describing exception handlers in the generated code.
+  late final ExceptionHandlers _exceptionHandlers;
+
+  /// Metadata describing call sites in the generated code.
+  late final PcDescriptors _pcDescriptors;
+
+  /// Metadata describing moves between exception site and exception handler.
+  CatchEntryMoves? _catchEntryMoves;
+
+  /// Metadata describing source positions in the generated code.
+  late final CodeSourceMap _codeSourceMap;
 
   CodeGenerator(this.backEndState) : super('CodeGen');
 
@@ -87,11 +103,46 @@ abstract base class CodeGenerator extends Pass
         _firstNonEmptyBlock[nextBlock.preorderNumber];
   }
 
+  void addCallSiteMetadata() {
+    final exceptionHandler = _currentInstruction!.block!.exceptionHandler;
+    final exceptionHandlerIndex = (exceptionHandler != null)
+        ? _exceptionHandlers.getHandler(exceptionHandler).index
+        : -1;
+    _pcDescriptors.add(
+      CallSite(
+        _asm.currentPcOffset,
+        exceptionHandlerIndex,
+        _currentInstruction!.sourcePosition,
+      ),
+    );
+    if (exceptionHandler != null) {
+      (_catchEntryMoves ??= CatchEntryMoves()).add(
+        ExceptionSite(
+          _asm.currentPcOffset,
+          // TODO: add moves
+        ),
+      );
+    }
+    _codeSourceMap.add(
+      CodeSourcePosition(
+        _asm.currentPcOffset,
+        _currentInstruction!.sourcePosition,
+      ),
+    );
+  }
+
   @override
   void run() {
     final blocks = codeGenBlockOrder;
     assert(blocks.first is EntryBlock);
     assert(blocks.length == graph.preorder.length);
+
+    final asyncMarker = graph.function.asyncMarker;
+    _exceptionHandlers = ExceptionHandlers(
+      hasAsyncHandler: asyncMarker == .Async || asyncMarker == .AsyncStar,
+    );
+    _pcDescriptors = PcDescriptors();
+    _codeSourceMap = CodeSourceMap();
 
     _asm = createAssembler();
 
@@ -104,9 +155,11 @@ abstract base class CodeGenerator extends Pass
     _currentBlockIndex = -1;
 
     for (final slowPath in _slowPaths) {
+      currentInstruction = _currentInstruction = slowPath.instruction;
       _asm.bind(slowPath.entry);
       slowPath.generator();
     }
+    currentInstruction = _currentInstruction = null;
 
     backEndState.consumeGeneratedCode(
       Code(
@@ -114,6 +167,10 @@ abstract base class CodeGenerator extends Pass
         graph.function,
         _asm.bytes,
         _asm.objectPool,
+        _exceptionHandlers,
+        _pcDescriptors,
+        _catchEntryMoves,
+        _codeSourceMap,
       ),
     );
   }
@@ -123,12 +180,14 @@ abstract base class CodeGenerator extends Pass
   void enterFrame();
 
   void generateBlock(Block block) {
+    currentInstruction = _currentInstruction = block;
     _asm.bind(blockLabel(block));
     block.accept(this);
     for (final instr in block) {
-      currentInstruction = instr;
+      currentInstruction = _currentInstruction = instr;
       instr.accept(this);
     }
+    currentInstruction = _currentInstruction = null;
   }
 
   /// Returns true if no code should be generated for this block.
@@ -171,7 +230,7 @@ abstract base class CodeGenerator extends Pass
 
   Label addSlowPath(void Function() generator) {
     final entry = Label();
-    _slowPaths.add(SlowPath(entry, generator));
+    _slowPaths.add(SlowPath(_currentInstruction!, entry, generator));
     return entry;
   }
 
@@ -185,7 +244,9 @@ abstract base class CodeGenerator extends Pass
   void visitTargetBlock(TargetBlock instr) {}
 
   @override
-  void visitCatchBlock(CatchBlock instr) {}
+  void visitCatchBlock(CatchBlock instr) {
+    _exceptionHandlers.getHandler(instr).pcOffset = _asm.currentPcOffset;
+  }
 
   @override
   void visitGoto(Goto instr) {
@@ -243,8 +304,8 @@ abstract base class CodeGenerator extends Pass
     final moves = <Move>[];
     for (final move in instr.moves) {
       if (move is Move) {
-        final from = move.from = move.from.physicalLocation;
-        final to = move.to = move.to.physicalLocation;
+        final from = move.from.physicalLocation;
+        final to = move.to.physicalLocation;
         if (from != to) {
           if (from is StackLocation && to is StackLocation) {
             // Moves into spill slots cannot participate in cycles.
@@ -254,7 +315,7 @@ abstract base class CodeGenerator extends Pass
             generateMove(from, temp);
             generateMove(temp, to);
           } else {
-            moves.add(move);
+            moves.add(Move(from, to));
           }
         }
       }
@@ -328,10 +389,14 @@ abstract base class CodeGenerator extends Pass
   @override
   void visitStringInterpolation(StringInterpolation instr) =>
       throw 'Unexpected StringInterpolation (should be lowered)';
+
+  @override
+  void visitInstantiateClosure(InstantiateClosure instr) =>
+      throw 'Unexpected InstantiateClosure (should be lowered)';
 }
 
-class SlowPath {
-  final Label entry;
-  final void Function() generator;
-  SlowPath(this.entry, this.generator);
-}
+class SlowPath(
+  final Instruction instruction,
+  final Label entry,
+  final void Function() generator,
+);

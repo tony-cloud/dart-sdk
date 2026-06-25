@@ -5,7 +5,6 @@
 import 'package:kernel/ast.dart';
 import 'package:kernel/class_hierarchy.dart';
 import 'package:kernel/core_types.dart';
-import 'package:kernel/transformations/flags.dart';
 
 import '../base/constant_context.dart' show ConstantContext;
 import '../base/local_scope.dart';
@@ -28,6 +27,7 @@ import '../source/stack_listener_impl.dart' show AsyncModifier;
 import '../type_inference/context_allocation_strategy.dart';
 import '../type_inference/type_inferrer.dart' show ConstructorContext;
 import '../util/helpers.dart';
+import 'expression_compilation_data.dart';
 import 'internal_ast.dart';
 import 'internal_ast_helper.dart' as intern;
 
@@ -386,7 +386,7 @@ abstract class BodyBuilderContext {
   }
 
   /// Registers that the constructor has no body.
-  void registerNoBodyConstructor() {
+  void registerNoBodyConstructor({required ThisVariable? thisVariable}) {
     throw new UnsupportedError("${runtimeType}.registerNoBodyConstructor");
   }
 
@@ -804,10 +804,10 @@ class ParameterBodyBuilderContext extends BodyBuilderContext {
 
 // Coverage-ignore(suite): Not run.
 class ExpressionCompilerProcedureBodyBuildContext extends BodyBuilderContext {
-  final Procedure _procedure;
+  final ExpressionCompilationData _expressionCompilationData;
 
   new(
-    this._procedure,
+    this._expressionCompilationData,
     SourceLibraryBuilder libraryBuilder,
     DeclarationBuilder? declarationBuilder, {
     required bool isDeclarationInstanceMember,
@@ -818,10 +818,10 @@ class ExpressionCompilerProcedureBodyBuildContext extends BodyBuilderContext {
        );
 
   @override
-  int get memberNameOffset => _procedure.fileOffset;
+  int get memberNameOffset => _expressionCompilationData.fileOffset;
 
   @override
   void registerSuperCall() {
-    _procedure.transformerFlags |= TransformerFlag.superCalls;
+    _expressionCompilationData.containsSuperCalls = true;
   }
 }

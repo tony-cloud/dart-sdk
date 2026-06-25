@@ -1,4 +1,4 @@
-(module $module0
+(module $M
   (type $#Top (struct
     (field $field0 i32)))
   (type $BoxedInt (sub final $#Top (struct
@@ -45,7 +45,7 @@
     else
       call $"ktrue implicit getter"
       if (result (ref null $BoxedInt))
-        i32.const 86
+        i32.const 101
         call $"intValue implicit getter"
         struct.new $BoxedInt
       else

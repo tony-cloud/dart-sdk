@@ -6,7 +6,6 @@ library kernel.checks;
 
 import 'ast.dart';
 import 'target/targets.dart';
-import 'transformations/flags.dart';
 import 'type_environment.dart' show StatefulStaticTypeContext, TypeEnvironment;
 
 /// Stages at which verification can occur.
@@ -124,10 +123,31 @@ class VerificationError {
 
 enum TypedefState { Done, BeingChecked }
 
+class VerifyingVisitor {
+  static void check(
+    Target target,
+    VerificationStage stage,
+    Component component, {
+    required bool skipPlatform,
+    bool Function(Library library)? librarySkipFilter,
+    VerificationErrorListener listener = const VerificationErrorListener(),
+  }) {
+    component.accept(
+      new _VerifyingVisitor(
+        target,
+        stage,
+        skipPlatform: skipPlatform,
+        librarySkipFilter: librarySkipFilter,
+        listener: listener,
+      ),
+    );
+  }
+}
+
 /// Checks that a kernel component is well-formed.
 ///
 /// This does not include any kind of type checking.
-class VerifyingVisitor extends RecursiveResultVisitor<void> {
+class _VerifyingVisitor extends RecursiveResultVisitor<void> {
   final Target target;
 
   Uri? fileUri;
@@ -147,6 +167,7 @@ class VerifyingVisitor extends RecursiveResultVisitor<void> {
   final List<Variable> variableStack = <Variable>[];
   final Map<Typedef, TypedefState> typedefState = <Typedef, TypedefState>{};
   final Set<Constant> seenConstants = <Constant>{};
+  final Set<Member> _membersSeenByVerifier = new Set.identity();
   final List<Scope> scopeStack = [];
 
   Map<Reference, ExtensionMemberDescriptor>? _extensionsMembers;
@@ -183,29 +204,12 @@ class VerifyingVisitor extends RecursiveResultVisitor<void> {
       currentExtension ??
       currentExtensionTypeDeclaration;
 
-  static void check(
-    Target target,
-    VerificationStage stage,
-    Component component, {
-    required bool skipPlatform,
-    bool Function(Library library)? librarySkipFilter,
-  }) {
-    component.accept(
-      new VerifyingVisitor(
-        target,
-        stage,
-        skipPlatform: skipPlatform,
-        librarySkipFilter: librarySkipFilter,
-      ),
-    );
-  }
-
   new(
     this.target,
     this.stage, {
     required this.skipPlatform,
     required this.librarySkipFilter,
-    VerificationErrorListener this.listener = const VerificationErrorListener(),
+    required this.listener,
   });
 
   /// If true, relax certain checks for *outline* mode. For example, don't
@@ -240,11 +244,15 @@ class VerifyingVisitor extends RecursiveResultVisitor<void> {
       case 1:
         return true;
       case 0:
-        problem(
-          node,
-          "Variable '${node.cosmeticName}' of the kind "
-          "'${node.runtimeType}' wasn't found in the enclosing scopes.",
-        );
+        if (node is! SyntheticVariable && node.parent is Let) {
+          // TODO(johnniwinther,cstefantsova): Let variables are not set up
+          // correctly.
+          problem(
+            node,
+            "Variable '${node.cosmeticName}' of the kind "
+            "'${node.runtimeType}' wasn't found in the enclosing scopes.",
+          );
+        }
         return false;
       default:
         problem(
@@ -280,33 +288,39 @@ class VerifyingVisitor extends RecursiveResultVisitor<void> {
   }
 
   void _reportMissingVariableContext(VariableBase node) {
-    problem(
-      node,
-      "A '${node.runtimeType}' variable with cosmetic name "
-      "'${node.cosmeticName}' doesn't have its context set.",
-    );
+    if (node is! SyntheticVariable && node.parent is Let) {
+      // TODO(johnniwinther,cstefantsova): Let variables are not set up
+      // correctly.
+      problem(
+        node,
+        "A '${node.runtimeType}' variable with cosmetic name "
+        "'${node.cosmeticName}' doesn't have its context set.",
+      );
+    }
   }
 
   void enterScopeProvider(ScopeProvider node) {
     if (node.scope case var scope?) {
       scopeStack.add(scope);
 
-      for (VariableContext context in scope.contexts) {
-        for (VariableBase variable in context.variables) {
-          VariableContext variableContext;
-          try {
-            variableContext = variable.context;
-          } on Error {
-            _reportMissingVariableContext(variable);
-            continue;
-          }
+      if (target.flags.isClosureContextLoweringEnabled) {
+        for (VariableContext context in scope.contexts) {
+          for (VariableBase variable in context.variables) {
+            VariableContext variableContext;
+            try {
+              variableContext = variable.context;
+            } on Error {
+              _reportMissingVariableContext(variable);
+              continue;
+            }
 
-          if (!identical(context, variableContext)) {
-            problem(
-              node,
-              "Variable '${variable.cosmeticName}' appears in a context "
-              "that's not its own.",
-            );
+            if (!identical(context, variableContext)) {
+              problem(
+                node,
+                "Variable '${variable.cosmeticName}' appears in a context "
+                "that's not its own.",
+              );
+            }
           }
         }
       }
@@ -369,13 +383,6 @@ class VerifyingVisitor extends RecursiveResultVisitor<void> {
       context: context ?? currentClassOrExtensionOrMember,
       origin: origin,
     );
-  }
-
-  // TODO(cstefantsova): Remove this method when the new variable model is
-  //  supported.
-  bool _isNewModelVariable(TreeNode node) {
-    return node is Variable && node is! LegacyVariable ||
-        node is FunctionParameter;
   }
 
   TreeNode? enterParent(TreeNode node) {
@@ -495,65 +502,45 @@ class VerifyingVisitor extends RecursiveResultVisitor<void> {
 
   void checkVariableInScope(Variable variable, TreeNode where) {
     // TODO(cstefantsova): Support new variable model.
-    if (!_isNewModelVariable(variable) &&
+    if (!target.flags.isClosureContextLoweringEnabled &&
         !variableDeclarationsInScope.contains(variable)) {
       problem(where, "Variable '$variable' used out of scope.");
     }
   }
 
+  void _declareMember(Member member) {
+    if (!_membersSeenByVerifier.add(member)) {
+      problem(
+        member.function,
+        "Member '$member' has been declared more than once.",
+      );
+    }
+  }
+
   @override
   void visitComponent(Component component) {
-    void declareMember(Member member) {
-      if (member.transformerFlags & TransformerFlag.seenByVerifier != 0) {
-        problem(
-          member.function,
-          "Member '$member' has been declared more than once.",
-        );
-      }
-      member.transformerFlags |= TransformerFlag.seenByVerifier;
-    }
-
-    void undeclareMember(Member member) {
-      member.transformerFlags &= ~TransformerFlag.seenByVerifier;
-    }
-
-    try {
-      for (Library library in component.libraries) {
-        for (Class class_ in library.classes) {
-          if (!classes.add(class_)) {
-            problem(class_, "Class '$class_' declared more than once.");
-          }
-        }
-        for (Typedef typedef_ in library.typedefs) {
-          if (!typedefs.add(typedef_)) {
-            problem(typedef_, "Typedef '$typedef_' declared more than once.");
-          }
-        }
-
-        library.forEachMember(declareMember);
-        for (Class class_ in library.classes) {
-          class_.forEachMember(declareMember);
-        }
-        for (ExtensionTypeDeclaration extensionTypeDeclaration
-            in library.extensionTypeDeclarations) {
-          extensionTypeDeclaration.procedures.forEach(declareMember);
+    for (Library library in component.libraries) {
+      for (Class class_ in library.classes) {
+        if (!classes.add(class_)) {
+          problem(class_, "Class '$class_' declared more than once.");
         }
       }
-      visitChildren(component);
-    } finally {
-      for (Library library in component.libraries) {
-        library.forEachMember(undeclareMember);
-        for (Class class_ in library.classes) {
-          class_.forEachMember(undeclareMember);
-        }
-
-        for (ExtensionTypeDeclaration extensionTypeDeclaration
-            in library.extensionTypeDeclarations) {
-          extensionTypeDeclaration.procedures.forEach(undeclareMember);
+      for (Typedef typedef_ in library.typedefs) {
+        if (!typedefs.add(typedef_)) {
+          problem(typedef_, "Typedef '$typedef_' declared more than once.");
         }
       }
-      variableStack.forEach(undeclareVariable);
+
+      library.forEachMember(_declareMember);
+      for (Class class_ in library.classes) {
+        class_.forEachMember(_declareMember);
+      }
+      for (ExtensionTypeDeclaration extensionTypeDeclaration
+          in library.extensionTypeDeclarations) {
+        extensionTypeDeclaration.procedures.forEach(_declareMember);
+      }
     }
+    visitChildren(component);
   }
 
   @override
@@ -1332,7 +1319,7 @@ class VerifyingVisitor extends RecursiveResultVisitor<void> {
     declareVariable(node);
     exitTreeNode(node);
 
-    if (!isOutline) {
+    if (target.flags.isClosureContextLoweringEnabled && !isOutline) {
       checkVariableInScopeStack(node);
       checkVariableIsInOwnContext(node);
     }
@@ -1491,7 +1478,9 @@ class VerifyingVisitor extends RecursiveResultVisitor<void> {
       NamedExpression argument = arguments.named[i];
       String name = argument.name;
       for (int j = 0; j < function.namedParameters.length; ++j) {
-        if (function.namedParameters[j].name == name) continue namedLoop;
+        if (function.namedParameters[j].parameterName == name) {
+          continue namedLoop;
+        }
       }
       return false;
     }
@@ -1608,7 +1597,7 @@ class VerifyingVisitor extends RecursiveResultVisitor<void> {
 
   @override
   void defaultMemberReference(Member node) {
-    if (node.transformerFlags & TransformerFlag.seenByVerifier == 0) {
+    if (!_membersSeenByVerifier.contains(node)) {
       problem(
         node,
         "Dangling reference to '$node', parent is: '${node.parent}'.",

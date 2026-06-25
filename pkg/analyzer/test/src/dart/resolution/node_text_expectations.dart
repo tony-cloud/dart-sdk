@@ -178,33 +178,28 @@ class NodeTextExpectationsCollector {
     ),
     _AssertMethod(
       className: 'AbstractAnalysisOptionsTest',
-      methodName: 'assertDiagnosticsInCode',
+      methodName: 'assertAnalysisOptionsDiagnostics',
       argument: _ArgumentIndex(0),
     ),
     _AssertMethod(
       className: 'AbstractAnalysisOptionsTest',
-      methodName: 'assertDiagnosticsInFiles',
+      methodName: 'assertAnalysisOptionsDiagnosticsInFiles',
       argument: _ArgumentMapEntryValue(mapArgument: _ArgumentIndex(0)),
     ),
     _AssertMethod(
-      className: 'OptionsFileValidatorTest',
-      methodName: 'validate',
+      className: 'AbstractAnalysisOptionsTest',
+      methodName: 'parseAnalysisOptionsWithDiagnostics',
       argument: _ArgumentIndex(0),
     ),
     _AssertMethod(
-      className: 'OptionsProviderTest',
-      methodName: 'assertDiagnosticsInOptionsFile',
+      className: 'AbstractAnalysisOptionsTest',
+      methodName: 'parseAnalysisOptionsFilesWithDiagnostics',
+      argument: _ArgumentMapEntryValue(mapArgument: _ArgumentIndex(0)),
+    ),
+    _AssertMethod(
+      className: 'AbstractAnalysisOptionsTest',
+      methodName: 'assertAnalysisOptionsText',
       argument: _ArgumentIndex(1),
-    ),
-    _AssertMethod(
-      className: 'OptionsRuleValidatorTestMixin',
-      methodName: 'assertDiagnostics',
-      argument: _ArgumentIndex(0),
-    ),
-    _AssertMethod(
-      className: 'OptionsRuleValidatorTestMixin',
-      methodName: 'assertRuleDiagnosticsInFiles',
-      argument: _ArgumentMapEntryValue(mapArgument: _ArgumentIndex(0)),
     ),
     _AssertMethod(
       className: 'PubspecDiagnosticTest',
@@ -304,8 +299,10 @@ class NodeTextExpectationsCollector {
 
   static final Map<String, _File> _files = {};
 
+  static bool get shouldPrintFailureDetails => !currentTestIsExpectedToFail;
+
   static void add(String actual, {String? intraInvocationId}) {
-    if (!updatingIsEnabled) {
+    if (!updatingIsEnabled || currentTestIsExpectedToFail) {
       return;
     }
 

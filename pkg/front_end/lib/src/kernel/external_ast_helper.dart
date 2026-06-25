@@ -165,6 +165,19 @@ CastPattern createCastPattern({
   return new CastPattern(pattern, type)..fileOffset = fileOffset;
 }
 
+Catch createCatch({
+  required DartType guard,
+  required CatchVariable? exception,
+  required CatchVariable? stackTrace,
+  required Statement body,
+  required Scope? scope,
+  required int fileOffset,
+}) {
+  return new Catch(exception, body, guard: guard, stackTrace: stackTrace)
+    ..scope = scope
+    ..fileOffset = fileOffset;
+}
+
 CatchVariable createCatchVariable({
   required String name,
   required DartType? type,
@@ -258,6 +271,12 @@ ConstructorTearOff createConstructorTearOff(
   return new ConstructorTearOff(target)..fileOffset = fileOffset;
 }
 
+ContinueSwitchStatement createContinueSwitchStatement({
+  required int fileOffset,
+}) {
+  return new ContinueSwitchStatement(dummySwitchCase)..fileOffset = fileOffset;
+}
+
 // Coverage-ignore(suite): Not run.
 DynamicInvocation createDynamicInvocation(
   DynamicAccessKind kind,
@@ -338,6 +357,19 @@ FileUriExpression createFileUriExpression({
   return new FileUriExpression(expression, fileUri)..fileOffset = fileOffset;
 }
 
+ForStatement createForStatement({
+  required List<VariableDeclaration> variables,
+  required Expression? condition,
+  required List<Expression> updates,
+  required Statement body,
+  required Scope? scope,
+  required int fileOffset,
+}) {
+  return new ForStatement(variables, condition, updates, body)
+    ..scope = scope
+    ..fileOffset = fileOffset;
+}
+
 FunctionDeclaration createFunctionDeclaration({
   required Variable variable,
   required FunctionNode function,
@@ -356,8 +388,8 @@ FunctionExpression createFunctionExpression(
 FunctionNode createFunctionNode(
   Statement? body, {
   List<TypeParameter>? typeParameters,
-  List<Variable>? positionalParameters,
-  List<Variable>? namedParameters,
+  List<PositionalParameter>? positionalParameters,
+  List<NamedParameter>? namedParameters,
   int? requiredParameterCount,
   DartType returnType = const DynamicType(),
   required int fileOffset,
@@ -448,8 +480,12 @@ VariableDeclaration createInitializedVariableDeclaration({
   String? name,
 }) {
   return createVariableDeclaration(
-    new Variable(name, initializer: expression, type: type, isSynthesized: true)
-      ..fileOffset = fileOffset,
+    new SyntheticVariable(
+      cosmeticName: name,
+      initializer: expression,
+      type: type,
+      hasDeclaredInitializer: true,
+    )..fileOffset = fileOffset,
   );
 }
 
@@ -583,7 +619,7 @@ LabeledStatement createLabeledStatement(
 }
 
 LateVariable createLateVariable({
-  required String? cosmeticName,
+  required String name,
   required DartType? type,
   bool isFinal = false,
   bool isConst = false,
@@ -591,49 +627,14 @@ LateVariable createLateVariable({
   required int fileOffset,
   Expression? initializer,
   bool hasDeclaredInitializer = false,
+  int fileEqualsOffset = TreeNode.noOffset,
 }) {
   return new LateVariable(
-    cosmeticName: cosmeticName,
-    type: type,
-    isFinal: isFinal,
-    isConst: isConst,
-    isWildcard: isWildcard,
-    initializer: initializer,
-    hasDeclaredInitializer: hasDeclaredInitializer,
-  )..fileOffset = fileOffset;
-}
-
-LegacyVariable createLegacyVariable({
-  required String? name,
-  required DartType type,
-  bool isFinal = false,
-  bool isConst = false,
-  bool isWildcard = false,
-  bool isLate = false,
-  bool isInitializingFormal = false,
-  bool isSuperInitializingFormal = false,
-  bool isCovariantByDeclaration = false,
-  bool isRequired = false,
-  bool isLowered = false,
-  bool isSynthesized = false,
-  required int fileOffset,
-  int fileEqualsOffset = TreeNode.noOffset,
-  Expression? initializer,
-  bool hasDeclaredInitializer = false,
-}) {
-  return new LegacyVariable(
-      name,
+      name: name,
       type: type,
       isFinal: isFinal,
       isConst: isConst,
-      isLate: isLate,
       isWildcard: isWildcard,
-      isInitializingFormal: isInitializingFormal,
-      isSuperInitializingFormal: isSuperInitializingFormal,
-      isCovariantByDeclaration: isCovariantByDeclaration,
-      isRequired: isRequired,
-      isLowered: isLowered,
-      isSynthesized: isSynthesized,
       initializer: initializer,
       hasDeclaredInitializer: hasDeclaredInitializer,
     )
@@ -643,7 +644,7 @@ LegacyVariable createLegacyVariable({
 
 /// Creates a [Let] of [variable] with the given [body] using
 /// `variable.fileOffset` as the file offset for the let.
-Let createLet(Variable variable, Expression body, {int? fileOffset}) {
+Let createLet(SyntheticVariable variable, Expression body, {int? fileOffset}) {
   return new Let(variable, body)
     ..fileOffset = fileOffset ?? variable.fileOffset;
 }
@@ -709,6 +710,30 @@ LocalFunctionInvocation createLocalFunctionInvocation(
       ..fileOffset = fileOffset,
     functionType: variable.type as FunctionType,
   )..fileOffset = fileOffset;
+}
+
+LocalVariable createLocalVariable({
+  required String name,
+  required DartType? type,
+  bool isFinal = false,
+  bool isConst = false,
+  bool isWildcard = false,
+  required int fileOffset,
+  Expression? initializer,
+  bool hasDeclaredInitializer = false,
+  int fileEqualsOffset = TreeNode.noOffset,
+}) {
+  return new LocalVariable(
+      name: name,
+      type: type,
+      isFinal: isFinal,
+      isConst: isConst,
+      isWildcard: isWildcard,
+      initializer: initializer,
+      hasDeclaredInitializer: hasDeclaredInitializer,
+    )
+    ..fileOffset = fileOffset
+    ..fileEqualsOffset = fileEqualsOffset;
 }
 
 // Coverage-ignore(suite): Not run.
@@ -805,14 +830,16 @@ NamedParameter createNamedParameter({
   required DartType type,
   Expression? defaultValue,
   bool isCovariantByDeclaration = false,
+  bool isCovariantByClass = false,
   bool isRequired = false,
   bool isInitializingFormal = false,
   bool isSuperInitializingFormal = false,
   bool isFinal = false,
-  bool hasDeclaredDefaultType = false,
+  bool hasDeclaredDefaultValue = false,
   bool isLowered = false,
   bool isSynthesized = false,
   bool isWildcard = false,
+  bool isRenamedPrivateNamedParameter = false,
   required int fileOffset,
 }) {
   return new NamedParameter(
@@ -820,14 +847,16 @@ NamedParameter createNamedParameter({
     type: type,
     defaultValue: defaultValue,
     isCovariantByDeclaration: isCovariantByDeclaration,
+    isCovariantByClass: isCovariantByClass,
     isRequired: isRequired,
     isInitializingFormal: isInitializingFormal,
     isSuperInitializingFormal: isSuperInitializingFormal,
     isFinal: isFinal,
-    hasDeclaredDefaultValue: hasDeclaredDefaultType,
+    hasDeclaredDefaultValue: hasDeclaredDefaultValue,
     isLowered: isLowered,
     isSynthesized: isSynthesized,
     isWildcard: isWildcard,
+    isRenamedPrivateNamedParameter: isRenamedPrivateNamedParameter,
   )..fileOffset = fileOffset;
 }
 
@@ -912,35 +941,6 @@ OrPattern createOrPattern({
   )..fileOffset = fileOffset;
 }
 
-// TODO(johnniwinther): Should this require a type?
-Variable createParameterVariable(
-  String? name, {
-  DartType type = const DynamicType(),
-  required int fileOffset,
-  bool isCovariantByDeclaration = false,
-  bool isCovariantByClass = false,
-  bool isLowered = false,
-  bool isSynthesized = false,
-  bool isFinal = false,
-  bool isRequired = false,
-  Expression? initializer,
-  bool hasDeclaredInitializer = false,
-}) {
-  return new Variable(
-      name,
-      type: type,
-      isCovariantByDeclaration: isCovariantByDeclaration,
-      isLowered: isLowered,
-      isSynthesized: isSynthesized,
-      isFinal: isFinal,
-      isRequired: isRequired,
-      initializer: initializer,
-      hasDeclaredInitializer: hasDeclaredInitializer,
-    )
-    ..fileOffset = fileOffset
-    ..isCovariantByClass = isCovariantByClass;
-}
-
 PatternAssignment createPatternAssignment({
   required Pattern pattern,
   required Expression expression,
@@ -958,12 +958,6 @@ PatternGuard createPatternGuard({
   required int fileOffset,
 }) {
   return new PatternGuard(pattern, guard)..fileOffset = fileOffset;
-}
-
-ContinueSwitchStatement createContinueSwitchStatement({
-  required int fileOffset,
-}) {
-  return new ContinueSwitchStatement(dummySwitchCase)..fileOffset = fileOffset;
 }
 
 PatternSwitchCase createPatternSwitchCase({
@@ -1017,11 +1011,12 @@ PositionalParameter createPositionalParameter({
   required DartType type,
   Expression? defaultValue,
   bool isCovariantByDeclaration = false,
+  bool isCovariantByClass = false,
   bool isRequired = false,
   bool isInitializingFormal = false,
   bool isSuperInitializingFormal = false,
   bool isFinal = false,
-  bool hasDeclaredDefaultType = false,
+  bool hasDeclaredDefaultValue = false,
   bool isLowered = false,
   bool isSynthesized = false,
   bool isWildcard = false,
@@ -1032,11 +1027,12 @@ PositionalParameter createPositionalParameter({
     type: type,
     defaultValue: defaultValue,
     isCovariantByDeclaration: isCovariantByDeclaration,
+    isCovariantByClass: isCovariantByClass,
     isRequired: isRequired,
     isInitializingFormal: isInitializingFormal,
     isSuperInitializingFormal: isSuperInitializingFormal,
     isFinal: isFinal,
-    hasDeclaredDefaultValue: hasDeclaredDefaultType,
+    hasDeclaredDefaultValue: hasDeclaredDefaultValue,
     isLowered: isLowered,
     isSynthesized: isSynthesized,
     isWildcard: isWildcard,
@@ -1288,9 +1284,18 @@ Variable createUninitializedVariable({
   String? name,
   required int fileOffset,
   bool isFinal = false,
+  bool isLowered = false,
+  bool isSynthesized = true,
+  bool hasDeclaredInitializer = false,
 }) {
-  return new Variable(name, type: type, isSynthesized: true, isFinal: isFinal)
-    ..fileOffset = fileOffset;
+  return new SyntheticVariable(
+    cosmeticName: name,
+    type: type,
+    isFinal: isFinal,
+    isLowered: isLowered,
+    hasDeclaredInitializer: hasDeclaredInitializer,
+    isSynthesized: isSynthesized,
+  )..fileOffset = fileOffset;
 }
 
 /// Creates a declaration of an uninitialized [Variable] of the static [type].
@@ -1313,17 +1318,40 @@ VariableDeclaration createUninitializedVariableDeclaration({
 /// Creates a [Variable] for [expression] with the static [type]
 /// using `expression.fileOffset` as the file offset for the declaration.
 // TODO(johnniwinther): Merge the use of this with [createVariableCache].
-Variable createVariable(Expression expression, DartType type) {
+SyntheticVariable createVariable(
+  Expression expression,
+  DartType type, {
+  String? cosmeticName,
+  int? fileOffset,
+  bool isLowered = false,
+  bool isSynthesized = true,
+  bool isFinal = true,
+}) {
   assert(expression is! ThisExpression);
-  return new Variable.forValue(expression, type: type)
-    ..fileOffset = expression.fileOffset;
+  return new SyntheticVariable(
+    cosmeticName: cosmeticName,
+    initializer: expression,
+    type: type,
+    isLowered: isLowered,
+    isFinal: isFinal,
+    isSynthesized: isSynthesized,
+    hasDeclaredInitializer: true,
+  )..fileOffset = fileOffset ?? expression.fileOffset;
 }
 
 /// Creates a [Variable] for caching [expression] of the static
 /// [type] using `expression.fileOffset` as the file offset for the declaration.
-Variable createVariableCache(Expression expression, DartType type) {
-  return new Variable.forValue(expression, type: type)
-    ..fileOffset = expression.fileOffset;
+SyntheticVariable createVariableCache(
+  Expression expression,
+  DartType type, {
+  int? fileOffset,
+}) {
+  return new SyntheticVariable(
+    initializer: expression,
+    type: type,
+    isFinal: true,
+    hasDeclaredInitializer: true,
+  )..fileOffset = fileOffset ?? expression.fileOffset;
 }
 
 VariableDeclaration createVariableDeclaration(
@@ -1366,7 +1394,7 @@ Expression createVariableSet(
   bool allowFinalAssignment = false,
   required int fileOffset,
 }) {
-  // TODO(johnniwinther):
+  // TODO(johnniwinther): Add a [LocalFunctionVariable] for this.
   if (variable.parent is FunctionDeclaration) {
     return createLocalFunctionInvocation(
       variable,
@@ -1395,30 +1423,4 @@ WildcardPattern createWildcardPattern({
   required int fileOffset,
 }) {
   return new WildcardPattern(type)..fileOffset = fileOffset;
-}
-
-Catch createCatch({
-  required DartType guard,
-  required Variable? exception,
-  required Variable? stackTrace,
-  required Statement body,
-  required Scope? scope,
-  required int fileOffset,
-}) {
-  return new Catch(exception, body, guard: guard, stackTrace: stackTrace)
-    ..scope = scope
-    ..fileOffset = fileOffset;
-}
-
-ForStatement createForStatement({
-  required List<VariableDeclaration> variables,
-  required Expression? condition,
-  required List<Expression> updates,
-  required Statement body,
-  required Scope? scope,
-  required int fileOffset,
-}) {
-  return new ForStatement(variables, condition, updates, body)
-    ..scope = scope
-    ..fileOffset = fileOffset;
 }

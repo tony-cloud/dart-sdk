@@ -9,7 +9,6 @@ import 'package:kernel/ast.dart';
 import 'package:kernel/class_hierarchy.dart';
 import 'package:kernel/reference_from_index.dart' show IndexedClass;
 import 'package:kernel/src/bounds_checks.dart';
-import 'package:kernel/transformations/flags.dart';
 import 'package:kernel/type_environment.dart';
 
 import '../api_prototype/experimental_flags.dart';
@@ -257,7 +256,6 @@ class SourceEnumBuilder extends SourceClassBuilder {
             fileOffset: fileOffset,
             fileUri: fileUri,
             hasImmediatelyDeclaredInitializer: false,
-            isClosureContextLoweringEnabled: isClosureContextLoweringEnabled,
           );
 
       FormalParameterBuilder indexFormalParameterBuilder =
@@ -270,7 +268,6 @@ class SourceEnumBuilder extends SourceClassBuilder {
             fileOffset: fileOffset,
             fileUri: fileUri,
             hasImmediatelyDeclaredInitializer: false,
-            isClosureContextLoweringEnabled: isClosureContextLoweringEnabled,
           );
 
       ConstructorDeclaration constructorDeclaration =
@@ -509,7 +506,7 @@ class _EnumToStringMethodDeclaration implements MethodDeclaration {
 
     if (toStringSuperTarget != null) {
       // Coverage-ignore-block(suite): Not run.
-      _procedure.transformerFlags |= TransformerFlag.superCalls;
+      _procedure.containsSuperCalls = true;
       _procedure.function.registerFunctionBody(
         new ReturnStatement(
           new SuperMethodInvocation(
@@ -576,7 +573,7 @@ class _EnumToStringMethodDeclaration implements MethodDeclaration {
           )
           ..fileOffset = _fileOffset
           ..fileEndOffset = _fileOffset
-          ..transformerFlags |= TransformerFlag.superCalls;
+          ..containsSuperCalls = true;
     f(kind: BuiltMemberKind.Method, member: _procedure);
   }
 

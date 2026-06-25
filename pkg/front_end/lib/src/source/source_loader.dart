@@ -55,6 +55,7 @@ import '../dill/dill_library_builder.dart';
 import '../kernel/benchmarker.dart' show BenchmarkSubdivides;
 import '../kernel/body_builder_context.dart';
 import '../kernel/exhaustiveness.dart';
+import '../kernel/expression_compilation_data.dart';
 import '../kernel/hierarchy/class_member.dart';
 import '../kernel/hierarchy/delayed.dart';
 import '../kernel/hierarchy/hierarchy_builder.dart';
@@ -1489,7 +1490,7 @@ severity: $severity
     SourceLibraryBuilder libraryBuilder,
     String? enclosingClassOrExtension,
     bool isClassInstanceMember,
-    Procedure procedure,
+    ExpressionCompilationData expressionCompilationData,
     Variable? extensionThis,
     List<InternalVariable> extraKnownVariables,
     ExpressionEvaluationHelper expressionEvaluationHelper,
@@ -1546,7 +1547,7 @@ severity: $severity
     return createResolver().buildSingleExpression(
       libraryBuilder: libraryBuilder,
       bodyBuilderContext: new ExpressionCompilerProcedureBodyBuildContext(
-        procedure,
+        expressionCompilationData,
         libraryBuilder,
         declarationBuilder,
         isDeclarationInstanceMember: isClassInstanceMember,
@@ -1555,7 +1556,7 @@ severity: $severity
       extensionScope: extensionScope,
       scope: memberScope,
       token: token,
-      procedure: procedure,
+      expressionCompilationData: expressionCompilationData,
       extraKnownVariables: extraKnownVariables,
       expressionEvaluationHelper: expressionEvaluationHelper,
       extensionThis: extensionThis,
@@ -2974,7 +2975,6 @@ severity: $severity
           hierarchyBuilder,
           sourceClasses,
           sourceExtensionTypes,
-          isClosureContextLoweringEnabled: isClosureContextLoweringEnabled,
         );
     typeInferenceEngine.membersBuilder = membersBuilder;
     ticker.logMs("Built class hierarchy members");

@@ -518,7 +518,15 @@ final class TargetBlock extends Block {
 /// to represent incoming values of local variables, exception object and
 /// stack trace.
 final class CatchBlock extends Block {
-  CatchBlock(super.graph, super.sourcePosition);
+  final List<ast.DartType> guardTypes;
+  final bool isSynthetic;
+
+  CatchBlock(
+    super.graph,
+    super.sourcePosition,
+    this.guardTypes, {
+    required this.isSynthetic,
+  });
 
   @override
   R accept<R>(InstructionVisitor<R> v) => v.visitCatchBlock(this);
@@ -1243,7 +1251,8 @@ final class TypeTest extends Definition with NoThrow, Pure, Idempotent {
 /// passed to a call or an instance allocation.
 ///
 /// Only used as the first input of call instructions, [AllocateObject],
-/// [AllocateListLiteral], [AllocateMapLiteral] and [EnterSuspendableFunction].
+/// [AllocateListLiteral], [AllocateMapLiteral], [InstantiateClosure] and
+/// [EnterSuspendableFunction].
 final class TypeArguments extends Definition with NoThrow, Pure, Idempotent {
   final List<ast.DartType> types;
   TypeArguments(
@@ -1422,6 +1431,29 @@ final class StringInterpolation extends Definition
 
   @override
   R accept<R>(InstructionVisitor<R> v) => v.visitStringInterpolation(this);
+}
+
+/// Instantiate a generic closure with given type arguments.
+final class InstantiateClosure extends Definition with CanThrow, Pure {
+  @override
+  final CType type;
+
+  InstantiateClosure(
+    super.graph,
+    super.sourcePosition,
+    Definition typeArguments,
+    Definition closure,
+    this.type,
+  ) : super(inputCount: 2) {
+    setInputAt(0, typeArguments);
+    setInputAt(1, closure);
+  }
+
+  Definition get typeArguments => inputDefAt(0);
+  Definition get closure => inputDefAt(1);
+
+  @override
+  R accept<R>(InstructionVisitor<R> v) => v.visitInstantiateClosure(this);
 }
 
 /// Enter a suspendable function.

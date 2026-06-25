@@ -207,6 +207,7 @@ mixin RegularFieldEncodingMixin implements FieldEncoding {
       _field!.initializer = initializer..parent = _field;
     }
     _field!.scope = scopeProviderInfo?.scope;
+    _field!.thisVariable = scopeProviderInfo?.thisVariable;
   }
 
   @override
@@ -284,7 +285,7 @@ mixin RegularFieldEncodingMixin implements FieldEncoding {
 
   @override
   void registerSuperCall() {
-    _field!.transformerFlags |= TransformerFlag.superCalls;
+    _field!.containsSuperCalls = true;
   }
 
   @override
@@ -511,8 +512,8 @@ abstract class AbstractLateFieldEncoding implements FieldEncoding {
       _createGetterBody(coreTypes, _fragment.name, initializer),
     );
     // The initializer is copied from [_field] to [_lateGetter] so we copy the
-    // transformer flags to reflect whether the getter contains super calls.
-    _lateGetter!.transformerFlags = _field!.transformerFlags;
+    // property to reflect whether the getter contains super calls.
+    _lateGetter!.containsSuperCalls = _field!.containsSuperCalls;
 
     if (_lateSetter != null) {
       _lateSetter!.function.registerFunctionBody(
@@ -575,7 +576,7 @@ abstract class AbstractLateFieldEncoding implements FieldEncoding {
       "Type has not been computed for field ${_fragment.name}.",
     );
     if (needsPromotion) {
-      Variable variable = extern.createVariableCache(
+      SyntheticVariable variable = extern.createVariableCache(
         _createFieldGet(_field!),
         _type!.withDeclaredNullability(Nullability.nullable),
       );
@@ -638,9 +639,10 @@ abstract class AbstractLateFieldEncoding implements FieldEncoding {
     Reference? reference, {
     required bool isCovariantByDeclaration,
   }) {
-    Variable parameter = extern.createParameterVariable(
-      "${_fragment.name}#param",
+    PositionalParameter parameter = extern.createPositionalParameter(
+      cosmeticName: "${_fragment.name}#param",
       isCovariantByDeclaration: isCovariantByDeclaration,
+      type: const DynamicType(),
       fileOffset: _fragment.nameOffset,
     );
     return extern.createProcedure(
@@ -918,7 +920,7 @@ abstract class AbstractLateFieldEncoding implements FieldEncoding {
 
   @override
   void registerSuperCall() {
-    _field!.transformerFlags |= TransformerFlag.superCalls;
+    _field!.containsSuperCalls = true;
   }
 }
 
@@ -1255,8 +1257,9 @@ class AbstractOrExternalFieldEncoding implements FieldEncoding {
         extern.createFunctionNode(
           null,
           positionalParameters: [
-            extern.createParameterVariable(
-              syntheticThisName,
+            extern.createPositionalParameter(
+              cosmeticName: syntheticThisName,
+              type: const DynamicType(),
               fileOffset: _fragment.nameOffset,
               isLowered: true,
             ),
@@ -1274,8 +1277,9 @@ class AbstractOrExternalFieldEncoding implements FieldEncoding {
           .getProcedureMemberName(ProcedureKind.Getter, _fragment.name)
           .attachMember(_getter!);
       if (_fragment.hasSetter) {
-        Variable parameter = extern.createParameterVariable(
-          "#externalFieldValue",
+        PositionalParameter parameter = extern.createPositionalParameter(
+          cosmeticName: "#externalFieldValue",
+          type: const DynamicType(),
           isSynthesized: true,
           isCovariantByDeclaration: _fragment.modifiers.isCovariant,
           fileOffset: _fragment.nameOffset,
@@ -1286,8 +1290,9 @@ class AbstractOrExternalFieldEncoding implements FieldEncoding {
           extern.createFunctionNode(
             null,
             positionalParameters: [
-              extern.createParameterVariable(
-                syntheticThisName,
+              extern.createPositionalParameter(
+                cosmeticName: syntheticThisName,
+                type: const DynamicType(),
                 fileOffset: _fragment.nameOffset,
                 isLowered: true,
               ),
@@ -1328,24 +1333,13 @@ class AbstractOrExternalFieldEncoding implements FieldEncoding {
           )
           .attachMember(_getter!);
       if (!_fragment.modifiers.isFinal) {
-        Variable parameter =
-            libraryBuilder.loader.isClosureContextLoweringEnabled
-            ?
-              // Coverage-ignore(suite): Not run.
-              (new PositionalParameter(
-                cosmeticName: "#externalFieldValue",
-                type: const DynamicType(),
-                isSynthesized: true,
-                isCovariantByDeclaration: _fragment.modifiers.isCovariant,
-              )..fileOffset = _fragment.nameOffset)
-            : (extern.createParameterVariable(
-                  "#externalFieldValue",
-                  isSynthesized: true,
-                  isCovariantByDeclaration: _fragment.modifiers.isCovariant,
-                  fileOffset: _fragment.nameOffset,
-                )
-                ..isCovariantByDeclaration = _fragment.modifiers.isCovariant
-                ..fileOffset = _fragment.nameOffset);
+        PositionalParameter parameter = extern.createPositionalParameter(
+          cosmeticName: "#externalFieldValue",
+          type: const DynamicType(),
+          isSynthesized: true,
+          isCovariantByDeclaration: _fragment.modifiers.isCovariant,
+          fileOffset: _fragment.nameOffset,
+        );
         _setter =
             new Procedure(
                 dummyName,
@@ -1829,8 +1823,9 @@ class ExtensionInstanceFieldEncoding implements FieldEncoding {
       extern.createFunctionNode(
         null,
         positionalParameters: [
-          extern.createParameterVariable(
-            syntheticThisName,
+          extern.createPositionalParameter(
+            cosmeticName: syntheticThisName,
+            type: const DynamicType(),
             fileOffset: _fragment.nameOffset,
             isLowered: true,
           ),
@@ -1847,8 +1842,9 @@ class ExtensionInstanceFieldEncoding implements FieldEncoding {
         .getProcedureMemberName(ProcedureKind.Getter, _fragment.name)
         .attachMember(_getter!);
     if (_fragment.hasSetter) {
-      Variable parameter = extern.createParameterVariable(
-        "#externalFieldValue",
+      PositionalParameter parameter = extern.createPositionalParameter(
+        cosmeticName: "#externalFieldValue",
+        type: const DynamicType(),
         isSynthesized: true,
         isCovariantByDeclaration: _fragment.modifiers.isCovariant,
         fileOffset: _fragment.nameOffset,
@@ -1859,8 +1855,9 @@ class ExtensionInstanceFieldEncoding implements FieldEncoding {
         extern.createFunctionNode(
           null,
           positionalParameters: [
-            extern.createParameterVariable(
-              syntheticThisName,
+            extern.createPositionalParameter(
+              cosmeticName: syntheticThisName,
+              type: const DynamicType(),
               fileOffset: _fragment.nameOffset,
               isLowered: true,
             ),

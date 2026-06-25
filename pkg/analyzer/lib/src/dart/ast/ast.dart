@@ -11158,12 +11158,13 @@ sealed class ExpressionImpl extends AstNodeImpl
     ResolverVisitor resolver,
     CollectionLiteralContext? context,
   ) {
-    resolver.analyzeExpression(
-      this,
-      SharedTypeSchemaView(
-        context?.elementType ?? UnknownInferredType.instance,
-      ),
-    );
+    var contextType = context?.elementType;
+
+    // While typing `{key^}` in a `Map<K, V>` context, recover by using `K`.
+    contextType ??= context?.keyType;
+
+    contextType ??= UnknownInferredType.instance;
+    resolver.analyzeExpression(this, SharedTypeSchemaView(contextType));
   }
 
   /// Dispatches this expression to the [resolver], with the given [contextType]
@@ -13870,6 +13871,10 @@ sealed class FormalParameterImpl extends AstNodeImpl
   /// of the primary constructor for an extension type, when
   /// [Feature.primary_constructors] is not enabled.
   Scope? scope;
+
+  /// The type explicitly written on this parameter fragment, or `null` if the
+  /// parameter has an implicit type.
+  TypeImpl? explicitFragmentType;
 
   FormalParameterImpl({
     required CommentImpl? comment,

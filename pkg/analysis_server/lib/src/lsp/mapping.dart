@@ -222,7 +222,7 @@ WorkspaceEdit createRenameEdit(
 
 /// Creates a [lsp.WorkspaceEdit] from a [server.SourceChange].
 ///
-/// Can return experimental [lsp.SnippetTextEdit]s if the following are true:
+/// Can return experimental [lsp.SnippetableTextEdit]s if the following are true:
 /// - the client has indicated support for in the experimental section of their
 ///   client capabilities, and
 /// - [allowSnippets] is true, and
@@ -288,7 +288,7 @@ lsp.WorkspaceEdit createWorkspaceEdit(
           (e) =>
               Either3<
                 lsp.AnnotatedTextEdit,
-                lsp.SnippetTextEdit,
+                lsp.SnippetableTextEdit,
                 lsp.TextEdit
               >.t2(e),
         )
@@ -523,9 +523,8 @@ lsp.Location? fragmentToLocation(
 
   int? nameOffset;
   int? nameLength;
-  if (fragment case PropertyAccessorFragmentImpl(
-    :var isOriginDeclaration,
-  ) when !isOriginDeclaration) {
+  if (fragment case PropertyAccessorFragmentImpl(:var isOriginDeclaration)
+      when !isOriginDeclaration) {
     var element = fragment.element.nonSynthetic;
     nameOffset = element.firstFragment.nameOffset;
     nameLength = element.firstFragment.name?.length;
@@ -787,7 +786,7 @@ lsp.Diagnostic pluginToDiagnostic(
     severity: pluginToDiagnosticSeverity(error.severity),
     code: error.code,
     source: languageSourceName,
-    message: message,
+    message: .t2(message),
     tags: getDiagnosticTags(supportedTags, error),
     relatedInformation: relatedInformation,
     // Only include codeDescription if the client explicitly supports it
@@ -883,7 +882,8 @@ ChangeAnnotation? recordEditAnnotation(
 String relevanceToSortText(int relevance) =>
     (sortTextMaxValue - relevance).toString();
 
-/// Creates a SnippetTextEdit for a set of edits using Linked Edit Groups.
+/// Creates a [lsp.SnippetableTextEdit] for a set of edits using Linked Edit
+/// Groups.
 ///
 /// Edit groups offsets are based on the entire content being modified after all
 /// edits, so [editOffset] must to take into account both the offset of the edit
@@ -891,7 +891,7 @@ String relevanceToSortText(int relevance) =>
 ///
 /// [selectionOffset] is also absolute and assumes `edit.replacement` will be
 /// inserted at [editOffset].
-lsp.SnippetTextEdit snippetTextEditFromEditGroups(
+lsp.SnippetableTextEdit snippetTextEditFromEditGroups(
   String filePath,
   server.LineInfo lineInfo,
   server.SourceEdit edit, {
@@ -900,7 +900,7 @@ lsp.SnippetTextEdit snippetTextEditFromEditGroups(
   required int? selectionOffset,
   required int? selectionLength,
 }) {
-  return lsp.SnippetTextEdit(
+  return lsp.SnippetableTextEdit(
     insertTextFormat: lsp.InsertTextFormat.Snippet,
     range: toRange(lineInfo, edit.offset, edit.length),
     newText: buildSnippetStringForEditGroups(
@@ -914,17 +914,18 @@ lsp.SnippetTextEdit snippetTextEditFromEditGroups(
   );
 }
 
-/// Creates a SnippetTextEdit for an edit with a selection placeholder.
+/// Creates a [lsp.SnippetableTextEdit] for an edit with a selection
+/// placeholder.
 ///
 /// [selectionOffsetRelative] is relative to (and therefore must be within) the
 /// edit.
-lsp.SnippetTextEdit snippetTextEditWithSelection(
+lsp.SnippetableTextEdit snippetTextEditWithSelection(
   server.LineInfo lineInfo,
   server.SourceEdit edit, {
   required int selectionOffsetRelative,
   int? selectionLength,
 }) {
-  return lsp.SnippetTextEdit(
+  return lsp.SnippetableTextEdit(
     insertTextFormat: lsp.InsertTextFormat.Snippet,
     range: toRange(lineInfo, edit.offset, edit.length),
     newText: buildSnippetStringWithTabStops(edit.replacement, [
@@ -1150,7 +1151,7 @@ lsp.CompletionItem toCompletionItem(
   required DocumentationPreference includeDocumentation,
   required bool commitCharactersEnabled,
   required bool completeFunctionCalls,
-  CompletionItemResolutionInfo? resolutionData,
+  CompletionResolutionInfo? resolutionData,
 }) {
   // isCallable is used to suffix the label with parens so it's clear the item
   // is callable.
@@ -1524,9 +1525,10 @@ lsp.Range toRange(server.LineInfo lineInfo, int offset, int length) {
 }
 
 lsp.SignatureHelp toSignatureHelp(
-  Set<lsp.MarkupKind>? preferredFormats,
-  server.SignatureInformation signature,
-) {
+  server.SignatureInformation signature, {
+  required Set<lsp.MarkupKind>? preferredFormats,
+  required bool clientSupportsNullActiveParameter,
+}) {
   // For now, we only support returning one (though we may wish to use named
   // args. etc. to provide one for each possible "next" option when the cursor
   // is at the end ready to provide another argument).
@@ -1584,19 +1586,21 @@ lsp.SignatureHelp toSignatureHelp(
       ),
     ],
     activeSignature: 0, // activeSignature
-    // We must provide a unsigned integer here but it's possible there isn't
-    // a valid value (because the user might be in the 10th argument of an
-    // invocation that only takes 1). The LSP spec allows us to send an
-    // out-of-bounds value so send the first out-of-bound value (`.length`). The
-    // spec says this may be treated as 0, however VS Code will not highlight
-    // any parameter in this case (which is preferred and hopefully other
-    // clients may copy).
     activeParameter:
-        signature.activeParameterIndex ?? signature.parameters.length,
+        signature.activeParameterIndex ??
+        // If the client doesn't support `null`, we still must provide an
+        // unsigned integer. The LSP spec allows us to send an out-of-bounds
+        // value so send the first out-of-bound value (`.length`). The spec
+        // says this may be treated as 0, however VS Code will not highlight
+        // any parameter in this case (which is preferred and hopefully other
+        // clients may copy).
+        (clientSupportsNullActiveParameter
+            ? null
+            : signature.parameters.length),
   );
 }
 
-List<lsp.SnippetTextEdit> toSnippetTextEdits(
+List<lsp.SnippetableTextEdit> toSnippetTextEdits(
   String filePath,
   server.SourceFileEdit change,
   List<server.LinkedEditGroup> editGroups,
@@ -1604,7 +1608,7 @@ List<lsp.SnippetTextEdit> toSnippetTextEdits(
   required int? selectionOffset,
   required int? selectionLength,
 }) {
-  var snippetEdits = <lsp.SnippetTextEdit>[];
+  var snippetEdits = <lsp.SnippetableTextEdit>[];
 
   // Edit groups offsets are based on the document after the edits are applied.
   // This means we must compute an offset delta for each edit that takes into
@@ -1687,7 +1691,7 @@ lsp.TextDocumentEdit toTextDocumentEdit(
   );
 }
 
-Either3<lsp.AnnotatedTextEdit, lsp.SnippetTextEdit, lsp.TextEdit>
+Either3<lsp.AnnotatedTextEdit, lsp.SnippetableTextEdit, lsp.TextEdit>
 toTextDocumentEditEdit(
   LspClientCapabilities capabilities,
   server.LineInfo lineInfo,
@@ -1697,7 +1701,11 @@ toTextDocumentEditEdit(
   lsp.ChangeAnnotationIdentifier? annotationIdentifier,
 }) {
   if (annotationIdentifier != null) {
-    return Either3<lsp.AnnotatedTextEdit, lsp.SnippetTextEdit, lsp.TextEdit>.t1(
+    return Either3<
+      lsp.AnnotatedTextEdit,
+      lsp.SnippetableTextEdit,
+      lsp.TextEdit
+    >.t1(
       lsp.AnnotatedTextEdit(
         annotationId: annotationIdentifier,
         range: toRange(lineInfo, edit.offset, edit.length),
@@ -1707,11 +1715,17 @@ toTextDocumentEditEdit(
   }
   if (!capabilities.experimentalSnippetTextEdit ||
       selectionOffsetRelative == null) {
-    return Either3<lsp.AnnotatedTextEdit, lsp.SnippetTextEdit, lsp.TextEdit>.t3(
-      toTextEdit(lineInfo, edit),
-    );
+    return Either3<
+      lsp.AnnotatedTextEdit,
+      lsp.SnippetableTextEdit,
+      lsp.TextEdit
+    >.t3(toTextEdit(lineInfo, edit));
   }
-  return Either3<lsp.AnnotatedTextEdit, lsp.SnippetTextEdit, lsp.TextEdit>.t2(
+  return Either3<
+    lsp.AnnotatedTextEdit,
+    lsp.SnippetableTextEdit,
+    lsp.TextEdit
+  >.t2(
     snippetTextEditWithSelection(
       lineInfo,
       edit,

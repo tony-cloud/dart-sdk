@@ -1045,19 +1045,53 @@ void entryPoint(String arg) {
         'bin/script1.dart',
       ]);
 
-      String stdout = result.stdout.toString().trim();
-      expect(
-        stdout,
-        '''
+      String stdout = result.stdout.toString().replaceAll('\r\n', '\n').trim();
+      String expected =
+          '''
 Script1: ${script1.uri}
   -> ${script1.uri}
 Script2: ${script2.uri}
   -> ${script2.uri}
 '''
-            .trim(),
-      );
+              .trim();
+      if (Platform.isWindows) {
+        // Windows _sometimes_ uses a lower-case drive-letter and
+        // sometimes uses an upper-case one. Convert everything to
+        // lowercase so we don't fail on that.
+        stdout = stdout.toLowerCase();
+        expected = expected.toLowerCase();
+      }
+      expect(stdout, expected);
       expect(result.stderr, isEmpty);
       expect(result.exitCode, 0);
+    },
+  );
+
+  test(
+    'resident compiler works with non-ASCII filenames',
+    () async {
+      p = project();
+      p.file('æble.dart', r'''
+Future<void> main() async {
+  print("Hello, æble!");
+}
+''');
+
+      var script = File(path.join(p.dir.path, 'æble.dart'));
+      expect(script.existsSync(), true);
+      print(script);
+
+      ProcessResult result = await p.run([
+        'run',
+        '--resident',
+        '--$residentCompilerInfoFileOption=$serverInfoFile',
+        'æble.dart',
+      ]);
+
+      expect(result.exitCode, 0);
+      expect(result.stderr, isEmpty);
+      String stdout = result.stdout.toString().trim();
+      expect(stdout, 'Hello, æble!');
     },
   );
 

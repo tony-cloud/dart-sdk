@@ -888,6 +888,65 @@ augmentationExtendsClauseAlreadyPresent = DiagnosticWithoutArgumentsImpl(
   expectedTypes: [],
 );
 
+/// Parameters:
+/// String modifier: the lexeme of the modifier.
+const DiagnosticWithArguments<
+  LocatableDiagnostic Function({required String modifier})
+>
+augmentationFormalParameterModifierExtra = DiagnosticWithArguments(
+  name: 'augmentation_formal_parameter_modifier_extra',
+  problemMessage:
+      "The augmentation has the '{0}' modifier on this formal parameter, but the "
+      "declaration doesn't.",
+  correctionMessage:
+      "Try removing the '{0}' modifier, or adding it to the declaration.",
+  type: DiagnosticType.COMPILE_TIME_ERROR,
+  uniqueName: 'augmentation_formal_parameter_modifier_extra',
+  withArguments: _withArgumentsAugmentationFormalParameterModifierExtra,
+  expectedTypes: [ExpectedType.string],
+);
+
+/// Parameters:
+/// String modifier: the lexeme of the modifier.
+const DiagnosticWithArguments<
+  LocatableDiagnostic Function({required String modifier})
+>
+augmentationFormalParameterModifierMissing = DiagnosticWithArguments(
+  name: 'augmentation_formal_parameter_modifier_missing',
+  problemMessage:
+      "The augmentation is missing the '{0}' modifier on this formal parameter "
+      "that the declaration has.",
+  correctionMessage:
+      "Try adding the '{0}' modifier, or removing it from the declaration.",
+  type: DiagnosticType.COMPILE_TIME_ERROR,
+  uniqueName: 'augmentation_formal_parameter_modifier_missing',
+  withArguments: _withArgumentsAugmentationFormalParameterModifierMissing,
+  expectedTypes: [ExpectedType.string],
+);
+
+/// Parameters:
+/// Type expectedType: the type of the formal parameter in the declaration.
+/// Type actualType: the type of the formal parameter in the augmentation.
+const DiagnosticWithArguments<
+  LocatableDiagnostic Function({
+    required DartType expectedType,
+    required DartType actualType,
+  })
+>
+augmentationFormalParameterTypeMismatch = DiagnosticWithArguments(
+  name: 'augmentation_formal_parameter_type_mismatch',
+  problemMessage:
+      "The augmentation's formal parameter type '{1}' must be the same as the "
+      "declaration's formal parameter type '{0}'.",
+  correctionMessage:
+      "Try changing the augmentation's formal parameter type to match the "
+      "declaration, or omit the type.",
+  type: DiagnosticType.COMPILE_TIME_ERROR,
+  uniqueName: 'augmentation_formal_parameter_type_mismatch',
+  withArguments: _withArgumentsAugmentationFormalParameterTypeMismatch,
+  expectedTypes: [ExpectedType.type, ExpectedType.type],
+);
+
 /// No parameters.
 const DiagnosticWithoutArguments
 augmentationInducedGetterAlreadyComplete = DiagnosticWithoutArgumentsImpl(
@@ -1833,6 +1892,7 @@ classUsedAsMixinDeclaresGenerativeConstructor = DiagnosticWithArguments(
   problemMessage:
       "The class '{0}' can't be used as a mixin because it declares a generative "
       "constructor.",
+  hasPublishedDocs: true,
   type: DiagnosticType.COMPILE_TIME_ERROR,
   uniqueName: 'class_used_as_mixin_declares_generative_constructor',
   withArguments: _withArgumentsClassUsedAsMixinDeclaresGenerativeConstructor,
@@ -11086,6 +11146,7 @@ mixinClassDeclarationWithClause = DiagnosticWithArguments(
   correctionMessage:
       "Try removing the 'with' clause or removing the 'mixin' modifier from "
       "the class.",
+  hasPublishedDocs: true,
   type: DiagnosticType.COMPILE_TIME_ERROR,
   uniqueName: 'mixin_class_declaration_with_clause',
   withArguments: _withArgumentsMixinClassDeclarationWithClause,
@@ -11101,6 +11162,7 @@ mixinClassDeclaresNonTrivialGenerativeConstructor = DiagnosticWithArguments(
   name: 'mixin_class_declares_non_trivial_generative_constructor',
   problemMessage:
       "The mixin class '{0}' can't declare a non-trivial generative constructor.",
+  hasPublishedDocs: true,
   type: DiagnosticType.COMPILE_TIME_ERROR,
   uniqueName: 'mixin_class_declares_non_trivial_generative_constructor',
   withArguments:
@@ -11168,6 +11230,7 @@ mixinModifierMixinApplicationClassWithMultipleMixins = DiagnosticWithArguments(
   problemMessage:
       "The mixin application class '{0}' can only have a single mixin.",
   correctionMessage: "Try removing all but one mixin.",
+  hasPublishedDocs: true,
   type: DiagnosticType.COMPILE_TIME_ERROR,
   uniqueName: 'mixin_modifier_mixin_application_class_with_multiple_mixins',
   withArguments:
@@ -14083,6 +14146,7 @@ const DiagnosticWithoutArguments primaryConstructorCannotRedirect =
       problemMessage:
           "A primary constructor can't be a redirecting constructor.",
       correctionMessage: "Try removing the redirect.",
+      hasPublishedDocs: true,
       type: DiagnosticType.COMPILE_TIME_ERROR,
       uniqueName: 'primary_constructor_cannot_redirect',
       expectedTypes: [],
@@ -15081,6 +15145,7 @@ returnOfInvalidTypeFromThen = DiagnosticWithArguments(
   problemMessage:
       "A value of type '{0}' can't be returned by the 'onError' handler because "
       "it must be assignable to '{1}', as required by 'Future.then'.",
+  hasPublishedDocs: true,
   type: DiagnosticType.STATIC_WARNING,
   uniqueName: 'return_of_invalid_type_from_then',
   withArguments: _withArgumentsReturnOfInvalidTypeFromThen,
@@ -15124,6 +15189,7 @@ returnTypeInvalidForThen = DiagnosticWithArguments(
   problemMessage:
       "The return type '{0}' isn't assignable to '{1}', as required by "
       "'Future.then'.",
+  hasPublishedDocs: true,
   type: DiagnosticType.STATIC_WARNING,
   uniqueName: 'return_type_invalid_for_then',
   withArguments: _withArgumentsReturnTypeInvalidForThen,
@@ -16162,6 +16228,7 @@ const DiagnosticWithoutArguments unawaitedReturnInTryBlock =
       problemMessage:
           "Returning a 'Future' without 'await' inside a try block.",
       correctionMessage: "Try adding an 'await'.",
+      hasPublishedDocs: true,
       type: DiagnosticType.STATIC_WARNING,
       uniqueName: 'unawaited_return_in_try_block',
       expectedTypes: [],
@@ -18698,6 +18765,34 @@ LocatableDiagnostic _withArgumentsAssignmentToFinalNoSetter({
   return LocatableDiagnosticImpl(diag.assignmentToFinalNoSetter, [
     variableName,
     className,
+  ]);
+}
+
+LocatableDiagnostic _withArgumentsAugmentationFormalParameterModifierExtra({
+  required String modifier,
+}) {
+  return LocatableDiagnosticImpl(
+    diag.augmentationFormalParameterModifierExtra,
+    [modifier],
+  );
+}
+
+LocatableDiagnostic _withArgumentsAugmentationFormalParameterModifierMissing({
+  required String modifier,
+}) {
+  return LocatableDiagnosticImpl(
+    diag.augmentationFormalParameterModifierMissing,
+    [modifier],
+  );
+}
+
+LocatableDiagnostic _withArgumentsAugmentationFormalParameterTypeMismatch({
+  required DartType expectedType,
+  required DartType actualType,
+}) {
+  return LocatableDiagnosticImpl(diag.augmentationFormalParameterTypeMismatch, [
+    expectedType,
+    actualType,
   ]);
 }
 

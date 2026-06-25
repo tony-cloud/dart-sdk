@@ -4,22 +4,21 @@
 
 part of 'resolver.dart';
 
-typedef BodyBuilderCreator =
-    BodyBuilder Function({
-      required SourceLibraryBuilder libraryBuilder,
-      required BodyBuilderContext context,
-      required ExtensionScope extensionScope,
-      required LookupScope enclosingScope,
-      LocalScope? formalParameterScope,
-      required ClassHierarchy hierarchy,
-      required CoreTypes coreTypes,
-      InternalVariable? thisVariable,
-      List<TypeParameter>? thisTypeParameters,
-      required Uri uri,
-      required AssignedVariablesImpl assignedVariables,
-      required TypeEnvironment typeEnvironment,
-      required ConstantContext constantContext,
-    });
+typedef BodyBuilderCreator = BodyBuilder Function({
+  required SourceLibraryBuilder libraryBuilder,
+  required BodyBuilderContext context,
+  required ExtensionScope extensionScope,
+  required LookupScope enclosingScope,
+  LocalScope? formalParameterScope,
+  required ClassHierarchy hierarchy,
+  required CoreTypes coreTypes,
+  InternalVariable? thisVariable,
+  List<TypeParameter>? thisTypeParameters,
+  required Uri uri,
+  required AssignedVariablesImpl assignedVariables,
+  required TypeEnvironment typeEnvironment,
+  required ConstantContext constantContext,
+});
 
 // Coverage-ignore(suite): Not run.
 class ResolverForTesting extends Resolver {
@@ -726,10 +725,10 @@ class _InitializerBuilder {
           int positionalSuperParameterCount =
               superTarget.function.positionalParameters.length;
           Set<String> superTargetNamedParameterNames = {
-            for (Variable namedParameter
+            for (NamedParameter namedParameter
                 in superTarget.function.namedParameters)
-              ?namedParameter // Coverage-ignore(suite): Not run.
-                  .name,
+              namedParameter // Coverage-ignore(suite): Not run.
+                  .parameterName,
           };
           int positionalIndex = 0;
           for (Argument argument in superParameterArguments.arguments) {

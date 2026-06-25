@@ -4418,6 +4418,14 @@ const MessageCode ffiVariableLengthArrayNotLast = const MessageCode(
 );
 
 // DO NOT EDIT. THIS FILE IS GENERATED. SEE TOP OF FILE.
+const MessageCode ffiVmSharedFieldsModifiers = const MessageCode(
+  "FfiVmSharedFieldsModifiers",
+  problemMessage: """Shared fields must be final non-late.""",
+  correctionMessage:
+      """Add the 'final' modifier to this field, and remove 'late' modifier from this field.""",
+);
+
+// DO NOT EDIT. THIS FILE IS GENERATED. SEE TOP OF FILE.
 const Template<Message Function({required String fieldName})>
 fieldAlreadyInitializedAtDeclaration = const Template(
   "FieldAlreadyInitializedAtDeclaration",
@@ -12940,6 +12948,38 @@ Message _withArgumentsVariableCouldBeNullDueToWrite({
 }
 
 // DO NOT EDIT. THIS FILE IS GENERATED. SEE TOP OF FILE.
+const Template<
+  Message Function({
+    required String variableName,
+    required String documentationUrl,
+  })
+>
+variableNotPromotedDueToSuspension = const Template(
+  "VariableNotPromotedDueToSuspension",
+  withArguments: _withArgumentsVariableNotPromotedDueToSuspension,
+);
+
+// DO NOT EDIT. THIS FILE IS GENERATED. SEE TOP OF FILE.
+Message _withArgumentsVariableNotPromotedDueToSuspension({
+  required String variableName,
+  required String documentationUrl,
+}) {
+  var variableName_0 = conversions.validateAndDemangleName(variableName);
+  var documentationUrl_0 = conversions.validateString(documentationUrl);
+  return new Message(
+    variableNotPromotedDueToSuspension,
+    problemMessage:
+        """Variable '${variableName_0}' could not be promoted due to an 'await' or 'yield'.""",
+    correctionMessage:
+        """Try checking the type of the variable after the 'await' or 'yield'.  See ${documentationUrl_0}""",
+    arguments: {
+      'variableName': variableName,
+      'documentationUrl': documentationUrl,
+    },
+  );
+}
+
+// DO NOT EDIT. THIS FILE IS GENERATED. SEE TOP OF FILE.
 const MessageCode verificationErrorOriginContext = const MessageCode(
   "VerificationErrorOriginContext",
   severity: CfeSeverity.context,
@@ -12952,6 +12992,35 @@ const MessageCode voidExpression = const MessageCode(
   "VoidExpression",
   problemMessage: """This expression has type 'void' and can't be used.""",
 );
+
+// DO NOT EDIT. THIS FILE IS GENERATED. SEE TOP OF FILE.
+const Template<
+  Message Function({
+    required String name,
+    required int value,
+    required String size,
+  })
+>
+wasmConstantLaneOutOfRange = const Template(
+  "WasmConstantLaneOutOfRange",
+  withArguments: _withArgumentsWasmConstantLaneOutOfRange,
+);
+
+// DO NOT EDIT. THIS FILE IS GENERATED. SEE TOP OF FILE.
+Message _withArgumentsWasmConstantLaneOutOfRange({
+  required String name,
+  required int value,
+  required String size,
+}) {
+  var name_0 = conversions.validateString(name);
+  var size_0 = conversions.validateString(size);
+  return new Message(
+    wasmConstantLaneOutOfRange,
+    problemMessage:
+        """WasmV128 constant lane '${name_0}' value '${value}' does not fit in a signed ${size_0} integer.""",
+    arguments: {'name': name, 'value': value, 'size': size},
+  );
+}
 
 // DO NOT EDIT. THIS FILE IS GENERATED. SEE TOP OF FILE.
 const MessageCode wasmExternInvalidLoad = const MessageCode(

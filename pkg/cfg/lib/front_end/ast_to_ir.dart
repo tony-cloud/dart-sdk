@@ -36,7 +36,6 @@ enum TypeParametersStyle {
 ///  - tear-offs;
 ///  - stack overflow/interrupt checks;
 ///  - assert statements;
-///  - record access and literals;
 ///  - deferred libraries.
 ///
 class AstToIr extends ast.RecursiveVisitor {
@@ -1319,7 +1318,13 @@ class AstToIr extends ast.RecursiveVisitor {
   @override
   void visitTryCatch(ast.TryCatch node) {
     final tryBody = builder.newTargetBlock();
-    final catchBlock = builder.newCatchBlock();
+    final guardTypes = [
+      for (final catchClause in node.catches) catchClause.guard,
+    ];
+    final catchBlock = builder.newCatchBlock(
+      guardTypes,
+      isSynthetic: node.isSynthetic,
+    );
     builder.addTryEntry(tryBody, catchBlock);
 
     builder.enterTryBlock(catchBlock);
@@ -1409,7 +1414,9 @@ class AstToIr extends ast.RecursiveVisitor {
     finallyBlocks[node] = <FinallyBlock>[];
 
     final tryBody = builder.newTargetBlock();
-    final catchBlock = builder.newCatchBlock();
+    final catchBlock = builder.newCatchBlock(const [
+      ast.DynamicType(),
+    ], isSynthetic: true);
     builder.addTryEntry(tryBody, catchBlock);
 
     builder.enterTryBlock(catchBlock);
@@ -1916,6 +1923,17 @@ class AstToIr extends ast.RecursiveVisitor {
   }
 
   @override
+  void visitInstantiation(ast.Instantiation node) {
+    builder.addTypeArguments(
+      node.typeArguments,
+      typeParameters: _typeParametersForTypes(node.typeArguments),
+    );
+    _translateNode(node.expression);
+    if (_handleUnreachableExpression(2)) return;
+    builder.addInstantiateClosure(_staticType(node));
+  }
+
+  @override
   void visitFunctionInvocation(ast.FunctionInvocation node) {
     final args = node.arguments;
     final inputCount = _translateArguments(node.receiver, args);
@@ -2222,7 +2240,7 @@ class LocalVariableIndexer {
 
   LocalVariable variableForDeclaration(ast.Variable declaration) =>
       _declaredVariables[declaration] ??= builder.declareLocalVariable(
-        declaration.name ?? '#temp',
+        declaration.cosmeticName ?? '#temp',
         declaration,
         declaration.isLate
             ? const LateValueType()
@@ -2232,7 +2250,7 @@ class LocalVariableIndexer {
   LocalVariable exceptionVariable(ast.TreeNode tryBlock) {
     assert(tryBlock is ast.TryCatch || tryBlock is ast.TryFinally);
     return _exceptionVariables[tryBlock] ??= builder.declareLocalVariable(
-      '#exception',
+      LocalVariable.exceptionVariableName,
       null,
       const ObjectType(),
     );
@@ -2241,7 +2259,7 @@ class LocalVariableIndexer {
   LocalVariable stackTraceVariable(ast.TreeNode tryBlock) {
     assert(tryBlock is ast.TryCatch || tryBlock is ast.TryFinally);
     return _stackTraceVariables[tryBlock] ??= builder.declareLocalVariable(
-      '#stackTrace',
+      LocalVariable.stackTraceVariableName,
       null,
       StaticType(coreTypes.stackTraceNonNullableRawType),
     );

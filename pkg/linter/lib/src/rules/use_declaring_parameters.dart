@@ -21,7 +21,7 @@ class UseDeclaringParameters extends AnalysisRule {
     : super(
         name: LintNames.use_declaring_parameters,
         description: _desc,
-        state: .experimental(since: .new(3, 13, 0)),
+        state: .stable(since: .new(3, 13, 0)),
       );
 
   @override
@@ -69,7 +69,6 @@ class _Visitor extends SimpleAstVisitor<void> {
       var field = parameterElement.field;
       if (field != null &&
           (parameterHasNoType || field.type == parameterElement.type)) {
-        if (field.documentationComment != null) return;
         rule.reportAtToken(parameter.name);
       }
     }
@@ -93,7 +92,6 @@ class _Visitor extends SimpleAstVisitor<void> {
       var parameterElement = parameter.declaredFragment?.element;
       if (parameterElement != null &&
           assignedField.type == parameterElement.type) {
-        if (assignedField.documentationComment != null) return;
         rule.reportAtToken(name);
       }
     }

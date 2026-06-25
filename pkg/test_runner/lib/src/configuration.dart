@@ -14,7 +14,6 @@ import 'compiler_configuration.dart';
 import 'deflake_info.dart';
 import 'feature.dart';
 import 'path.dart';
-import 'repository.dart';
 import 'runtime_configuration.dart';
 import 'testing_servers.dart';
 
@@ -73,11 +72,7 @@ class TestConfiguration {
     required this.reproducingArguments,
     this.fastTestsOnly = false,
     this.printPassingStdout = false,
-  }) : packages =
-           packages ??
-           Repository.uri
-               .resolve('.dart_tool/package_config.json')
-               .toFilePath();
+  }) : packages = packages ?? '.dart_tool/package_config.json';
 
   final Map<String, RegExp?> selectors;
   final Progress progress;
@@ -479,6 +474,7 @@ class TestConfiguration {
     if (system == System.android &&
         !(architecture == Architecture.ia32 ||
             architecture == Architecture.x64 ||
+            architecture == Architecture.x64c ||
             architecture == Architecture.arm ||
             architecture == Architecture.arm_x64 ||
             architecture == Architecture.arm64 ||

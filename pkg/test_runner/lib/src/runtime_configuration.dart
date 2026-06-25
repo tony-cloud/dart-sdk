@@ -525,9 +525,6 @@ class DartPrecompiledRuntimeConfiguration extends DartVmRuntimeConfiguration {
 }
 
 class DartkAdbRuntimeConfiguration extends DartVmRuntimeConfiguration {
-  static const String deviceDir = '/data/local/tmp/testing';
-  static const String deviceTestDir = '/data/local/tmp/testing/test';
-
   @override
   List<Command> computeRuntimeCommands(
     CommandArtifact? artifact,
@@ -560,9 +557,6 @@ class DartkAdbRuntimeConfiguration extends DartVmRuntimeConfiguration {
 
 class DartPrecompiledAdbRuntimeConfiguration
     extends DartVmRuntimeConfiguration {
-  static const deviceDir = '/data/local/tmp/precompilation-testing';
-  static const deviceTestDir = '/data/local/tmp/precompilation-testing/test';
-
   final bool useElf;
   DartPrecompiledAdbRuntimeConfiguration(this.useElf);
 
@@ -623,11 +617,9 @@ class DartkFuchsiaEmulatorRuntimeConfiguration
     }
 
     // Rewrite paths on the host to paths in the Fuchsia package.
-    arguments = arguments
-        .map(
-          (argument) => argument.replaceAll(Directory.current.path, "pkg/data"),
-        )
-        .toList();
+    arguments = List.from(arguments);
+    arguments[arguments.length - 1] =
+        "pkg/data/${arguments[arguments.length - 1]}";
 
     var component = "dartvm_test_component.cm";
     if (aot) {

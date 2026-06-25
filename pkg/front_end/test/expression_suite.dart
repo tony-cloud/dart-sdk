@@ -228,17 +228,25 @@ class OutputParametersMatches
               "positional parameters: Expected ${test.definitions.length} "
               "(${test.definitions.join(", ")}) "
               "but had ${positionals.length} "
-              "(${positionals.map((p) => p.name).join(", ")}).",
+              "(${positionals.map((p) => p.cosmeticName).join(", ")}).",
             ),
           );
         }
         for (int i = 0; i < positionals.length; i++) {
-          if (positionals[i].name != test.definitions[i]) {
+          String? positionalName = positionals[i].cosmeticName;
+          if (positionalName != test.definitions[i]) {
+            if (positionalName != null &&
+                positionalName.startsWith("_") &&
+                positionalName.substring(1) == test.definitions[i]) {
+              // Probably a renamed private named variable.
+              continue;
+            }
             return Future.value(
               fail(
                 tests,
                 "Compiled expression doesn't contain '${test.definitions[i]}' "
-                "but '${positionals[i].name}' as positional parameter $i.",
+                "but '${positionals[i].cosmeticName}' as positional parameter "
+                "$i.",
               ),
             );
           }
@@ -438,10 +446,12 @@ class CompileExpression extends Step<List<TestCase>, List<TestCase>, Context> {
     IncrementalCompilerResult compilerResult,
     Context context,
   ) async {
+    Set<String> definitionsAddedByUser = {};
     Map<String, DartType>? definitions = createDefinitionsWithTypes(
       compilerResult.classHierarchy.knownLibraries,
       test.definitionTypes,
       test.definitions,
+      definitionsAddedByUser,
     );
 
     if (definitions == null) {
@@ -478,6 +488,7 @@ class CompileExpression extends Step<List<TestCase>, List<TestCase>, Context> {
       typeParams,
       "debugExpr",
       test.library,
+      definitionsAddedByUser: definitionsAddedByUser,
       className: test.className,
       methodName: test.methodName,
       isStatic: test.isStaticMethod,

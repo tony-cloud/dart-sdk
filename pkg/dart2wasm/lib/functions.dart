@@ -171,9 +171,6 @@ class FunctionCollector {
       final function = module.functions.define(ftype, getFunctionName(target))
         ..isPure = hasPureAnnotation && !target.isCheckedEntryReference
         ..inlineHint = inlineHint;
-      if (util.hasPragma(translator.coreTypes, member, 'wasm:js-trampoline')) {
-        function.isJSCalled = true;
-      }
       if (exportName != null) {
         // Add weak exports to the module as we now know they're used. Strong
         // exports have already been added.
@@ -381,7 +378,7 @@ class FunctionCollector {
     final member = lambda.enclosingMember;
     final lambdaNode = lambda.functionNode.parent;
     if (lambdaNode is FunctionDeclaration) {
-      final functionNodeName = lambdaNode.variable.name;
+      final functionNodeName = lambdaNode.variable.cosmeticName;
       return "$member closure $functionNodeName at $location";
     }
     assert(lambdaNode is FunctionExpression);
@@ -698,7 +695,7 @@ List<w.ValueType> _getConstructorInputTypes(
   Translator translator,
   Constructor member,
   List<TypeParameter> typeParameters,
-  List<Variable> parameters,
+  List<FunctionParameter> parameters,
   w.ValueType Function(DartType) translateType,
 ) {
   final List<w.ValueType> inputs = [];
@@ -711,7 +708,9 @@ List<w.ValueType> _getConstructorInputTypes(
 
   final List<DartType> params = parameters.map((p) {
     final function = p.parent as FunctionNode;
-    final positionalIndex = function.positionalParameters.indexOf(p);
+    final positionalIndex = p is PositionalParameter
+        ? function.positionalParameters.indexOf(p)
+        : -1;
     final isRequired = positionalIndex != -1
         ? positionalIndex < function.requiredParameterCount
         : p.isRequired;
@@ -738,12 +737,13 @@ List<w.ValueType> _getInputTypes(
     assert(member is Procedure);
     FunctionNode function = member.function!;
     typeParamCount = function.typeParameters.length;
-    List<String> names = [for (var p in function.namedParameters) p.name!]
-      ..sort();
+    List<String> names = [
+      for (var p in function.namedParameters) p.parameterName,
+    ]..sort();
     final typeForParam = translator.typeOfParameterVariable;
     Map<String, DartType> nameTypes = {
       for (var p in function.namedParameters)
-        p.name!: typeForParam(p, p.isRequired),
+        p.parameterName: typeForParam(p, p.isRequired),
     };
     final positionals = function.positionalParameters;
     params = [
@@ -976,12 +976,12 @@ final class MethodCallShape extends CallShape {
     }
     final namedParams = target.namedParameters;
     for (final name in namedParams) {
-      if (name.isRequired && !named.contains(name.name)) {
+      if (name.isRequired && !named.contains(name.parameterName)) {
         return false;
       }
     }
     for (final name in named) {
-      if (!namedParams.any((n) => n.name == name)) {
+      if (!namedParams.any((n) => n.parameterName == name)) {
         return false;
       }
     }

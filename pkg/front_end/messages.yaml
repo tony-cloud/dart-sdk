@@ -5049,6 +5049,13 @@ ffiDeeplyImmutableFieldsModifiers:
   correctionMessage: "Add the 'final' modifier to this field, and remove 'late' modifier from this field."
   external: test/ffi_test.dart
 
+ffiVmSharedFieldsModifiers:
+  # Used by dart:ffi
+  parameters: none
+  problemMessage: 'Shared fields must be final non-late.'
+  correctionMessage: "Add the 'final' modifier to this field, and remove 'late' modifier from this field."
+  external: test/ffi_test.dart
+
 ffiDeeplyImmutableSubtypesMustBeDeeplyImmutable:
   # Used by dart:ffi
   parameters: none
@@ -5574,6 +5581,24 @@ variableCouldBeNullDueToWrite:
       if (i == null) return;
       i = j;
       i.isEven;
+    }
+  includeErrorContext: true
+  exampleAllowOtherCodes: true
+
+variableNotPromotedDueToSuspension:
+  parameters:
+    Name variableName: The name of the unpromoted variable.
+    String documentationUrl: The URL of the documentation explaining the problem.
+  problemMessage: "Variable '#variableName' could not be promoted due to an 'await' or 'yield'."
+  correctionMessage: "Try checking the type of the variable after the 'await' or 'yield'.  See #documentationUrl"
+  script: |
+    void foo(int? i) {
+      void bar() async {
+        if (i == null) return;
+        await null;
+        i.isEven;
+      }
+      i = 0;
     }
   includeErrorContext: true
   exampleAllowOtherCodes: true
@@ -7183,6 +7208,18 @@ wasmExternMemoryMissingAnnotation:
   parameters: none
   problemMessage: "This external getter returns a memory instance, but no annotation describing it was found"
   correctionMessage: "Try adding a `@MemoryType()` or `@Import.memory()` annotation."
+
+wasmConstantLaneOutOfRange:
+  parameters:
+    String name: The lane name.
+    int value: The invalid value.
+    String size: The expected size (e.g., "8-bit").
+  problemMessage: "WasmV128 constant lane '#name' value '#value' does not fit in a signed #size integer."
+  script: |
+    import 'dart:_wasm';
+    void main() {
+      const WasmV128.i8x16(128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
 
 wasmExternInvalidLoad:
   parameters: none

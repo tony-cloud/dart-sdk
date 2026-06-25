@@ -31,9 +31,9 @@ import 'package:analyzer/source/error_processor.dart';
 import 'package:analyzer/source/file_source.dart';
 import 'package:analyzer/source/source.dart';
 import 'package:analyzer/source/source_range.dart';
+import 'package:analyzer/src/analysis_options/analysis_options.dart';
 import 'package:analyzer/src/analysis_rule/rule_context.dart';
 import 'package:analyzer/src/dart/analysis/analysis_context_collection.dart';
-import 'package:analyzer/src/dart/analysis/analysis_options.dart';
 import 'package:analyzer/src/dart/analysis/byte_store.dart';
 import 'package:analyzer/src/diagnostic/diagnostic.dart' as diag;
 import 'package:analyzer/src/lint/linter_visitor.dart';
@@ -185,10 +185,11 @@ class BulkFixProcessor {
     this._instrumentationService,
     this._workspace, {
     required this._byteStore,
+    ChangeBuilder? builder,
     List<String>? codes,
     List<String>? additionalEnabledCodes,
     this._cancellationToken,
-  }) : builder = ChangeBuilder(workspace: _workspace),
+  }) : builder = builder ?? ChangeBuilder(workspace: _workspace),
        _codes = codes?.map((e) => e.toLowerCase()).toList(),
        _additionalLintRules = additionalEnabledCodes
            ?.map((e) => Registry.ruleRegistry.getRule(e.toLowerCase()))
@@ -558,13 +559,15 @@ class BulkFixProcessor {
       includedPaths: [originalContext.contextRoot.root.path],
       resourceProvider: _workspace.resourceProvider,
       byteStore: _byteStore,
-      updateAnalysisOptions4: ({required AnalysisOptionsImpl analysisOptions}) {
-        analysisOptions.lint = true;
-        analysisOptions.lintRules = [
-          ...analysisOptions.lintRules,
-          ..._additionalLintRules,
-        ];
-      },
+      sdkPath: originalContext.sdkRoot?.path,
+      configureAnalysisOptionsBuilder:
+          ({required AnalysisOptionsBuilder analysisOptionsBuilder}) {
+            analysisOptionsBuilder.lint = true;
+            analysisOptionsBuilder.lintRules = [
+              ...analysisOptionsBuilder.lintRules,
+              ..._additionalLintRules,
+            ];
+          },
     );
 
     return collection.contextFor(originalContext.contextRoot.root.path);
@@ -1010,9 +1013,9 @@ class BulkFixProcessor {
     bool hasBulkFixProducers(List<ProducerGenerator>? generators) {
       return generators != null &&
           generators.any(
-            (generator) => generator(
-              context: StubCorrectionProducerContext.instance,
-            ).canBeAppliedAcrossFiles,
+            (generator) =>
+                generator(context: StubCorrectionProducerContext.instance)
+                    .canBeAppliedAcrossFiles,
           );
     }
 

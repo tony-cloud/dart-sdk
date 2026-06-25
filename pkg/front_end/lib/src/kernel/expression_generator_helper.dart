@@ -221,7 +221,9 @@ abstract class ExpressionGeneratorHelper {
   );
 
   /// Creates a synthetic variable declaration for the value of [expression].
-  InternalVariable createVariableDeclarationForValue(Expression expression);
+  InternalSyntheticVariable createVariableDeclarationForValue(
+    Expression expression,
+  );
 
   /// Creates a [VariableGet] of the [variable] using [charOffset] as the file
   /// offset of the created node.
@@ -322,38 +324,25 @@ enum UnresolvedKind { Unknown, Member, Method, Getter, Setter, Constructor }
 /// [ConstructorResolutionResult] is the root of the sealed hierarchy of
 /// results, which then branches into the successful, the unresolved, and the
 /// erroneous cases.
-sealed class ConstructorResolutionResult {}
+sealed class ConstructorResolutionResult;
 
-class SuccessfulConstructorResolutionResult
-    extends ConstructorResolutionResult {
-  final Expression constructorInvocation;
-
-  new(this.constructorInvocation);
-}
+class SuccessfulConstructorResolutionResult(
+  final Expression constructorInvocation,
+) extends ConstructorResolutionResult;
 
 /// Erroneous case of [ConstructorResolutionResult].
-class ErroneousConstructorResolutionResult extends ConstructorResolutionResult {
+class ErroneousConstructorResolutionResult({
   /// The expression signaling the error, typically an [InvalidExpression].
-  final Expression errorExpression;
-
-  new({required this.errorExpression});
-}
+  required final Expression errorExpression,
+}) extends ConstructorResolutionResult;
 
 /// Unresolved case of [UnresolvedConstructorResolutionResult].
-class UnresolvedConstructorResolutionResult
-    extends ConstructorResolutionResult {
-  final ExpressionGeneratorHelper _helper;
-  final String errorName;
-  final int charOffset;
-  final UnresolvedKind unresolvedKind;
-
-  new({
-    required this.errorName,
-    required this.charOffset,
-    required ExpressionGeneratorHelper helper,
-    this.unresolvedKind = UnresolvedKind.Constructor,
-  }) : _helper = helper;
-
+class UnresolvedConstructorResolutionResult({
+  required final String errorName,
+  required final int charOffset,
+  required final ExpressionGeneratorHelper _helper,
+  final UnresolvedKind unresolvedKind = UnresolvedKind.Constructor,
+}) extends ConstructorResolutionResult {
   /// Constructs the expression signaling the unresolved error.
   ///
   /// The construction of the expression signaling the error is delayed from

@@ -186,23 +186,24 @@ class _DebuggingSession {
             FileSystemEntityType.notFound) {
       executable = dart;
     }
-    var process = await Process.start(executable, [
-      script,
-      '--vm-service-uri=$serverAddress',
-      '--bind-address=$host',
-      '--bind-port=$port',
-      if (disableServiceAuthCodes) '--disable-service-auth-codes',
-      if (enableDevTools) '--serve-devtools',
-      if (_enableServicePortFallback) '--enable-service-port-fallback',
-    ], mode: ProcessStartMode.detachedWithStdio);
-    if (process == null) {
+    var process;
+    try {
+      _process = process = await Process.start(executable, [
+        script,
+        '--vm-service-uri=$serverAddress',
+        '--bind-address=$host',
+        '--bind-port=$port',
+        if (disableServiceAuthCodes) '--disable-service-auth-codes',
+        if (enableDevTools) '--serve-devtools',
+        if (_enableServicePortFallback) '--enable-service-port-fallback',
+      ], mode: ProcessStartMode.detachedWithStdio);
+    } catch (e) {
       stderr.writeln('Could not start the VM service: Process.start failed\n');
       return false;
     }
-    _process = process;
 
     // DDS will close stderr once it's finished launching.
-    final launchResultStderr = await _process.stderr
+    final launchResultStderr = await process.stderr
         .transform(utf8.decoder)
         .join();
 
@@ -235,9 +236,9 @@ class _DebuggingSession {
     return true;
   }
 
-  void shutdown() => _process.kill();
+  void shutdown() => _process?.kill();
 
-  late Process _process;
+  Process? _process;
 }
 
 class Server {
@@ -461,6 +462,16 @@ class Server {
       // Always allow.
       return true;
     }
+
+    // Always validate Host header first to prevent DNS rebinding.
+    final hostHeader = request.headers.value('Host');
+    if (hostHeader == null) {
+      return false;
+    }
+    if (!_isAllowedOrigin('http://$hostHeader')) {
+      return false;
+    }
+
     // First check the web-socket specific origin.
     List<String>? origins = request.headers['Sec-WebSocket-Origin'];
     if (origins == null) {
@@ -469,6 +480,8 @@ class Server {
     }
     if (origins == null) {
       // No origin sent. This is a non-browser client or a same-origin request.
+      // Since we already validated the Host header, we know it's a legitimate
+      // local same-origin request (or a local non-browser tool).
       return true;
     }
     for (final origin in origins) {
@@ -616,6 +629,14 @@ class Server {
       return;
     }
     if (request.method == 'PUT') {
+      // Validate auth token first.
+      final result = _checkAuthTokenAndGetPath(request.uri);
+      if (result == null) {
+        request.response.statusCode = HttpStatus.forbidden;
+        request.response.write('missing or invalid authentication code');
+        request.response.close();
+        return;
+      }
       // PUT requests are forwarded to DevFS for processing.
       await _processDevFSRequest(request);
       return;

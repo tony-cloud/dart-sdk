@@ -6,7 +6,6 @@ import "package:kernel/ast.dart";
 import 'package:kernel/core_types.dart';
 import 'package:kernel/names.dart';
 import 'package:kernel/reference_from_index.dart';
-import 'package:kernel/transformations/flags.dart' show TransformerFlag;
 import 'package:kernel/type_algebra.dart';
 
 import "../base/problems.dart" show unhandled;
@@ -250,9 +249,8 @@ class ForwardingNode {
         if (needsNoSuchMethodForwarder) {
           _createNoSuchMethodForwarder(
             _noSuchMethodTarget.getMember(
-                  _combinedMemberSignature.membersBuilder,
-                )
-                as Procedure,
+              _combinedMemberSignature.membersBuilder,
+            ) as Procedure,
             stub,
           );
         } else if (needsSuperImpl ||
@@ -335,9 +333,9 @@ class ForwardingNode {
     switch (kind) {
       case ProcedureKind.Method:
       case ProcedureKind.Operator:
-        FunctionType type =
-            _combinedMemberSignature.getMemberTypeForTarget(superTarget)
-                as FunctionType;
+        FunctionType type = _combinedMemberSignature.getMemberTypeForTarget(
+          superTarget,
+        ) as FunctionType;
         if (type.typeParameters.isNotEmpty) {
           type = FunctionTypeInstantiator.instantiate(
             type,
@@ -380,12 +378,13 @@ class ForwardingNode {
         List<NamedExpression> namedArguments = new List.generate(
           function.namedParameters.length,
           (int index) {
-            Variable parameter = function.namedParameters[index];
+            NamedParameter parameter = function.namedParameters[index];
             int fileOffset = parameter.fileOffset;
             Expression expression = extern.createVariableGet(parameter);
             DartType superParameterType = type.namedParameters
                 .singleWhere(
-                  (NamedType namedType) => namedType.name == parameter.name,
+                  (NamedType namedType) =>
+                      namedType.name == parameter.parameterName,
                 )
                 .type;
             if (isForwardingSemiStub) {
@@ -405,7 +404,10 @@ class ForwardingNode {
                 );
               }
             }
-            return extern.createNamedExpression(parameter.name!, expression);
+            return extern.createNamedExpression(
+              parameter.parameterName,
+              expression,
+            );
           },
           growable: true,
         );
@@ -475,7 +477,7 @@ class ForwardingNode {
     function.registerFunctionBody(
       extern.createReturnStatement(superCall, fileOffset: procedure.fileOffset),
     );
-    procedure.transformerFlags |= TransformerFlag.superCalls;
+    procedure.containsSuperCalls = true;
     procedure.stubKind = isForwardingStub
         ? ProcedureStubKind.ConcreteForwardingStub
         : ProcedureStubKind.ConcreteMixinStub;

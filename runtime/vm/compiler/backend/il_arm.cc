@@ -5113,6 +5113,27 @@ DEFINE_EMIT(Int32x4FromBools,
 
 // Low (< 7) Q registers are needed for the vmovrs instruction.
 // TODO(dartbug.com/30953) support register range constraints in the regalloc.
+DEFINE_EMIT(Int32x4GetLane, (Register result, FixedQRegisterView<Q6> value)) {
+  switch (instr->kind()) {
+    case SimdOpInstr::kInt32x4GetX:
+      __ vmovrs(result, value.s(0));
+      break;
+    case SimdOpInstr::kInt32x4GetY:
+      __ vmovrs(result, value.s(1));
+      break;
+    case SimdOpInstr::kInt32x4GetZ:
+      __ vmovrs(result, value.s(2));
+      break;
+    case SimdOpInstr::kInt32x4GetW:
+      __ vmovrs(result, value.s(3));
+      break;
+    default:
+      UNREACHABLE();
+  }
+}
+
+// Low (< 7) Q registers are needed for the vmovrs instruction.
+// TODO(dartbug.com/30953) support register range constraints in the regalloc.
 DEFINE_EMIT(Int32x4GetFlag, (Register result, FixedQRegisterView<Q6> value)) {
   switch (instr->kind()) {
     case SimdOpInstr::kInt32x4GetFlagX:
@@ -5262,6 +5283,11 @@ DEFINE_EMIT(Int32x4WithFlag,
   ____(Float64x2Binary)                                                        \
   SIMPLE(Int32x4FromInts)                                                      \
   SIMPLE(Int32x4FromBools)                                                     \
+  CASE(Int32x4GetX)                                                            \
+  CASE(Int32x4GetY)                                                            \
+  CASE(Int32x4GetZ)                                                            \
+  CASE(Int32x4GetW)                                                            \
+  ____(Int32x4GetLane)                                                         \
   CASE(Int32x4GetFlagX)                                                        \
   CASE(Int32x4GetFlagY)                                                        \
   CASE(Int32x4GetFlagZ)                                                        \
@@ -6742,6 +6768,31 @@ void UnaryInt64OpInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
       __ sbc(out_hi, out_hi, compiler::Operand(out_hi));
       __ sub(out_hi, out_hi, compiler::Operand(left_hi));
       break;
+    case Token::kPOPCNT: {
+      __ vmovdrr(DTMP, left_lo, left_hi);
+      __ vcnt(DTMP, DTMP);
+      __ vpaddlu(compiler::kByte, DTMP, DTMP);
+      __ vpaddlu(compiler::kTwoBytes, DTMP, DTMP);
+      __ vpaddlu(compiler::kFourBytes, DTMP, DTMP);
+      __ vmovrs(out_lo, EvenSRegisterOf(DTMP));
+      __ mov(out_hi, compiler::Operand(0));
+      break;
+    }
+    case Token::kCTZ: {
+      compiler::Label hi_path, done;
+      __ cmp(left_lo, compiler::Operand(0));
+      __ b(&hi_path, EQ);
+      __ rbit(out_lo, left_lo);
+      __ clz(out_lo, out_lo);
+      __ b(&done);
+      __ Bind(&hi_path);
+      __ rbit(out_lo, left_hi);
+      __ clz(out_lo, out_lo);
+      __ add(out_lo, out_lo, compiler::Operand(32));
+      __ Bind(&done);
+      __ mov(out_hi, compiler::Operand(0));
+      break;
+    }
     default:
       UNREACHABLE();
   }

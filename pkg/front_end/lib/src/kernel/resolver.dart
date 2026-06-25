@@ -57,6 +57,7 @@ import 'assigned_variables_impl.dart';
 import 'benchmarker.dart' show Benchmarker, BenchmarkSubdivides;
 import 'body_builder.dart';
 import 'body_builder_context.dart';
+import 'expression_compilation_data.dart';
 import 'external_ast_helper.dart' as extern;
 import 'internal_ast.dart';
 import 'internal_ast_helper.dart' as intern;
@@ -870,7 +871,7 @@ class Resolver {
     required ExtensionScope extensionScope,
     required LookupScope scope,
     required Token token,
-    required Procedure procedure,
+    required ExpressionCompilationData expressionCompilationData,
     required List<InternalVariable> extraKnownVariables,
     required ExpressionEvaluationHelper expressionEvaluationHelper,
     required Variable? extensionThis,
@@ -888,27 +889,22 @@ class Resolver {
     InternalThisVariable? internalThisVariable = bodyBuilderContext
         .createInternalThisVariable();
 
-    FunctionNode parameters = procedure.function;
     int wildcardVariableIndex = 0;
     InternalVariable? internalExtensionThis;
     List<FormalParameterBuilder>? formals =
-        parameters.positionalParameters.length == 0
+        expressionCompilationData.positionalParameters.length == 0
         ? null
         : new List<FormalParameterBuilder>.generate(
-            parameters.positionalParameters.length,
+            expressionCompilationData.positionalParameters.length,
             (int i) {
-              Variable parameter = parameters.positionalParameters[i];
-              InternalVariable formal =
-                  libraryBuilder.loader.isClosureContextLoweringEnabled
-                  ? new InternalPositionalParameter(
-                      astVariable: parameter as PositionalParameter,
-                      isImplicitlyTyped: false,
-                      fileOffset: parameter.fileOffset,
-                    )
-                  : new InternalLegacyVariable(
-                      astVariable: parameter,
-                      fileOffset: parameter.fileOffset,
-                    );
+              PositionalParameter parameter =
+                  expressionCompilationData.positionalParameters[i];
+              InternalPositionalParameter formal =
+                  new InternalPositionalParameter(
+                    astVariable: parameter,
+                    isImplicitlyTyped: false,
+                    fileOffset: parameter.fileOffset,
+                  );
               String formalName = formal.cosmeticName!;
               bool isWildcard =
                   libraryFeatures.wildcardVariables.isEnabled &&
@@ -930,8 +926,6 @@ class Resolver {
                 fileUri: fileUri,
                 hasImmediatelyDeclaredInitializer: false,
                 wildcardIndex: wildcardIndex,
-                isClosureContextLoweringEnabled:
-                    libraryBuilder.loader.isClosureContextLoweringEnabled,
                 variable: formal,
               );
             },
@@ -952,7 +946,8 @@ class Resolver {
     int fileOffset = token.charOffset;
 
     List<NominalParameterBuilder>? typeParameterBuilders;
-    for (TypeParameter typeParameter in parameters.typeParameters) {
+    for (TypeParameter typeParameter
+        in expressionCompilationData.typeParameters) {
       typeParameterBuilders ??= <NominalParameterBuilder>[];
       typeParameterBuilders.add(
         new DillNominalParameterBuilder(
@@ -1330,7 +1325,9 @@ class Resolver {
       /// >If a generative constructor c is not a redirecting constructor
       /// >and no body is provided, then c implicitly has an empty body {}.
       /// We use an empty statement instead.
-      bodyBuilderContext.registerNoBodyConstructor();
+      bodyBuilderContext.registerNoBodyConstructor(
+        thisVariable: scopeProviderInfo?.thisVariable,
+      );
     } else if (body != null &&
         bodyBuilderContext.isMixinClass &&
         !bodyBuilderContext.isFactory) {

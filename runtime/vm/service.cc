@@ -3066,6 +3066,9 @@ static void BuildExpressionEvaluationScope(Thread* thread, JSONStream* js) {
     return;
   }
 
+  // Any param_names was added from user provided scope.
+  intptr_t user_added_scope_count = param_names.Length();
+
   if (js->HasParam("frameIndex")) {
     // building scope in the context of a given frame
     DebuggerStackTrace* stack = isolate->debugger()->StackTrace();
@@ -3169,6 +3172,13 @@ static void BuildExpressionEvaluationScope(Thread* thread, JSONStream* js) {
         GrowableObjectArray::Handle(zone, GrowableObjectArray::New());
     AbstractType& type = AbstractType::Handle();
     for (intptr_t i = 0; i < param_names.Length(); i++) {
+      if (i < user_added_scope_count) {
+        // A name added by the user via "scope" is given an additional special
+        // "type" to signal that no matter if something by this name can be
+        // found via the token position what we send here shadows it.
+        instance ^= String::New("viaScope");
+        param_types.Add(instance);
+      }
       obj = param_values.At(i);
       if (obj.IsNull()) {
         param_types.Add(obj);
@@ -4005,6 +4015,7 @@ static void ReloadKernel(Thread* thread, JSONStream* js) {
   uint8_t* kernel_buffer = nullptr;
   intptr_t kernel_buffer_size = -1;
   (*file_read)(&kernel_buffer, &kernel_buffer_size, file);
+  (*file_close)(file);
 
   const bool force_reload =
       js->LookupObjectParam("force") == Bool::True().ptr();

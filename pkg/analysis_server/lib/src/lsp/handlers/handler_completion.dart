@@ -10,6 +10,7 @@ import 'package:analysis_server/src/lsp/client_capabilities.dart';
 import 'package:analysis_server/src/lsp/completion_utils.dart';
 import 'package:analysis_server/src/lsp/constants.dart';
 import 'package:analysis_server/src/lsp/error_or.dart';
+import 'package:analysis_server/src/lsp/extensions/text_document_filters.dart';
 import 'package:analysis_server/src/lsp/handlers/handlers.dart';
 import 'package:analysis_server/src/lsp/mapping.dart';
 import 'package:analysis_server/src/lsp/registration/feature_registration.dart';
@@ -260,6 +261,12 @@ class CompletionHandler
                 truncatedRankedItems.length != untruncatedRankedItems.length,
             items: truncatedItems,
             itemDefaults: serverResults.defaults,
+            // If the client supports applyKind (eg. merging data) we always
+            // use merge (for 'data', which is the only field we currently
+            // have mergable data for).
+            applyKind: serverResults.clientSupportsMergedData
+                ? CompletionItemApplyKinds(data: ApplyKind.Merge)
+                : null,
           ),
         );
       });
@@ -271,11 +278,14 @@ class CompletionHandler
   CompletionItemDefaults? _computeCompletionDefaults(
     LspClientCapabilities capabilities,
     Range insertionRange,
-    Range replacementRange,
-  ) {
-    // None of the items we use are set.
+    Range replacementRange, {
+    DartCompletionRequestResolutionInfo? data,
+  }) {
+    // Don't produce defaults if the client doesn't support the things we need
+    // and we don't have any data.
     if (!capabilities.completionDefaultEditRange &&
-        !capabilities.completionDefaultTextMode) {
+        !capabilities.completionDefaultTextMode &&
+        data == null) {
       return null;
     }
 
@@ -288,6 +298,7 @@ class CompletionHandler
         insertionRange,
         replacementRange,
       ),
+      data: data,
     );
   }
 
@@ -372,6 +383,9 @@ class CompletionHandler
   ) async {
     var useNotImportedCompletions =
         suggestFromUnimportedLibraries && capabilities.applyEdit;
+    // If the client supports applyKind for completionList we can merge the
+    // 'data' field from each item onto the top-level CompletionList one.
+    var clientSupportsMergedData = capabilities.completionListApplyKind;
 
     var analysisSession = unit.analysisSession;
 
@@ -462,6 +476,11 @@ class CompletionHandler
         capabilities,
         defaultInsertionRange,
         defaultReplacementRange,
+        // If the client supports merged data, record the file info here instead
+        // of on every item.
+        data: clientSupportsMergedData
+            ? DartCompletionRequestResolutionInfo(file: unit.path)
+            : null,
       );
 
       /// Helper to convert [CandidateSuggestion] to [CompletionItem].
@@ -507,15 +526,15 @@ class CompletionHandler
         // For items that need imports, we'll round-trip some additional info
         // to allow their additional edits (and documentation) to be handled
         // lazily to reduce the payload.
-        CompletionItemResolutionInfo? resolutionInfo;
+        CompletionResolutionInfo? resolutionInfo;
 
         if (item is ElementBasedSuggestion && item is ImportableSuggestion) {
           var element = (item as ElementBasedSuggestion).element;
 
           var importUri = item.importData?.libraryUri;
           if (importUri != null) {
-            resolutionInfo = DartCompletionResolutionInfo(
-              file: unit.path,
+            resolutionInfo = DartCompletionItemResolutionInfo(
+              file: clientSupportsMergedData ? null : unit.path,
               importUris: [importUri.toString()],
               ref: ElementLocation.forElement(element)?.encoding,
             );
@@ -526,8 +545,8 @@ class CompletionHandler
             var element = (item as ElementBasedSuggestion).element;
 
             var importUris = overrideData.imports;
-            resolutionInfo = DartCompletionResolutionInfo(
-              file: unit.path,
+            resolutionInfo = DartCompletionItemResolutionInfo(
+              file: clientSupportsMergedData ? null : unit.path,
               importUris: importUris.map((uri) => uri.toString()).toList(),
               ref: ElementLocation.forElement(element)?.encoding,
             );
@@ -542,8 +561,8 @@ class CompletionHandler
             }
 
             var importUris = typedData.imports;
-            resolutionInfo = DartCompletionResolutionInfo(
-              file: unit.path,
+            resolutionInfo = DartCompletionItemResolutionInfo(
+              file: clientSupportsMergedData ? null : unit.path,
               importUris: importUris.map((uri) => uri.toString()).toList(),
               ref: elementLocation?.encoding,
             );
@@ -648,6 +667,7 @@ class CompletionHandler
           rankedItems: rankedResults,
           unrankedItems: unrankedResults,
           defaults: defaults,
+          clientSupportsMergedData: clientSupportsMergedData,
         ),
       );
     } on AbortCompletion {
@@ -897,7 +917,7 @@ class CompletionRegistrations extends FeatureRegistration
   /// characters but for other kinds of files we do not.
   List<TextDocumentFilterScheme> get nonDartCompletionTypes {
     var pluginTypesExcludingDart = pluginTypes.where(
-      (filter) => filter.pattern != '**/*.dart',
+      (filter) => filter.patternString != '**/*.dart',
     );
 
     return {
@@ -944,25 +964,41 @@ class _CompletionResults {
   /// Defaults are only supported on Dart server items (not plugins).
   final CompletionItemDefaults? defaults;
 
+  final bool clientSupportsMergedData;
+
   new({
     this.rankedItems = const [],
     this.unrankedItems = const [],
     required this.fuzzy,
     required this.isIncomplete,
-    this.defaults,
+    required this.defaults,
+    required this.clientSupportsMergedData,
   });
 
-  new empty() : this(fuzzy: _FuzzyScoreHelper.empty, isIncomplete: false);
+  new empty()
+    : this(
+        fuzzy: _FuzzyScoreHelper.empty,
+        isIncomplete: false,
+        defaults: null,
+        clientSupportsMergedData: false, // Doesn't matter when no defaults.
+      );
 
   /// An empty result set marked as incomplete because an error occurred.
   new emptyIncomplete()
-    : this(fuzzy: _FuzzyScoreHelper.empty, isIncomplete: true);
+    : this(
+        fuzzy: _FuzzyScoreHelper.empty,
+        isIncomplete: true,
+        defaults: null,
+        clientSupportsMergedData: false, // Doesn't matter when no defaults.
+      );
 
   new unranked(List<CompletionItem> unrankedItems, {required bool isIncomplete})
     : this(
         unrankedItems: unrankedItems,
         fuzzy: _FuzzyScoreHelper.empty,
         isIncomplete: isIncomplete,
+        defaults: null,
+        clientSupportsMergedData: false, // Doesn't matter when no defaults.
       );
 
   /// Any prefix used to filter the results.

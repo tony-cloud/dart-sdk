@@ -179,6 +179,8 @@ class TypeInferrerImpl implements TypeInferrer {
             libraryBuilder.libraryFeatures.inferenceUpdate2.isEnabled,
         inferenceUpdate4Enabled:
             libraryBuilder.libraryFeatures.inferenceUpdate4.isEnabled,
+        thisPromotionEnabled:
+            libraryBuilder.libraryFeatures.thisPromotion.isEnabled,
         soundFlowAnalysisEnabled:
             libraryBuilder.libraryFeatures.soundFlowAnalysis.isEnabled,
       );
@@ -335,30 +337,20 @@ class TypeInferrerImpl implements TypeInferrer {
     List<InternalVariable> positionalParameters = [
       for (Variable positionalParameter
           in redirectingFactoryFunction.positionalParameters)
-        isClosureContextLoweringEnabled
-            ? new InternalPositionalParameter(
-                astVariable: positionalParameter as PositionalParameter,
-                isImplicitlyTyped: false,
-                fileOffset: positionalParameter.fileOffset,
-              )
-            : new InternalLegacyVariable(
-                astVariable: positionalParameter,
-                fileOffset: positionalParameter.fileOffset,
-              ),
+        new InternalPositionalParameter(
+          astVariable: positionalParameter as PositionalParameter,
+          isImplicitlyTyped: false,
+          fileOffset: positionalParameter.fileOffset,
+        ),
     ];
     List<InternalVariable> namedParameters = [
       for (Variable namedParameter
           in redirectingFactoryFunction.namedParameters)
-        isClosureContextLoweringEnabled
-            ? new InternalNamedParameter(
-                astVariable: namedParameter as NamedParameter,
-                isImplicitlyTyped: false,
-                fileOffset: namedParameter.fileOffset,
-              )
-            : new InternalLegacyVariable(
-                astVariable: namedParameter,
-                fileOffset: namedParameter.fileOffset,
-              ),
+        new InternalNamedParameter(
+          astVariable: namedParameter as NamedParameter,
+          isImplicitlyTyped: false,
+          fileOffset: namedParameter.fileOffset,
+        ),
     ];
 
     ScopeProviderInfo? scopeProviderInfo;

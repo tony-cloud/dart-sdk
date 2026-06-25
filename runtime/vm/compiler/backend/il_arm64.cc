@@ -4242,6 +4242,28 @@ DEFINE_EMIT(Int32x4FromBools,
   }
 }
 
+DEFINE_EMIT(Int32x4GetLane, (Register result, VRegister value)) {
+  switch (instr->kind()) {
+    case SimdOpInstr::kInt32x4GetX:
+      __ vmovrs(result, value, 0);
+      break;
+    case SimdOpInstr::kInt32x4GetY:
+      __ vmovrs(result, value, 1);
+      break;
+    case SimdOpInstr::kInt32x4GetZ:
+      __ vmovrs(result, value, 2);
+      break;
+    case SimdOpInstr::kInt32x4GetW:
+      __ vmovrs(result, value, 3);
+      break;
+    default:
+      UNREACHABLE();
+  }
+  // vmovrs zero-extends the 32-bit lane; canonical kUnboxedInt32 values are
+  // sign-extended, so widen the result before it is boxed.
+  __ sxtw(result, result);
+}
+
 DEFINE_EMIT(Int32x4GetFlag, (Register result, VRegister value)) {
   switch (instr->kind()) {
     case SimdOpInstr::kInt32x4GetFlagX:
@@ -4368,6 +4390,11 @@ DEFINE_EMIT(Int32x4WithFlag,
   ____(Int32x4FromInts)                                                        \
   CASE(Int32x4FromBools)                                                       \
   ____(Int32x4FromBools)                                                       \
+  CASE(Int32x4GetX)                                                            \
+  CASE(Int32x4GetY)                                                            \
+  CASE(Int32x4GetZ)                                                            \
+  CASE(Int32x4GetW)                                                            \
+  ____(Int32x4GetLane)                                                         \
   CASE(Int32x4GetFlagX)                                                        \
   CASE(Int32x4GetFlagY)                                                        \
   CASE(Int32x4GetFlagZ)                                                        \
@@ -5821,6 +5848,19 @@ void UnaryInt64OpInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
       break;
     case Token::kNEGATE:
       __ sub(out, ZR, compiler::Operand(left));
+      break;
+    case Token::kPOPCNT: {
+      __ fmovdr(VTMP, left);
+      __ vcnt(VTMP, VTMP);
+      __ vuaddlv(VTMP, VTMP);
+      __ fmovrs(out, VTMP);
+      break;
+    }
+    case Token::kCTZ:
+      // RBIT(0) = 0 and CLZ(0) = 64, so the zero-input case naturally
+      // returns the platform width (matching the Dart API contract).
+      __ rbit(out, left);
+      __ clz(out, out);
       break;
     default:
       UNREACHABLE();

@@ -3118,10 +3118,6 @@ DART_EXPORT Dart_Handle Dart_NewList(intptr_t length) {
   return Api::NewHandle(T, arr.ptr());
 }
 
-static bool CanTypeContainNull(const Type& type) {
-  return (type.nullability() == Nullability::kNullable);
-}
-
 DART_EXPORT Dart_Handle Dart_NewListOfType(Dart_Handle element_type,
                                            intptr_t length) {
   DARTSCOPE(Thread::Current());
@@ -3136,7 +3132,7 @@ DART_EXPORT Dart_Handle Dart_NewListOfType(Dart_Handle element_type,
         "%s expects argument 'type' to be a fully resolved type.",
         CURRENT_FUNC);
   }
-  if ((length > 0) && !CanTypeContainNull(type)) {
+  if ((length > 0) && !Instance::NullIsAssignableTo(type)) {
     return Api::NewError("%s expects argument 'type' to be a nullable type.",
                          CURRENT_FUNC);
   }
@@ -3238,7 +3234,8 @@ DART_EXPORT Dart_Handle Dart_NewListOfTypeFilled(Dart_Handle element_type,
         "'element_type'.",
         CURRENT_FUNC);
   }
-  if ((length > 0) && instance.IsNull() && !CanTypeContainNull(type)) {
+  if ((length > 0) && instance.IsNull() &&
+      !Instance::NullIsAssignableTo(type)) {
     return Api::NewError(
         "%s expects argument 'fill_object' to be non-null for a non-nullable "
         "'element_type'.",
@@ -6760,8 +6757,6 @@ static void CreateAppAOTSnapshotHelper(
   NOT_IN_PRODUCT(TimelineBeginEndScope tbes2(T, Timeline::GetIsolateStream(),
                                              "WriteAppAOTSnapshot"));
 
-  ZoneWriteStream vm_snapshot_data(T->zone(), FullSnapshotWriter::kInitialSize);
-  ZoneWriteStream vm_snapshot_instructions(T->zone(), kInitialSize);
   ZoneWriteStream isolate_snapshot_data(T->zone(),
                                         FullSnapshotWriter::kInitialSize);
   ZoneWriteStream isolate_snapshot_instructions(T->zone(), kInitialSize);
@@ -6847,8 +6842,7 @@ static void CreateAppAOTSnapshotHelper(
     use_output_writer(&assembly_writer);
   } else {
     BlobImageWriter blob_writer(
-        T, &vm_snapshot_instructions, &isolate_snapshot_instructions,
-        deobfuscation_trie, debug_so, so,
+        T, &isolate_snapshot_instructions, deobfuscation_trie, debug_so, so,
         /*needs_unique_names=*/object_callback_data != nullptr);
     use_output_writer(&blob_writer);
   }
@@ -7205,8 +7199,7 @@ Dart_CreateAppJITSnapshotAsBlobs(uint8_t** isolate_snapshot_data_buffer,
                                         FullSnapshotWriter::kInitialSize);
   ZoneWriteStream isolate_snapshot_instructions(
       Api::TopScope(T)->zone(), FullSnapshotWriter::kInitialSize);
-  BlobImageWriter image_writer(T, /*vm_instructions=*/nullptr,
-                               &isolate_snapshot_instructions);
+  BlobImageWriter image_writer(T, &isolate_snapshot_instructions);
   FullSnapshotWriter writer(Snapshot::kFullJIT, &isolate_snapshot_data,
                             &image_writer);
   writer.WriteFullSnapshot();

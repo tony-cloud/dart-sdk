@@ -24,7 +24,7 @@ const String _locationFieldName = r'_location';
 
 bool _hasNamedParameter(FunctionNode function, String name) {
   return function.namedParameters.any(
-    (Variable parameter) => parameter.name == name,
+    (NamedParameter parameter) => parameter.parameterName == name,
   );
 }
 
@@ -35,8 +35,8 @@ bool _hasNamedArgument(Arguments arguments, String argumentName) {
 }
 
 Variable? _getNamedParameter(FunctionNode function, String parameterName) {
-  for (Variable parameter in function.namedParameters) {
-    if (parameter.name == parameterName) {
+  for (NamedParameter parameter in function.namedParameters) {
+    if (parameter.parameterName == parameterName) {
       return parameter;
     }
   }
@@ -84,7 +84,7 @@ void _maybeAddCreationLocationArgument(
 
 /// Adds a named parameter to a function if the function does not already have
 /// a named parameter with the name or optional positional parameters.
-bool _maybeAddNamedParameter(FunctionNode function, Variable variable) {
+bool _maybeAddNamedParameter(FunctionNode function, NamedParameter parameter) {
   if (_hasNamedParameter(function, _creationLocationParameterName)) {
     // Gracefully handle if this method is called on a function that has already
     // been transformed.
@@ -95,8 +95,8 @@ bool _maybeAddNamedParameter(FunctionNode function, Variable variable) {
   if (function.requiredParameterCount != function.positionalParameters.length) {
     return false;
   }
-  variable.parent = function;
-  function.namedParameters.add(variable);
+  parameter.parent = function;
+  function.namedParameters.add(parameter);
   return true;
 }
 
@@ -170,9 +170,10 @@ class _WidgetCallSiteTransformer extends Transformer {
   @override
   Procedure visitProcedure(Procedure node) {
     if (_isWidgetFactory(node)) {
-      final Variable locationParameter = node.function.namedParameters
+      final NamedParameter locationParameter = node.function.namedParameters
           .firstWhere(
-            (parameter) => parameter.name == _creationLocationParameterName,
+            (parameter) =>
+                parameter.parameterName == _creationLocationParameterName,
           );
       _currentExtensionFactoryLocationParameter = VariableGet(
         locationParameter,
@@ -219,9 +220,8 @@ class _WidgetCallSiteTransformer extends Transformer {
       return node;
     }
     if (_isWidgetFactory(target)) {
-      final Variable parameter = target.function.namedParameters.firstWhere(
-        (p) => p.name == _creationLocationParameterName,
-      );
+      final NamedParameter parameter = target.function.namedParameters
+          .firstWhere((p) => p.parameterName == _creationLocationParameterName);
       final DartType type = parameter.type;
       if (type is InterfaceType) {
         _addLocationArgument(
@@ -496,15 +496,15 @@ class WidgetCreatorTracker {
           _creationLocationParameterName,
         ),
       );
-      final Variable variable = new Variable(
-        _creationLocationParameterName,
+      final NamedParameter parameter = new NamedParameter(
+        parameterName: _creationLocationParameterName,
         type: new InterfaceType(
           tracking.locationClass,
           clazz.enclosingLibrary.nullable,
         ),
-        initializer: new NullLiteral(),
+        defaultValue: new NullLiteral(),
       );
-      if (!_maybeAddNamedParameter(constructor.function, variable)) {
+      if (!_maybeAddNamedParameter(constructor.function, parameter)) {
         return;
       }
 
@@ -520,7 +520,7 @@ class WidgetCreatorTracker {
           _maybeAddCreationLocationArgument(
             initializer.arguments,
             initializer.target.function,
-            new VariableGet(variable),
+            new VariableGet(parameter),
           );
           hasRedirectingInitializer = true;
           break;
@@ -528,7 +528,7 @@ class WidgetCreatorTracker {
       }
       if (!hasRedirectingInitializer) {
         constructor.initializers.add(
-          new FieldInitializer(locationField, new VariableGet(variable)),
+          new FieldInitializer(locationField, new VariableGet(parameter)),
         );
         // TODO(jacobr): add an assert verifying the locationField is not
         // null. Currently, we cannot safely add this assert because we do not
@@ -796,13 +796,13 @@ class WidgetCreatorTracker {
       if (procedure.isFactory) {
         _maybeAddNamedParameter(
           procedure.function,
-          new Variable(
-            _creationLocationParameterName,
+          new NamedParameter(
+            parameterName: _creationLocationParameterName,
             type: new InterfaceType(
               tracking.locationClass,
               clazz.enclosingLibrary.nullable,
             ),
-            initializer: new NullLiteral(),
+            defaultValue: new NullLiteral(),
           ),
         );
       }
@@ -829,13 +829,13 @@ class WidgetCreatorTracker {
         return;
       }
 
-      final Variable variable = new Variable(
-        _creationLocationParameterName,
+      final NamedParameter parameter = new NamedParameter(
+        parameterName: _creationLocationParameterName,
         type: new InterfaceType(
           tracking.locationClass,
           clazz.enclosingLibrary.nullable,
         ),
-        initializer: new NullLiteral(),
+        defaultValue: new NullLiteral(),
       );
       if (_hasNamedParameter(
         constructor.function,
@@ -845,7 +845,7 @@ class WidgetCreatorTracker {
         // TODO(jacobr): is this case actually hit?
         return;
       }
-      if (!_maybeAddNamedParameter(constructor.function, variable)) {
+      if (!_maybeAddNamedParameter(constructor.function, parameter)) {
         return;
       }
       for (Initializer initializer in constructor.initializers) {
@@ -860,7 +860,7 @@ class WidgetCreatorTracker {
           _maybeAddCreationLocationArgument(
             initializer.arguments,
             initializer.target.function,
-            new VariableGet(variable),
+            new VariableGet(parameter),
           );
         } else if (initializer is SuperInitializer) {
           final Class superclass = initializer.target.enclosingClass;
@@ -869,7 +869,7 @@ class WidgetCreatorTracker {
             _maybeAddCreationLocationArgument(
               initializer.arguments,
               initializer.target.function,
-              new VariableGet(variable),
+              new VariableGet(parameter),
             );
           }
         }
@@ -917,13 +917,13 @@ class WidgetCreatorTracker {
 
     _maybeAddNamedParameter(
       method.function,
-      new Variable(
-        _creationLocationParameterName,
+      new NamedParameter(
+        parameterName: _creationLocationParameterName,
         type: new InterfaceType(
           locationClass,
           extension.enclosingLibrary.nullable,
         ),
-        initializer: new NullLiteral(),
+        defaultValue: new NullLiteral(),
       ),
     );
   }

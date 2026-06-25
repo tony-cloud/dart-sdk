@@ -45,7 +45,7 @@ void main() {
     return variable;
   }, (Node? node) => "${errorPrefix}Variable '$node' used out of scope.");
   negative1Test('Variable let scope', (TestHarness test) {
-    Variable variable = test.makeVariable();
+    SyntheticVariable variable = test.makeVariable();
     test.addNode(
       LogicalExpression(
         new Let(variable, new VariableGet(variable)),
@@ -56,7 +56,7 @@ void main() {
     return variable;
   }, (Node? node) => "${errorPrefix}Variable '$node' used out of scope.");
   negative1Test('Variable redeclared', (TestHarness test) {
-    Variable variable = test.makeVariable();
+    PositionalParameter variable = test.makePositionalParameter();
     test.addNode(
       Procedure(
         new Name('bar'),
@@ -328,7 +328,7 @@ void main() {
       ProcedureKind.Method,
       new FunctionNode(
         new EmptyStatement(),
-        positionalParameters: [new Variable('p')],
+        positionalParameters: [new PositionalParameter(cosmeticName: 'p')],
       ),
       isStatic: true,
       fileUri: dummyUri,
@@ -364,7 +364,7 @@ void main() {
         ProcedureKind.Method,
         new FunctionNode(
           new EmptyStatement(),
-          positionalParameters: [new Variable('p')],
+          positionalParameters: [new PositionalParameter(cosmeticName: 'p')],
         ),
         isStatic: true,
         fileUri: dummyUri,
@@ -934,7 +934,9 @@ class TestHarness {
     enclosingLibrary.addTypedef(node);
   }
 
-  Variable makeVariable() => new Variable(null, isSynthesized: true);
+  SyntheticVariable makeVariable() => new SyntheticVariable();
+
+  PositionalParameter makePositionalParameter() => new PositionalParameter();
 
   TypeParameter makeTypeParameter([String? name]) {
     return new TypeParameter(name, objectRawType, const DynamicType());

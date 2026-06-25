@@ -68,7 +68,9 @@ mixin ResolutionTest implements ResourceProviderMixin {
     var actual = buffer.toString();
     if (actual != expected) {
       NodeTextExpectationsCollector.add(actual);
-      printPrettyDiff(expected, actual);
+      if (NodeTextExpectationsCollector.shouldPrintFailureDetails) {
+        printPrettyDiff(expected, actual);
+      }
       fail('See the difference above.');
     }
   }
@@ -116,10 +118,6 @@ mixin ResolutionTest implements ResourceProviderMixin {
     }
   }
 
-  void assertHasTestErrors(TestResolvedUnitResult result) {
-    expect(result.diagnostics, isNotEmpty);
-  }
-
   void assertParsedNodeText(AstNode node, String expected) {
     var buffer = StringBuffer();
     var sink = TreeStringSink(sink: buffer, indent: '');
@@ -140,11 +138,12 @@ mixin ResolutionTest implements ResourceProviderMixin {
 
     var actual = buffer.toString();
     if (actual != expected) {
-      print('-------- Actual --------');
-      print('$actual------------------------');
       NodeTextExpectationsCollector.add(actual);
+      if (NodeTextExpectationsCollector.shouldPrintFailureDetails) {
+        printPrettyDiff(expected, actual);
+      }
+      fail('See the difference above.');
     }
-    expect(actual, expected);
   }
 
   void assertResolvedLibraryResultText(
@@ -170,18 +169,21 @@ mixin ResolutionTest implements ResourceProviderMixin {
 
     var actual = buffer.toString();
     if (actual != expected) {
-      print('-------- Actual --------');
-      print('$actual------------------------');
       NodeTextExpectationsCollector.add(actual);
+      if (NodeTextExpectationsCollector.shouldPrintFailureDetails) {
+        printPrettyDiff(expected, actual);
+      }
+      fail('See the difference above.');
     }
-    expect(actual, expected);
   }
 
   void assertResolvedNodeText(AstNode node, String expected) {
     var actual = _resolvedNodeText(node);
     if (actual != expected) {
       NodeTextExpectationsCollector.add(actual);
-      printPrettyDiff(expected, actual);
+      if (NodeTextExpectationsCollector.shouldPrintFailureDetails) {
+        printPrettyDiff(expected, actual);
+      }
       fail('See the difference above.');
     }
   }
@@ -234,10 +236,6 @@ mixin ResolutionTest implements ResourceProviderMixin {
       actual = (typeOrExpression as Expression).staticType;
     }
     expect(actual, isDynamicType);
-  }
-
-  void assertTypeNull(Expression node) {
-    expect(node.staticType, isNull);
   }
 
   Element? getNodeElement2(AstNode node) {
@@ -342,8 +340,10 @@ mixin ResolutionTest implements ResourceProviderMixin {
       var actual = actualCodeByFile[file.file]!;
       if (actual != file.code) {
         NodeTextExpectationsCollector.add(actual, intraInvocationId: '$index');
-        print('-------- ${file.file.path} --------');
-        printPrettyDiff(file.code, actual);
+        if (NodeTextExpectationsCollector.shouldPrintFailureDetails) {
+          print('-------- ${file.file.path} --------');
+          printPrettyDiff(file.code, actual);
+        }
         hasMismatch = true;
       }
     }
@@ -431,7 +431,9 @@ mixin ResolutionTest implements ResourceProviderMixin {
     );
     if (actual != code) {
       NodeTextExpectationsCollector.add(actual);
-      printPrettyDiff(code, actual);
+      if (NodeTextExpectationsCollector.shouldPrintFailureDetails) {
+        printPrettyDiff(code, actual);
+      }
       fail('See the difference above.');
     }
 

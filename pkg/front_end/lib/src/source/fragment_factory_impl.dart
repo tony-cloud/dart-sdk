@@ -2240,6 +2240,7 @@ class FragmentFactoryImpl implements FragmentFactory {
     }
     FormalParameterBuilder formal = new FormalParameterBuilder(
       kind: kind,
+      metadata: metadata,
       modifiers: modifiers,
       type: type,
       name: name,
@@ -2250,8 +2251,6 @@ class FragmentFactoryImpl implements FragmentFactory {
       hasImmediatelyDeclaredInitializer: initializerToken != null,
       wildcardIndex: wildcardIndex,
       publicName: publicName,
-      isClosureContextLoweringEnabled:
-          _compilationUnit.loader.isClosureContextLoweringEnabled,
     );
     return formal;
   }

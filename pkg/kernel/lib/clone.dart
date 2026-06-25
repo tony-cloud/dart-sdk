@@ -520,7 +520,7 @@ class CloneVisitorNotMembers
 
   @override
   TreeNode visitLet(Let node) {
-    Variable newVariable = clone(node.variable);
+    SyntheticVariable newVariable = clone(node.variable);
     return new Let(newVariable, clone(node.body));
   }
 
@@ -677,8 +677,8 @@ class CloneVisitorNotMembers
 
   @override
   TreeNode visitCatch(Catch node) {
-    Variable? newException = cloneOptional(node.exception);
-    Variable? newStackTrace = cloneOptional(node.stackTrace);
+    CatchVariable? newException = cloneOptional(node.exception);
+    CatchVariable? newStackTrace = cloneOptional(node.stackTrace);
     return new Catch(
       newException,
       clone(node.body),
@@ -753,7 +753,7 @@ class CloneVisitorNotMembers
     return setVariableClone(
       node,
       new LocalVariable(
-          cosmeticName: node.cosmeticName,
+          name: node.cosmeticName!,
           type: visitOptionalType(node.type),
           initializer: cloneOptional(node.initializer),
         )
@@ -768,7 +768,7 @@ class CloneVisitorNotMembers
     return setVariableClone(
       node,
       new LateVariable(
-          cosmeticName: node.cosmeticName,
+          name: node.cosmeticName!,
           type: visitOptionalType(node.type),
           initializer: cloneOptional(node.initializer),
         )
@@ -814,21 +814,6 @@ class CloneVisitorNotMembers
   TreeNode visitVariableDeclaration(VariableDeclaration node) {
     return new VariableDeclaration(clone(node.variable))
       ..fileOffset = _cloneFileOffset(node.fileOffset);
-  }
-
-  @override
-  TreeNode visitLegacyVariable(LegacyVariable node) {
-    return setVariableClone(
-      node,
-      new LegacyVariable(
-          node.name,
-          initializer: cloneOptional(node.initializer),
-          type: visitType(node.type),
-          flags: node.flags,
-        )
-        ..annotations = _cloneAnnotations(node)
-        ..fileEqualsOffset = _cloneFileOffset(node.fileEqualsOffset),
-    );
   }
 
   List<Expression> _cloneAnnotations(Annotatable node) {
@@ -894,9 +879,11 @@ class CloneVisitorNotMembers
     List<TypeParameter> typeParameters = node.typeParameters
         .map(clone)
         .toList();
-    List<Variable> positional = node.positionalParameters.map(clone).toList();
-    List<Variable> named = node.namedParameters.map(clone).toList();
-    Variable? thisVariable = cloneOptional(node.thisVariable);
+    List<PositionalParameter> positional = node.positionalParameters
+        .map(clone)
+        .toList();
+    List<NamedParameter> named = node.namedParameters.map(clone).toList();
+    ThisVariable? thisVariable = cloneOptional(node.thisVariable);
     final DartType? futureValueType = node.emittedValueType != null
         ? visitType(node.emittedValueType!)
         : null;
@@ -1417,7 +1404,7 @@ class CloneVisitorWithMembers extends CloneVisitorNotMembers {
             isExternal: node.isExternal,
             isSynthetic: node.isSynthetic,
             initializers: node.initializers.map(super.clone).toList(),
-            transformerFlags: node.transformerFlags,
+            containsSuperCalls: node.containsSuperCalls,
             fileUri: node.fileUri,
             reference: reference,
           )
@@ -1443,7 +1430,7 @@ class CloneVisitorWithMembers extends CloneVisitorNotMembers {
             node.kind,
             super.clone(node.function),
             reference: reference,
-            transformerFlags: node.transformerFlags,
+            containsSuperCalls: node.containsSuperCalls,
             fileUri: node.fileUri,
             stubKind: node.stubKind,
             stubTarget: node.stubTarget,
@@ -1478,7 +1465,7 @@ class CloneVisitorWithMembers extends CloneVisitorNotMembers {
         node.name,
         type: visitType(node.type),
         initializer: cloneOptional(node.initializer),
-        transformerFlags: node.transformerFlags,
+        containsSuperCalls: node.containsSuperCalls,
         fileUri: node.fileUri,
         fieldReference: fieldReference,
         getterReference: getterReference,
@@ -1494,7 +1481,7 @@ class CloneVisitorWithMembers extends CloneVisitorNotMembers {
         node.name,
         type: visitType(node.type),
         initializer: cloneOptional(node.initializer),
-        transformerFlags: node.transformerFlags,
+        containsSuperCalls: node.containsSuperCalls,
         fileUri: node.fileUri,
         fieldReference: fieldReference,
         getterReference: getterReference,
@@ -1638,8 +1625,8 @@ class CloneProcedureWithoutBody extends CloneVisitorWithMembers {
   Procedure cloneProcedureWith(
     Procedure node,
     Reference? reference, {
-    List<Variable>? positionalParameters,
-    List<Variable>? namedParameters,
+    List<PositionalParameter>? positionalParameters,
+    List<NamedParameter>? namedParameters,
   }) {
     Procedure cloned = cloneProcedure(node, reference);
     if (positionalParameters != null) {
