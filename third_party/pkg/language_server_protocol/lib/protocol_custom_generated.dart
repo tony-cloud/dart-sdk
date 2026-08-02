@@ -499,6 +499,33 @@ bool _canParseListFormField(
   return true;
 }
 
+bool _canParseListMigrationStep(
+    Map<String, Object?> map, LspJsonReporter reporter, String fieldName,
+    {required bool allowsUndefined, required bool allowsNull}) {
+  reporter.push(fieldName);
+  try {
+    if (!allowsUndefined && !map.containsKey(fieldName)) {
+      reporter.reportError('must not be undefined');
+      return false;
+    }
+    final value = map[fieldName];
+    final nullCheck = allowsNull || allowsUndefined;
+    if (!nullCheck && value == null) {
+      reporter.reportError('must not be null');
+      return false;
+    }
+    if ((!nullCheck || value != null) &&
+        (value is! List<Object?> ||
+            value.any((item) => !MigrationStep.canParse(item, reporter)))) {
+      reporter.reportError('must be of type List<MigrationStep>');
+      return false;
+    }
+  } finally {
+    reporter.pop();
+  }
+  return true;
+}
+
 bool _canParseListObjectNullable(
     Map<String, Object?> map, LspJsonReporter reporter, String fieldName,
     {required bool allowsUndefined, required bool allowsNull}) {
@@ -544,6 +571,33 @@ bool _canParseListOutline(
         (value is! List<Object?> ||
             value.any((item) => !Outline.canParse(item, reporter)))) {
       reporter.reportError('must be of type List<Outline>');
+      return false;
+    }
+  } finally {
+    reporter.pop();
+  }
+  return true;
+}
+
+bool _canParseListRegexValidator(
+    Map<String, Object?> map, LspJsonReporter reporter, String fieldName,
+    {required bool allowsUndefined, required bool allowsNull}) {
+  reporter.push(fieldName);
+  try {
+    if (!allowsUndefined && !map.containsKey(fieldName)) {
+      reporter.reportError('must not be undefined');
+      return false;
+    }
+    final value = map[fieldName];
+    final nullCheck = allowsNull || allowsUndefined;
+    if (!nullCheck && value == null) {
+      reporter.reportError('must not be null');
+      return false;
+    }
+    if ((!nullCheck || value != null) &&
+        (value is! List<Object?> ||
+            value.any((item) => !RegexValidator.canParse(item, reporter)))) {
+      reporter.reportError('must be of type List<StringValidator>');
       return false;
     }
   } finally {
@@ -890,6 +944,31 @@ bool _canParseUri(
   return true;
 }
 
+bool _canParseValidationSeverity(
+    Map<String, Object?> map, LspJsonReporter reporter, String fieldName,
+    {required bool allowsUndefined, required bool allowsNull}) {
+  reporter.push(fieldName);
+  try {
+    if (!allowsUndefined && !map.containsKey(fieldName)) {
+      reporter.reportError('must not be undefined');
+      return false;
+    }
+    final value = map[fieldName];
+    final nullCheck = allowsNull || allowsUndefined;
+    if (!nullCheck && value == null) {
+      reporter.reportError('must not be null');
+      return false;
+    }
+    if ((!nullCheck || value != null) &&
+        !ValidationSeverity.canParse(value, reporter)) {
+      return false;
+    }
+  } finally {
+    reporter.pop();
+  }
+  return true;
+}
+
 bool _canParseWorkspaceEdit(
     Map<String, Object?> map, LspJsonReporter reporter, String fieldName,
     {required bool allowsUndefined, required bool allowsNull}) {
@@ -931,8 +1010,12 @@ typedef LSPObject = Object;
 
 typedef LSPUri = Uri;
 
-typedef TextDocumentEditEdits
-    = List<Either3<AnnotatedTextEdit, SnippetableTextEdit, TextEdit>>;
+/// Validators applicable to string fields.
+typedef StringValidator = RegexValidator;
+
+typedef TextDocumentEditEdits = List<
+    Either4<AnnotatedTextEdit, LegacySnippetTextEdit, SnippetTextEdit,
+        TextEdit>>;
 
 class AnalyzerStatusParams implements ToJsonable {
   static const jsonHandler = LspJsonHandler(
@@ -1213,9 +1296,6 @@ class CompletionResolutionInfo implements ToJsonable {
         json, nullLspJsonReporter)) {
       return DartCompletionMergedResolutionInfo.fromJson(json);
     }
-    if (DartCompletionItemResolutionInfo.canParse(json, nullLspJsonReporter)) {
-      return DartCompletionItemResolutionInfo.fromJson(json);
-    }
     if (DartCompletionRequestResolutionInfo.canParse(
         json, nullLspJsonReporter)) {
       return DartCompletionRequestResolutionInfo.fromJson(json);
@@ -1223,6 +1303,9 @@ class CompletionResolutionInfo implements ToJsonable {
     if (PubPackageCompletionItemResolutionInfo.canParse(
         json, nullLspJsonReporter)) {
       return PubPackageCompletionItemResolutionInfo.fromJson(json);
+    }
+    if (DartCompletionItemResolutionInfo.canParse(json, nullLspJsonReporter)) {
+      return DartCompletionItemResolutionInfo.fromJson(json);
     }
     return CompletionResolutionInfo();
   }
@@ -1313,7 +1396,7 @@ class DartCompletionItemResolutionInfo
   final String? file;
 
   /// The URIs to be imported if this completion is selected.
-  final List<String> importUris;
+  final List<String>? importUris;
 
   /// The encoded ElementLocation2 of the item being completed.
   ///
@@ -1321,7 +1404,7 @@ class DartCompletionItemResolutionInfo
   final String? ref;
   DartCompletionItemResolutionInfo({
     this.file,
-    required this.importUris,
+    this.importUris,
     this.ref,
   });
   @override
@@ -1346,7 +1429,9 @@ class DartCompletionItemResolutionInfo
     if (file != null) {
       result['file'] = file;
     }
-    result['importUris'] = importUris;
+    if (importUris != null) {
+      result['importUris'] = importUris;
+    }
     if (ref != null) {
       result['ref'] = ref;
     }
@@ -1363,7 +1448,7 @@ class DartCompletionItemResolutionInfo
         return false;
       }
       if (!_canParseListString(obj, reporter, 'importUris',
-          allowsUndefined: false, allowsNull: false)) {
+          allowsUndefined: true, allowsNull: false)) {
         return false;
       }
       return _canParseString(obj, reporter, 'ref',
@@ -1382,8 +1467,8 @@ class DartCompletionItemResolutionInfo
     final fileJson = json['file'];
     final file = fileJson as String?;
     final importUrisJson = json['importUris'];
-    final importUris = (importUrisJson as List<Object?>)
-        .map((item) => item as String)
+    final importUris = (importUrisJson as List<Object?>?)
+        ?.map((item) => item as String)
         .toList();
     final refJson = json['ref'];
     final ref = refJson as String?;
@@ -1414,7 +1499,7 @@ class DartCompletionMergedResolutionInfo
 
   /// The URIs to be imported if this completion is selected.
   @override
-  final List<String> importUris;
+  final List<String>? importUris;
 
   /// The encoded ElementLocation2 of the item being completed.
   ///
@@ -1423,7 +1508,7 @@ class DartCompletionMergedResolutionInfo
   final String? ref;
   DartCompletionMergedResolutionInfo({
     required this.file,
-    required this.importUris,
+    this.importUris,
     this.ref,
   });
   @override
@@ -1446,7 +1531,9 @@ class DartCompletionMergedResolutionInfo
   Map<String, Object?> toJson() {
     var result = <String, Object?>{};
     result['file'] = file;
-    result['importUris'] = importUris;
+    if (importUris != null) {
+      result['importUris'] = importUris;
+    }
     if (ref != null) {
       result['ref'] = ref;
     }
@@ -1463,7 +1550,7 @@ class DartCompletionMergedResolutionInfo
         return false;
       }
       if (!_canParseListString(obj, reporter, 'importUris',
-          allowsUndefined: false, allowsNull: false)) {
+          allowsUndefined: true, allowsNull: false)) {
         return false;
       }
       return _canParseString(obj, reporter, 'ref',
@@ -1480,8 +1567,8 @@ class DartCompletionMergedResolutionInfo
     final fileJson = json['file'];
     final file = fileJson as String;
     final importUrisJson = json['importUris'];
-    final importUris = (importUrisJson as List<Object?>)
-        .map((item) => item as String)
+    final importUris = (importUrisJson as List<Object?>?)
+        ?.map((item) => item as String)
         .toList();
     final refJson = json['ref'];
     final ref = refJson as String?;
@@ -1614,17 +1701,21 @@ class DartMigrateParams implements ToJsonable {
   /// Whether to apply the migration changes.
   final bool? apply;
 
+  /// The specific migration steps to run.
+  final List<MigrationStep>? steps;
+
   /// The URIs of the directories (packages or workspaces) to migrate.
   /// Individual file URIs are not supported.
   final List<DocumentUri> uris;
-
   DartMigrateParams({
     this.apply,
+    this.steps,
     required this.uris,
   });
   @override
   int get hashCode => Object.hash(
         apply,
+        lspHashCode(steps),
         lspHashCode(uris),
       );
 
@@ -1633,6 +1724,7 @@ class DartMigrateParams implements ToJsonable {
     return other is DartMigrateParams &&
         other.runtimeType == DartMigrateParams &&
         apply == other.apply &&
+        const DeepCollectionEquality().equals(steps, other.steps) &&
         const DeepCollectionEquality().equals(uris, other.uris);
   }
 
@@ -1641,6 +1733,9 @@ class DartMigrateParams implements ToJsonable {
     var result = <String, Object?>{};
     if (apply != null) {
       result['apply'] = apply;
+    }
+    if (steps != null) {
+      result['steps'] = steps?.map((item) => item.toJson()).toList();
     }
     result['uris'] = uris.map((uri) => uri.toString()).toList();
     return result;
@@ -1655,6 +1750,10 @@ class DartMigrateParams implements ToJsonable {
           allowsUndefined: true, allowsNull: false)) {
         return false;
       }
+      if (!_canParseListMigrationStep(obj, reporter, 'steps',
+          allowsUndefined: true, allowsNull: false)) {
+        return false;
+      }
       return _canParseListUri(obj, reporter, 'uris',
           allowsUndefined: false, allowsNull: false);
     } else {
@@ -1666,12 +1765,17 @@ class DartMigrateParams implements ToJsonable {
   static DartMigrateParams fromJson(Map<String, Object?> json) {
     final applyJson = json['apply'];
     final apply = applyJson as bool?;
+    final stepsJson = json['steps'];
+    final steps = (stepsJson as List<Object?>?)
+        ?.map((item) => MigrationStep.fromJson(item as String))
+        .toList();
     final urisJson = json['uris'];
     final uris = (urisJson as List<Object?>)
         .map((item) => Uri.parse(item as String))
         .toList();
     return DartMigrateParams(
       apply: apply,
+      steps: steps,
       uris: uris,
     );
   }
@@ -3252,14 +3356,14 @@ sealed class FormFieldType implements ToJsonable {
     if (FormFieldTypeFile.canParse(json, nullLspJsonReporter)) {
       return FormFieldTypeFile.fromJson(json);
     }
+    if (FormFieldTypeString.canParse(json, nullLspJsonReporter)) {
+      return FormFieldTypeString.fromJson(json);
+    }
     if (FormFieldTypeBool.canParse(json, nullLspJsonReporter)) {
       return FormFieldTypeBool.fromJson(json);
     }
     if (FormFieldTypeNumber.canParse(json, nullLspJsonReporter)) {
       return FormFieldTypeNumber.fromJson(json);
-    }
-    if (FormFieldTypeString.canParse(json, nullLspJsonReporter)) {
-      return FormFieldTypeString.fromJson(json);
     }
     throw ArgumentError(
         'Supplied map is not valid for any subclass of FormFieldType');
@@ -3513,28 +3617,42 @@ class FormFieldTypeString implements FormFieldType, ToJsonable {
   @override
   final String kind;
 
+  /// Validators for this form field.Field validators only validate the
+  /// input/answer to a field in isolation and cannot depend on the answers to
+  /// other fields. For example a string field may have a regex validator, or a
+  /// numeric field may have a range validator.Clients must ignore validators
+  /// they do not support.
+  final List<StringValidator>? validators;
+
   FormFieldTypeString({
     this.kind = 'string',
+    this.validators,
   }) {
     if (kind != 'string') {
       throw 'kind may only be the literal \'string\'';
     }
   }
-
   @override
-  int get hashCode => kind.hashCode;
+  int get hashCode => Object.hash(
+        kind,
+        lspHashCode(validators),
+      );
 
   @override
   bool operator ==(Object other) {
     return other is FormFieldTypeString &&
         other.runtimeType == FormFieldTypeString &&
-        kind == other.kind;
+        kind == other.kind &&
+        const DeepCollectionEquality().equals(validators, other.validators);
   }
 
   @override
   Map<String, Object?> toJson() {
     var result = <String, Object?>{};
     result['kind'] = kind;
+    if (validators != null) {
+      result['validators'] = validators?.map((item) => item.toJson()).toList();
+    }
     return result;
   }
 
@@ -3543,8 +3661,12 @@ class FormFieldTypeString implements FormFieldType, ToJsonable {
 
   static bool canParse(Object? obj, LspJsonReporter reporter) {
     if (obj is Map<String, Object?>) {
-      return _canParseLiteral(obj, reporter, 'kind',
-          allowsUndefined: false, allowsNull: false, literal: 'string');
+      if (!_canParseLiteral(obj, reporter, 'kind',
+          allowsUndefined: false, allowsNull: false, literal: 'string')) {
+        return false;
+      }
+      return _canParseListRegexValidator(obj, reporter, 'validators',
+          allowsUndefined: true, allowsNull: false);
     } else {
       reporter.reportError('must be of type FormFieldTypeString');
       return false;
@@ -3554,13 +3676,18 @@ class FormFieldTypeString implements FormFieldType, ToJsonable {
   static FormFieldTypeString fromJson(Map<String, Object?> json) {
     final kindJson = json['kind'];
     final kind = kindJson as String;
+    final validatorsJson = json['validators'];
+    final validators = (validatorsJson as List<Object?>?)
+        ?.map((item) => RegexValidator.fromJson(item as Map<String, Object?>))
+        .toList();
     return FormFieldTypeString(
       kind: kind,
+      validators: validators,
     );
   }
 }
 
-class IncomingMessage implements Message, ToJsonable {
+sealed class IncomingMessage implements Message, ToJsonable {
   static const jsonHandler = LspJsonHandler(
     IncomingMessage.canParse,
     IncomingMessage.fromJson,
@@ -3640,20 +3767,8 @@ class IncomingMessage implements Message, ToJsonable {
     if (NotificationMessage.canParse(json, nullLspJsonReporter)) {
       return NotificationMessage.fromJson(json);
     }
-    final clientRequestTimeJson = json['clientRequestTime'];
-    final clientRequestTime = clientRequestTimeJson as int?;
-    final jsonrpcJson = json['jsonrpc'];
-    final jsonrpc = jsonrpcJson as String;
-    final methodJson = json['method'];
-    final method = Method.fromJson(methodJson as String);
-    final paramsJson = json['params'];
-    final params = paramsJson;
-    return IncomingMessage(
-      clientRequestTime: clientRequestTime,
-      jsonrpc: jsonrpc,
-      method: method,
-      params: params,
-    );
+    throw ArgumentError(
+        'Supplied map is not valid for any subclass of IncomingMessage');
   }
 }
 
@@ -3937,7 +4052,94 @@ class InteractiveParams implements ToJsonable {
   }
 }
 
-class Message implements ToJsonable {
+/// A custom TextEdit that supports snippets according to the specification at
+/// https://github.com/rust-analyzer/rust-analyzer/blob/b35559a2460e7f0b2b79a7029db0c5d4e0acdb44/docs/dev/lsp-extensions.md#snippet-textedit.
+/// LSP v3.18 introduced standard (but slightly different) support for
+/// SnippetTextEdits which replaces this. This will soon be removed.
+class LegacySnippetTextEdit implements TextEdit, ToJsonable {
+  static const jsonHandler = LspJsonHandler(
+    LegacySnippetTextEdit.canParse,
+    LegacySnippetTextEdit.fromJson,
+  );
+
+  final InsertTextFormat insertTextFormat;
+
+  /// The string to be inserted. For delete operations use an empty string.
+  @override
+  final String newText;
+
+  /// The range of the text document to be manipulated. To insert text into a
+  /// document create a range where start === end.
+  @override
+  final Range range;
+  LegacySnippetTextEdit({
+    required this.insertTextFormat,
+    required this.newText,
+    required this.range,
+  });
+  @override
+  int get hashCode => Object.hash(
+        insertTextFormat,
+        newText,
+        range,
+      );
+
+  @override
+  bool operator ==(Object other) {
+    return other is LegacySnippetTextEdit &&
+        other.runtimeType == LegacySnippetTextEdit &&
+        insertTextFormat == other.insertTextFormat &&
+        newText == other.newText &&
+        range == other.range;
+  }
+
+  @override
+  Map<String, Object?> toJson() {
+    var result = <String, Object?>{};
+    result['insertTextFormat'] = insertTextFormat.toJson();
+    result['newText'] = newText;
+    result['range'] = range.toJson();
+    return result;
+  }
+
+  @override
+  String toString() => jsonEncoder.convert(toJson());
+
+  static bool canParse(Object? obj, LspJsonReporter reporter) {
+    if (obj is Map<String, Object?>) {
+      if (!_canParseInsertTextFormat(obj, reporter, 'insertTextFormat',
+          allowsUndefined: false, allowsNull: false)) {
+        return false;
+      }
+      if (!_canParseString(obj, reporter, 'newText',
+          allowsUndefined: false, allowsNull: false)) {
+        return false;
+      }
+      return _canParseRange(obj, reporter, 'range',
+          allowsUndefined: false, allowsNull: false);
+    } else {
+      reporter.reportError('must be of type LegacySnippetTextEdit');
+      return false;
+    }
+  }
+
+  static LegacySnippetTextEdit fromJson(Map<String, Object?> json) {
+    final insertTextFormatJson = json['insertTextFormat'];
+    final insertTextFormat =
+        InsertTextFormat.fromJson(insertTextFormatJson as int);
+    final newTextJson = json['newText'];
+    final newText = newTextJson as String;
+    final rangeJson = json['range'];
+    final range = Range.fromJson(rangeJson as Map<String, Object?>);
+    return LegacySnippetTextEdit(
+      insertTextFormat: insertTextFormat,
+      newText: newText,
+      range: range,
+    );
+  }
+}
+
+sealed class Message implements ToJsonable {
   static const jsonHandler = LspJsonHandler(
     Message.canParse,
     Message.fromJson,
@@ -3999,15 +4201,36 @@ class Message implements ToJsonable {
     if (ResponseMessage.canParse(json, nullLspJsonReporter)) {
       return ResponseMessage.fromJson(json);
     }
-    final clientRequestTimeJson = json['clientRequestTime'];
-    final clientRequestTime = clientRequestTimeJson as int?;
-    final jsonrpcJson = json['jsonrpc'];
-    final jsonrpc = jsonrpcJson as String;
-    return Message(
-      clientRequestTime: clientRequestTime,
-      jsonrpc: jsonrpc,
-    );
+    throw ArgumentError(
+        'Supplied map is not valid for any subclass of Message');
   }
+}
+
+/// The specific migration step to run.
+class MigrationStep implements ToJsonable {
+  static const All = MigrationStep('all');
+  static const Bump = MigrationStep('bump');
+
+  static const Cleanup = MigrationStep('cleanup');
+
+  static const Prepare = MigrationStep('prepare');
+  final String _value;
+  const MigrationStep(this._value);
+  const MigrationStep.fromJson(this._value);
+  @override
+  int get hashCode => _value.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MigrationStep && other._value == _value;
+
+  @override
+  String toJson() => _value;
+
+  @override
+  String toString() => _value.toString();
+
+  static bool canParse(Object? obj, LspJsonReporter reporter) => obj is String;
 }
 
 class NotificationMessage implements IncomingMessage, ToJsonable {
@@ -4499,6 +4722,127 @@ class PubPackageCompletionItemResolutionInfo
   }
 }
 
+/// A regex-based validator that ensures an answer matches a given regex.
+class RegexValidator implements Validator, ToJsonable {
+  static const jsonHandler = LspJsonHandler(
+    RegexValidator.canParse,
+    RegexValidator.fromJson,
+  );
+
+  final String kind;
+
+  /// Whether the answer matching the pattern means it is valid (no message
+  /// reported) or invalid (message reported).
+  final bool matchIsValid;
+
+  /// The message to show if the answer is not valid according to `pattern` and
+  /// `matchIsValid`.
+  @override
+  final String message;
+
+  /// The regex pattern to validate the input.
+  ///
+  /// The server must only provide regular expressions for the engine supported
+  /// by the client in the `general.regularExpressions` client capability. If
+  /// the server cannot provide an appropriate regular expression it should not
+  /// provide the regex validator.
+  final String pattern;
+
+  /// The severity of a violation of this validator.
+  @override
+  final ValidationSeverity severity;
+  RegexValidator({
+    this.kind = 'regex',
+    required this.matchIsValid,
+    required this.message,
+    required this.pattern,
+    required this.severity,
+  }) {
+    if (kind != 'regex') {
+      throw 'kind may only be the literal \'regex\'';
+    }
+  }
+  @override
+  int get hashCode => Object.hash(
+        kind,
+        matchIsValid,
+        message,
+        pattern,
+        severity,
+      );
+
+  @override
+  bool operator ==(Object other) {
+    return other is RegexValidator &&
+        other.runtimeType == RegexValidator &&
+        kind == other.kind &&
+        matchIsValid == other.matchIsValid &&
+        message == other.message &&
+        pattern == other.pattern &&
+        severity == other.severity;
+  }
+
+  @override
+  Map<String, Object?> toJson() {
+    var result = <String, Object?>{};
+    result['kind'] = kind;
+    result['matchIsValid'] = matchIsValid;
+    result['message'] = message;
+    result['pattern'] = pattern;
+    result['severity'] = severity.toJson();
+    return result;
+  }
+
+  @override
+  String toString() => jsonEncoder.convert(toJson());
+
+  static bool canParse(Object? obj, LspJsonReporter reporter) {
+    if (obj is Map<String, Object?>) {
+      if (!_canParseLiteral(obj, reporter, 'kind',
+          allowsUndefined: false, allowsNull: false, literal: 'regex')) {
+        return false;
+      }
+      if (!_canParseBool(obj, reporter, 'matchIsValid',
+          allowsUndefined: false, allowsNull: false)) {
+        return false;
+      }
+      if (!_canParseString(obj, reporter, 'message',
+          allowsUndefined: false, allowsNull: false)) {
+        return false;
+      }
+      if (!_canParseString(obj, reporter, 'pattern',
+          allowsUndefined: false, allowsNull: false)) {
+        return false;
+      }
+      return _canParseValidationSeverity(obj, reporter, 'severity',
+          allowsUndefined: false, allowsNull: false);
+    } else {
+      reporter.reportError('must be of type RegexValidator');
+      return false;
+    }
+  }
+
+  static RegexValidator fromJson(Map<String, Object?> json) {
+    final kindJson = json['kind'];
+    final kind = kindJson as String;
+    final matchIsValidJson = json['matchIsValid'];
+    final matchIsValid = matchIsValidJson as bool;
+    final messageJson = json['message'];
+    final message = messageJson as String;
+    final patternJson = json['pattern'];
+    final pattern = patternJson as String;
+    final severityJson = json['severity'];
+    final severity = ValidationSeverity.fromJson(severityJson as int);
+    return RegexValidator(
+      kind: kind,
+      matchIsValid: matchIsValid,
+      message: message,
+      pattern: pattern,
+      severity: severity,
+    );
+  }
+}
+
 class RequestMessage implements IncomingMessage, ToJsonable {
   static const jsonHandler = LspJsonHandler(
     RequestMessage.canParse,
@@ -4931,89 +5275,6 @@ class SaveUriCommandParameter implements CommandParameter, ToJsonable {
   }
 }
 
-class SnippetableTextEdit implements TextEdit, ToJsonable {
-  static const jsonHandler = LspJsonHandler(
-    SnippetableTextEdit.canParse,
-    SnippetableTextEdit.fromJson,
-  );
-
-  final InsertTextFormat insertTextFormat;
-
-  /// The string to be inserted. For delete operations use an empty string.
-  @override
-  final String newText;
-
-  /// The range of the text document to be manipulated. To insert text into a
-  /// document create a range where start === end.
-  @override
-  final Range range;
-  SnippetableTextEdit({
-    required this.insertTextFormat,
-    required this.newText,
-    required this.range,
-  });
-  @override
-  int get hashCode => Object.hash(
-        insertTextFormat,
-        newText,
-        range,
-      );
-
-  @override
-  bool operator ==(Object other) {
-    return other is SnippetableTextEdit &&
-        other.runtimeType == SnippetableTextEdit &&
-        insertTextFormat == other.insertTextFormat &&
-        newText == other.newText &&
-        range == other.range;
-  }
-
-  @override
-  Map<String, Object?> toJson() {
-    var result = <String, Object?>{};
-    result['insertTextFormat'] = insertTextFormat.toJson();
-    result['newText'] = newText;
-    result['range'] = range.toJson();
-    return result;
-  }
-
-  @override
-  String toString() => jsonEncoder.convert(toJson());
-
-  static bool canParse(Object? obj, LspJsonReporter reporter) {
-    if (obj is Map<String, Object?>) {
-      if (!_canParseInsertTextFormat(obj, reporter, 'insertTextFormat',
-          allowsUndefined: false, allowsNull: false)) {
-        return false;
-      }
-      if (!_canParseString(obj, reporter, 'newText',
-          allowsUndefined: false, allowsNull: false)) {
-        return false;
-      }
-      return _canParseRange(obj, reporter, 'range',
-          allowsUndefined: false, allowsNull: false);
-    } else {
-      reporter.reportError('must be of type SnippetableTextEdit');
-      return false;
-    }
-  }
-
-  static SnippetableTextEdit fromJson(Map<String, Object?> json) {
-    final insertTextFormatJson = json['insertTextFormat'];
-    final insertTextFormat =
-        InsertTextFormat.fromJson(insertTextFormatJson as int);
-    final newTextJson = json['newText'];
-    final newText = newTextJson as String;
-    final rangeJson = json['range'];
-    final range = Range.fromJson(rangeJson as Map<String, Object?>);
-    return SnippetableTextEdit(
-      insertTextFormat: insertTextFormat,
-      newText: newText,
-      range: range,
-    );
-  }
-}
-
 class TypeHierarchyItemInfo implements ToJsonable {
   static const jsonHandler = LspJsonHandler(
     TypeHierarchyItemInfo.canParse,
@@ -5130,6 +5391,106 @@ class ValidateRefactorResult implements ToJsonable {
     return ValidateRefactorResult(
       message: message,
       valid: valid,
+    );
+  }
+}
+
+/// The severity of a violation of a validator.
+class ValidationSeverity implements ToJsonable {
+  /// An error message that prevents submission of the value.
+  static const Error = ValidationSeverity(3);
+
+  /// An informational message that does not block submission of the value.
+  static const Info = ValidationSeverity(1);
+
+  /// A warning message that does not block submission of the value.
+  static const Warning = ValidationSeverity(2);
+
+  final int _value;
+  const ValidationSeverity(this._value);
+  const ValidationSeverity.fromJson(this._value);
+  @override
+  int get hashCode => _value.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ValidationSeverity && other._value == _value;
+
+  @override
+  int toJson() => _value;
+
+  @override
+  String toString() => _value.toString();
+
+  static bool canParse(Object? obj, LspJsonReporter reporter) => obj is int;
+}
+
+class Validator implements ToJsonable {
+  static const jsonHandler = LspJsonHandler(
+    Validator.canParse,
+    Validator.fromJson,
+  );
+
+  /// The message to show if the answer fails this validator.
+  final String message;
+
+  /// The severity of a violation of this validator.
+  final ValidationSeverity severity;
+
+  Validator({
+    required this.message,
+    required this.severity,
+  });
+  @override
+  int get hashCode => Object.hash(
+        message,
+        severity,
+      );
+
+  @override
+  bool operator ==(Object other) {
+    return other is Validator &&
+        other.runtimeType == Validator &&
+        message == other.message &&
+        severity == other.severity;
+  }
+
+  @override
+  Map<String, Object?> toJson() {
+    var result = <String, Object?>{};
+    result['message'] = message;
+    result['severity'] = severity.toJson();
+    return result;
+  }
+
+  @override
+  String toString() => jsonEncoder.convert(toJson());
+
+  static bool canParse(Object? obj, LspJsonReporter reporter) {
+    if (obj is Map<String, Object?>) {
+      if (!_canParseString(obj, reporter, 'message',
+          allowsUndefined: false, allowsNull: false)) {
+        return false;
+      }
+      return _canParseValidationSeverity(obj, reporter, 'severity',
+          allowsUndefined: false, allowsNull: false);
+    } else {
+      reporter.reportError('must be of type Validator');
+      return false;
+    }
+  }
+
+  static Validator fromJson(Map<String, Object?> json) {
+    if (RegexValidator.canParse(json, nullLspJsonReporter)) {
+      return RegexValidator.fromJson(json);
+    }
+    final messageJson = json['message'];
+    final message = messageJson as String;
+    final severityJson = json['severity'];
+    final severity = ValidationSeverity.fromJson(severityJson as int);
+    return Validator(
+      message: message,
+      severity: severity,
     );
   }
 }

@@ -356,7 +356,9 @@ class KernelTarget {
   bool _hasComputedNeededPrecompilations = false;
 
   // TODO(johnniwinther): Remove this.
-  Future<void> computeNeededPrecompilations() async {
+  Future<void> computeNeededPrecompilations({
+    bool onlyDirectives = false,
+  }) async {
     assert(
       !_hasComputedNeededPrecompilations,
       "Needed precompilations have already been computed.",
@@ -367,7 +369,7 @@ class KernelTarget {
       benchmarker
       // Coverage-ignore(suite): Not run.
       ?.enterPhase(BenchmarkPhases.outline_kernelBuildOutlines);
-      await loader.buildOutlines();
+      await loader.buildOutlines(onlyDirectives: onlyDirectives);
 
       benchmarker
       // Coverage-ignore(suite): Not run.
@@ -1082,7 +1084,7 @@ class KernelTarget {
         type: const UnknownType(),
         isFinal: formal.isFinal,
         isRequired: formal.isRequired,
-        hasDeclaredDefaultValue: formal.hasDeclaredInitializer,
+        hasDeclaredDefaultValue: formal.hasDeclaredDefaultValue,
         fileOffset: TreeNode.noOffset,
       );
       if (!hasTypeDependency && formal.type is! UnknownType) {
@@ -1102,7 +1104,7 @@ class KernelTarget {
         type: const UnknownType(),
         isFinal: formal.isFinal,
         isRequired: formal.isRequired,
-        hasDeclaredDefaultValue: formal.hasDeclaredInitializer,
+        hasDeclaredDefaultValue: formal.hasDeclaredDefaultValue,
         fileOffset: TreeNode.noOffset,
       );
       if (!hasTypeDependency && formal.type is! UnknownType) {
@@ -1961,10 +1963,16 @@ class KernelTarget {
         // An error has already been reported.
       },
     );
-    verifyGetStaticType(
+    errors = verifyGetStaticType(
       new TypeEnvironment(loader.coreTypes, hierarchy),
       component!,
       skipPlatform: context.options.skipPlatformVerification,
+    );
+    assert(
+      allowVerificationErrorForTesting ||
+          // Coverage-ignore(suite): Not run.
+          errors.isEmpty,
+      "Verification errors found: $errors",
     );
     ticker.logMs("Verified component");
   }

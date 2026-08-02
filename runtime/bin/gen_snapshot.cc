@@ -79,6 +79,7 @@ enum SnapshotKind {
   kAppAOTAssembly,
   kAppAOTElf,
   kAppAOTMachODylib,
+  kAppAOTPECoffObj,
   kFfiCallbackStub,
 };
 static SnapshotKind snapshot_kind = kCore;
@@ -92,6 +93,7 @@ static const char* const kSnapshotKindNames[] = {
     "app-aot-assembly",
     "app-aot-elf",
     "app-aot-macho-dylib",
+    "app-aot-pecoff-obj",
     "ffi-callback-stub",
     nullptr,
     // clang-format on
@@ -109,6 +111,7 @@ static const char* const kSnapshotKindNames[] = {
   V(elf, elf_filename)                                                         \
   V(macho, macho_filename)                                                     \
   V(macho_object, macho_object_filename)                                       \
+  V(coff, coff_filename)                                                       \
   V(loading_unit_manifest, loading_unit_manifest_filename)                     \
   V(save_debugging_info, debugging_info_filename)                              \
   V(save_obfuscation_map, obfuscation_map_filename)                            \
@@ -141,6 +144,7 @@ DEFINE_CB_OPTION(ProcessEnvironmentOption);
 static bool IsSnapshottingForPrecompilation() {
   return (snapshot_kind == kAppAOTAssembly) || (snapshot_kind == kAppAOTElf) ||
          (snapshot_kind == kAppAOTMachODylib) ||
+         (snapshot_kind == kAppAOTPECoffObj) ||
          (snapshot_kind == kFfiCallbackStub);
 }
 
@@ -190,6 +194,14 @@ static void PrintUsage() {
 "[--save-debugging-info=<debug-filename>]                                    \n"
 "[--save-obfuscation-map=<map-filename>]                                     \n"
 "[--load-obfuscation-map=<map-filename>]                                     \n"
+"<dart-kernel-file>                                                          \n"
+"                                                                            \n"
+"To create an AOT application snapshot as a PE/COFF object:                  \n"
+"--snapshot_kind=app-aot-pecoff-obj                                          \n"
+"--coff=<output-file>                                                        \n"
+"[--strip]                                                                   \n"
+"[--obfuscate]                                                               \n"
+"[--save-obfuscation-map=<map-filename>]                                     \n"
 "<dart-kernel-file>                                                          \n"
 "                                                                            \n"
 "AOT snapshots can be obfuscated: that is all identifiers will be renamed    \n"
@@ -287,6 +299,27 @@ static int ParseArguments(int argc,
         Syslog::PrintErr(
             "Building an AOT snapshot as a Mach-O dynamic library requires "
             " specifying an output file for --macho.\n\n");
+        return -1;
+      }
+      break;
+    }
+    case kAppAOTPECoffObj: {
+      if (coff_filename == nullptr) {
+        Syslog::PrintErr(
+            "Building an AOT snapshot as a PE/COFF object requires specifying "
+            "an output file for --coff.\n\n");
+        return -1;
+      }
+      if (loading_unit_manifest_filename != nullptr) {
+        Syslog::PrintErr(
+            "Building an AOT snapshot as a PE/COFF object does not support "
+            "--loading_unit_manifest.\n\n");
+        return -1;
+      }
+      if (debugging_info_filename != nullptr) {
+        Syslog::PrintErr(
+            "Building an AOT snapshot as a PE/COFF object does not support "
+            "--save-debugging-info. Use the linked PDB output instead.\n\n");
         return -1;
       }
       break;
@@ -870,6 +903,14 @@ static void CreateAndWritePrecompiledSnapshot() {
         PrintErrAndExit("error: deferred loading not implemented for Mach-O");
       }
       break;
+    case kAppAOTPECoffObj:
+      kind_str = "PE/COFF object";
+      filename = coff_filename;
+      format = Dart_AotBinaryFormat_PECoff_Obj;
+      // Multi-loading-unit output is not currently supported for COFF.
+      next_callback = nullptr;
+      create_multiple_callback = nullptr;
+      break;
     default:
       UNREACHABLE();
   }
@@ -882,7 +923,8 @@ static void CreateAndWritePrecompiledSnapshot() {
   Dart_Handle result = Dart_Precompile();
   CHECK_RESULT(result);
 
-  if (strip && (debugging_info_filename == nullptr)) {
+  if (strip && (debugging_info_filename == nullptr) &&
+      snapshot_kind != kAppAOTPECoffObj) {
     Syslog::PrintErr(
         "Warning: Generating %s without DWARF debugging"
         " information.\n",
@@ -1038,6 +1080,7 @@ static int CreateIsolateAndSnapshot(const CommandLineOptions& inputs) {
     case kAppAOTAssembly:
     case kAppAOTElf:
     case kAppAOTMachODylib:
+    case kAppAOTPECoffObj:
     case kFfiCallbackStub:
       CreateAndWritePrecompiledSnapshot();
       break;

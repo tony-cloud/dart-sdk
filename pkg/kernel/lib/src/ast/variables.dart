@@ -45,9 +45,6 @@ sealed class Variable extends VariableBase implements ContextConsumer {
   /// type inference.
   abstract DartType type;
 
-  /// Declaration node for the variable, if available.
-  abstract VariableDeclaration? variableDeclaration;
-
   /// For locals, this is the initial value.
   /// For parameters, this is the default value.
   ///
@@ -171,11 +168,20 @@ sealed class Variable extends VariableBase implements ContextConsumer {
   }
 }
 
+/// A variable declared within the body of a member.
+///
+/// This excludes [FunctionParameter], [ThisVariable] and [CatchVariable] which
+/// are all declared by the enclosing node.
+sealed class DeclaredVariable extends Variable {
+  /// Declaration node for the variable, if available.
+  abstract VariableDeclaration? variableDeclaration;
+}
+
 /// Local variables. They aren't Statements. A [LocalVariable] is "declared" in
 /// the [VariableContext] it appears in. [VariableInitializationBase]
 /// (which is a [Statement]) marks the spot of the original variable declaration
 /// in the Dart program.
-class LocalVariable extends Variable {
+class LocalVariable extends DeclaredVariable {
   /// The name of the variable as provided in the source code.
   String name;
 
@@ -199,13 +205,11 @@ class LocalVariable extends Variable {
     required this.name,
     DartType? type,
     bool isFinal = false,
-    bool isConst = false,
     bool isWildcard = false,
     bool hasDeclaredInitializer = false,
     this.initializer,
   }) : type = type ?? const DynamicType() {
     this.isFinal = isFinal;
-    this.isConst = isConst;
     this.isWildcard = isWildcard;
     this.hasDeclaredInitializer = hasDeclaredInitializer;
     this.initializer?.parent = this;
@@ -431,8 +435,13 @@ class LocalVariable extends Variable {
   }
 }
 
-/// A late local variable.
-class LateVariable extends Variable {
+/// Variable for a local function declaration.
+///
+/// Local functions, declared using [FunctionDeclaration], have a
+/// [LocalFunctionVariable] which hold their name and is used to identify the
+/// function in [LocalFunctionInvocation]s and tear-offs through [VariableGet].
+class LocalFunctionVariable extends DeclaredVariable {
+  /// The name of the variable as provided in the source code.
   String name;
 
   @override
@@ -448,24 +457,285 @@ class LateVariable extends Variable {
   late VariableContext context;
 
   @override
-  // TODO(johnniwinther): Rename to [initialValue].
+  // TODO(johnniwinther): Remove this.
   Expression? initializer;
+
+  new({
+    required this.name,
+    DartType? type,
+    bool isWildcard = false,
+    bool isLowered = false,
+    bool isSynthesized = false,
+  }) : type = type ?? const DynamicType() {
+    this.isFinal = true;
+    this.isWildcard = isWildcard;
+    this.isLowered = isLowered;
+    this.isSynthesized = isSynthesized;
+  }
+
+  @override
+  void addAnnotation(Expression annotation) {
+    if (annotations.isEmpty) {
+      annotations = <Expression>[];
+    }
+    annotations.add(annotation..parent = this);
+  }
+
+  @override
+  bool get isFinal => flags & Variable.FlagFinal != 0;
+
+  @override
+  void set isFinal(bool value) {
+    flags = value
+        ? (flags | Variable.FlagFinal)
+        : (flags & ~Variable.FlagFinal);
+  }
+
+  @override
+  bool get isWildcard => flags & Variable.FlagWildcard != 0;
+
+  @override
+  void set isWildcard(bool value) {
+    flags = value
+        ? (flags | Variable.FlagWildcard)
+        : (flags & ~Variable.FlagWildcard);
+  }
+
+  @override
+  bool get isConst => flags & Variable.FlagConst != 0;
+
+  @override
+  void set isConst(bool value) {
+    flags = value
+        ? (flags | Variable.FlagConst)
+        : (flags & ~Variable.FlagConst);
+  }
+
+  @override
+  bool get isLate => flags & Variable.FlagLate != 0;
+
+  @override
+  void set isLate(bool value) {
+    flags = value ? (flags | Variable.FlagLate) : (flags & ~Variable.FlagLate);
+  }
+
+  @override
+  bool get isLowered => flags & Variable.FlagLowered != 0;
+
+  @override
+  void set isLowered(bool value) {
+    flags = value
+        ? (flags | Variable.FlagLowered)
+        : (flags & ~Variable.FlagLowered);
+  }
+
+  @override
+  bool get isHoisted => flags & Variable.FlagHoisted != 0;
+
+  @override
+  void set isHoisted(bool value) {
+    flags = value
+        ? (flags | Variable.FlagHoisted)
+        : (flags & ~Variable.FlagHoisted);
+  }
+
+  @override
+  bool get isCovariantByClass => false;
+
+  @override
+  void set isCovariantByClass(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isCovariantByDeclaration => false;
+
+  @override
+  void set isCovariantByDeclaration(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isErroneouslyInitialized =>
+      flags & Variable.FlagErroneouslyInitialized != 0;
+
+  @override
+  void set isErroneouslyInitialized(bool value) {
+    flags = value
+        ? (flags | Variable.FlagErroneouslyInitialized)
+        : (flags & ~Variable.FlagErroneouslyInitialized);
+  }
+
+  @override
+  bool get hasDeclaredInitializer =>
+      flags & Variable.FlagHasDeclaredInitializer != 0;
+
+  @override
+  void set hasDeclaredInitializer(bool value) {
+    flags = value
+        ? (flags | Variable.FlagHasDeclaredInitializer)
+        : (flags & ~Variable.FlagHasDeclaredInitializer);
+  }
+
+  @override
+  bool get isInitializingFormal => false;
+
+  @override
+  void set isInitializingFormal(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isRequired => false;
+
+  @override
+  void set isRequired(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isSuperInitializingFormal => false;
+
+  @override
+  void set isSuperInitializingFormal(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isSynthesized => flags & Variable.FlagSynthesized != 0;
+
+  @override
+  void set isSynthesized(bool value) {
+    flags = value
+        ? (flags | Variable.FlagSynthesized)
+        : (flags & ~Variable.FlagSynthesized);
+  }
+
+  @override
+  bool get isAssignable {
+    if (isConst) return false;
+    if (isFinal) {
+      if (isLate) return initializer == null;
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  R accept<R>(VariableVisitor<R> v) => v.visitLocalFunctionVariable(this);
+
+  @override
+  R accept1<R, A>(VariableVisitor1<R, A> v, A arg) =>
+      v.visitLocalFunctionVariable(this, arg);
+
+  @override
+  void transformChildren(Transformer v) {
+    v.transformList(annotations, this);
+    type = v.visitDartType(type);
+    if (initializer != null) {
+      initializer = v.transform(initializer!);
+      initializer?.parent = this;
+    }
+  }
+
+  @override
+  void transformOrRemoveChildren(RemovingTransformer v) {
+    v.transformExpressionList(annotations, this);
+    type = v.visitDartType(type, cannotRemoveSentinel);
+    if (initializer != null) {
+      initializer = v.transformOrRemoveExpression(initializer!);
+      initializer?.parent = this;
+    }
+  }
+
+  @override
+  void visitChildren(Visitor v) {
+    visitList(annotations, v);
+    type.accept(v);
+    initializer?.accept(v);
+  }
+
+  @override
+  String toString() {
+    return "LocalVariable(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpressionVariable(this);
+  }
+
+  @override
+  int binaryOffsetNoTag = -1;
+
+  @override
+  List<VariableContext>? get capturedContexts {
+    throw new UnsupportedError("${this.runtimeType}.capturedContexts");
+  }
+
+  @override
+  void set capturedContexts(List<VariableContext>? value) {
+    throw new UnsupportedError("${this.runtimeType}.capturedContexts=");
+  }
+
+  @override
+  int fileEqualsOffset = TreeNode.noOffset;
+
+  @override
+  void clearAnnotations() {
+    annotations.clear();
+  }
+
+  @override
+  String? get cosmeticName => name;
+
+  @override
+  void set cosmeticName(String? value) {
+    name = value!;
+  }
+}
+
+/// A late local variable.
+class LateVariable extends DeclaredVariable {
+  String name;
+
+  @override
+  DartType type;
+
+  @override
+  VariableDeclaration? variableDeclaration;
+
+  @override
+  List<Expression> annotations = const <Expression>[];
+
+  @override
+  late VariableContext context;
+
+  Expression? initialValue;
 
   new({
     required String this.name,
     DartType? type,
     bool isFinal = false,
-    bool isConst = false,
     bool isWildcard = false,
     bool hasDeclaredInitializer = false,
-    this.initializer,
+    this.initialValue,
   }) : type = type ?? const DynamicType() {
     this.isFinal = isFinal;
-    this.isConst = isConst;
     this.isLate = true;
     this.isWildcard = isWildcard;
     this.hasDeclaredInitializer = hasDeclaredInitializer;
-    this.initializer?.parent = this;
+    this.initialValue?.parent = this;
+  }
+
+  @Deprecated('Use LateVariable.initialValue instead.')
+  @override
+  Expression? get initializer => initialValue;
+
+  @Deprecated('Use LateVariable.initialValue instead.')
+  @override
+  void set initializer(Expression? value) {
+    initialValue = value;
   }
 
   @override
@@ -607,7 +877,7 @@ class LateVariable extends Variable {
   bool get isAssignable {
     if (isConst) return false;
     if (isFinal) {
-      if (isLate) return initializer == null;
+      if (isLate) return initialValue == null;
       return false;
     }
     return true;
@@ -624,9 +894,9 @@ class LateVariable extends Variable {
   void transformChildren(Transformer v) {
     v.transformList(annotations, this);
     type = v.visitDartType(type);
-    if (initializer != null) {
-      initializer = v.transform(initializer!);
-      initializer?.parent = this;
+    if (initialValue != null) {
+      initialValue = v.transform(initialValue!);
+      initialValue?.parent = this;
     }
   }
 
@@ -634,9 +904,9 @@ class LateVariable extends Variable {
   void transformOrRemoveChildren(RemovingTransformer v) {
     v.transformExpressionList(annotations, this);
     type = v.visitDartType(type, cannotRemoveSentinel);
-    if (initializer != null) {
-      initializer = v.transformOrRemoveExpression(initializer!);
-      initializer?.parent = this;
+    if (initialValue != null) {
+      initialValue = v.transformOrRemoveExpression(initialValue!);
+      initialValue?.parent = this;
     }
   }
 
@@ -644,12 +914,275 @@ class LateVariable extends Variable {
   void visitChildren(Visitor v) {
     visitList(annotations, v);
     type.accept(v);
-    initializer?.accept(v);
+    initialValue?.accept(v);
   }
 
   @override
   String toString() {
-    return "LocalVariable(${toStringInternal()})";
+    return "LateVariable(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpressionVariable(this);
+  }
+
+  @override
+  int binaryOffsetNoTag = -1;
+
+  @override
+  List<VariableContext>? get capturedContexts {
+    throw new UnsupportedError("${this.runtimeType}.capturedContexts");
+  }
+
+  @override
+  void set capturedContexts(List<VariableContext>? value) {
+    throw new UnsupportedError("${this.runtimeType}.capturedContexts=");
+  }
+
+  @override
+  int fileEqualsOffset = TreeNode.noOffset;
+
+  @override
+  void clearAnnotations() {
+    annotations.clear();
+  }
+
+  @override
+  String? get cosmeticName => name;
+
+  @override
+  void set cosmeticName(String? value) {
+    name = value!;
+  }
+}
+
+/// A constant local variable.
+class ConstVariable extends DeclaredVariable {
+  String name;
+
+  @override
+  DartType type;
+
+  @override
+  VariableDeclaration? variableDeclaration;
+
+  @override
+  List<Expression> annotations = const <Expression>[];
+
+  @override
+  late VariableContext context;
+
+  Expression? value;
+
+  new({
+    required String this.name,
+    DartType? type,
+    bool isFinal = false,
+    bool isWildcard = false,
+    bool hasDeclaredInitializer = false,
+    this.value,
+  }) : type = type ?? const DynamicType() {
+    this.isFinal = isFinal;
+    this.isConst = true;
+    this.isLate = false;
+    this.isWildcard = isWildcard;
+    this.hasDeclaredInitializer = hasDeclaredInitializer;
+    this.value?.parent = this;
+  }
+
+  @Deprecated('Use ConstVariable.value instead.')
+  @override
+  Expression? get initializer => value;
+
+  @Deprecated('Use ConstVariable.initialValue instead.')
+  @override
+  void set initializer(Expression? value) {
+    this.value = value;
+  }
+
+  @override
+  void addAnnotation(Expression annotation) {
+    if (annotations.isEmpty) {
+      annotations = <Expression>[];
+    }
+    annotations.add(annotation..parent = this);
+  }
+
+  @override
+  bool get isFinal => flags & Variable.FlagFinal != 0;
+
+  @override
+  void set isFinal(bool value) {
+    flags = value
+        ? (flags | Variable.FlagFinal)
+        : (flags & ~Variable.FlagFinal);
+  }
+
+  @override
+  bool get isWildcard => flags & Variable.FlagWildcard != 0;
+
+  @override
+  void set isWildcard(bool value) {
+    flags = value
+        ? (flags | Variable.FlagWildcard)
+        : (flags & ~Variable.FlagWildcard);
+  }
+
+  @override
+  bool get isConst => flags & Variable.FlagConst != 0;
+
+  @override
+  void set isConst(bool value) {
+    flags = value
+        ? (flags | Variable.FlagConst)
+        : (flags & ~Variable.FlagConst);
+  }
+
+  @override
+  bool get isLate => flags & Variable.FlagLate != 0;
+
+  @override
+  void set isLate(bool value) {
+    flags = value ? (flags | Variable.FlagLate) : (flags & ~Variable.FlagLate);
+  }
+
+  @override
+  bool get isLowered => flags & Variable.FlagLowered != 0;
+
+  @override
+  void set isLowered(bool value) {
+    flags = value
+        ? (flags | Variable.FlagLowered)
+        : (flags & ~Variable.FlagLowered);
+  }
+
+  @override
+  bool get isHoisted => flags & Variable.FlagHoisted != 0;
+
+  @override
+  void set isHoisted(bool value) {
+    flags = value
+        ? (flags | Variable.FlagHoisted)
+        : (flags & ~Variable.FlagHoisted);
+  }
+
+  @override
+  bool get isCovariantByClass => false;
+  @override
+  void set isCovariantByClass(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isCovariantByDeclaration => false;
+
+  @override
+  void set isCovariantByDeclaration(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isErroneouslyInitialized =>
+      flags & Variable.FlagErroneouslyInitialized != 0;
+
+  @override
+  void set isErroneouslyInitialized(bool value) {
+    flags = value
+        ? (flags | Variable.FlagErroneouslyInitialized)
+        : (flags & ~Variable.FlagErroneouslyInitialized);
+  }
+
+  @override
+  bool get hasDeclaredInitializer =>
+      flags & Variable.FlagHasDeclaredInitializer != 0;
+
+  @override
+  void set hasDeclaredInitializer(bool value) {
+    flags = value
+        ? (flags | Variable.FlagHasDeclaredInitializer)
+        : (flags & ~Variable.FlagHasDeclaredInitializer);
+  }
+
+  @override
+  bool get isInitializingFormal => false;
+
+  @override
+  void set isInitializingFormal(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isRequired => false;
+
+  @override
+  void set isRequired(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isSuperInitializingFormal => false;
+
+  @override
+  void set isSuperInitializingFormal(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isSynthesized => false;
+
+  @override
+  void set isSynthesized(bool value) {
+    throw new UnsupportedError("${this.runtimeType}");
+  }
+
+  @override
+  bool get isAssignable {
+    if (isConst) return false;
+    if (isFinal) {
+      if (isLate) return value == null;
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  R accept<R>(VariableVisitor<R> v) => v.visitConstVariable(this);
+
+  @override
+  R accept1<R, A>(VariableVisitor1<R, A> v, A arg) =>
+      v.visitConstVariable(this, arg);
+
+  @override
+  void transformChildren(Transformer v) {
+    v.transformList(annotations, this);
+    type = v.visitDartType(type);
+    if (value != null) {
+      value = v.transform(value!);
+      value?.parent = this;
+    }
+  }
+
+  @override
+  void transformOrRemoveChildren(RemovingTransformer v) {
+    v.transformExpressionList(annotations, this);
+    type = v.visitDartType(type, cannotRemoveSentinel);
+    if (value != null) {
+      value = v.transformOrRemoveExpression(value!);
+      value?.parent = this;
+    }
+  }
+
+  @override
+  void visitChildren(Visitor v) {
+    visitList(annotations, v);
+    type.accept(v);
+    value?.accept(v);
+  }
+
+  @override
+  String toString() {
+    return "ConstVariable(${toStringInternal()})";
   }
 
   @override
@@ -729,16 +1262,6 @@ class CatchVariable extends Variable {
   @override
   void set cosmeticName(String? value) {
     throw new UnsupportedError("${this.runtimeType}.cosmeticName=");
-  }
-
-  @override
-  VariableDeclaration? get variableDeclaration {
-    throw new UnsupportedError("${this.runtimeType}.variableInitialization");
-  }
-
-  @override
-  void set variableDeclaration(VariableDeclaration? value) {
-    throw new UnsupportedError("${this.runtimeType}.variableInitialization=");
   }
 
   @override
@@ -972,16 +1495,11 @@ sealed class FunctionParameter extends Variable {
   @override
   bool get isAssignable => !isFinal;
 
-  /// Function parameters don't have initializers, only default values.
-  @override
-  VariableDeclaration? get variableDeclaration => null;
-
-  @override
-  void set variableDeclaration(VariableDeclaration? value) {}
-
+  @Deprecated('Use FunctionParameter.defaultValue instead.')
   @override
   Expression? get initializer => defaultValue;
 
+  @Deprecated('Use FunctionParameter.defaultValue instead.')
   @override
   void set initializer(Expression? value) {
     defaultValue = value;
@@ -1078,9 +1596,11 @@ sealed class FunctionParameter extends Variable {
         : (flags & ~Variable.FlagHasDeclaredInitializer);
   }
 
+  @Deprecated('Use FunctionParameter.hasDeclaredDefaultValue instead.')
   @override
   bool get hasDeclaredInitializer => hasDeclaredDefaultValue;
 
+  @Deprecated('Use FunctionParameter.hasDeclaredDefaultValue instead.')
   @override
   void set hasDeclaredInitializer(bool value) {
     hasDeclaredDefaultValue = value;
@@ -1096,10 +1616,21 @@ sealed class FunctionParameter extends Variable {
         : (flags & ~Variable.FlagSynthesized);
   }
 
+  bool get hasErroneousDefaultValue =>
+      flags & Variable.FlagErroneouslyInitialized != 0;
+
+  void set hasErroneousDefaultValue(bool value) {
+    flags = value
+        ? (flags | Variable.FlagErroneouslyInitialized)
+        : (flags & ~Variable.FlagErroneouslyInitialized);
+  }
+
+  @Deprecated('Use FunctionParameter.hasErroneousDefaultValue instead.')
   @override
   bool get isErroneouslyInitialized =>
       flags & Variable.FlagErroneouslyInitialized != 0;
 
+  @Deprecated('Use FunctionParameter.hasErroneousDefaultValue instead.')
   @override
   void set isErroneouslyInitialized(bool value) {
     flags = value
@@ -1369,12 +1900,6 @@ class ThisVariable extends Variable {
   void set cosmeticName(String? value) {}
 
   @override
-  VariableDeclaration? get variableDeclaration => null;
-
-  @override
-  void set variableDeclaration(VariableDeclaration? value) {}
-
-  @override
   DartType type;
 
   // TODO(cstefantsova): Consider a throwing implementation instead.
@@ -1575,7 +2100,7 @@ class ThisVariable extends Variable {
 
 /// A variable introduced during desugaring. Such variables don't correspond to
 /// any variable declared by the programmer.
-class SyntheticVariable extends Variable {
+class SyntheticVariable extends DeclaredVariable {
   @override
   String? cosmeticName;
 
@@ -1593,6 +2118,7 @@ class SyntheticVariable extends Variable {
   late VariableContext context;
 
   @override
+  @deprecated
   // TODO(johnniwinther): Remove this.
   Expression? initializer;
 
@@ -1608,6 +2134,7 @@ class SyntheticVariable extends Variable {
     bool hasDeclaredInitializer = false,
     bool isWildcard = false,
   }) : type = type ?? const DynamicType() {
+    // ignore: deprecated_member_use_from_same_package
     this.initializer?.parent = this;
     this.isFinal = isFinal;
     this.isLowered = isLowered;
@@ -1762,8 +2289,11 @@ class SyntheticVariable extends Variable {
   void transformChildren(Transformer v) {
     v.transformList(annotations, this);
     type = v.visitDartType(type);
+    // ignore: deprecated_member_use_from_same_package
     if (initializer != null) {
+      // ignore: deprecated_member_use_from_same_package
       initializer = v.transform(initializer!);
+      // ignore: deprecated_member_use_from_same_package
       initializer?.parent = this;
     }
   }
@@ -1772,8 +2302,11 @@ class SyntheticVariable extends Variable {
   void transformOrRemoveChildren(RemovingTransformer v) {
     v.transformExpressionList(annotations, this);
     type = v.visitDartType(type, cannotRemoveSentinel);
+    // ignore: deprecated_member_use_from_same_package
     if (initializer != null) {
+      // ignore: deprecated_member_use_from_same_package
       initializer = v.transformOrRemoveExpression(initializer!);
+      // ignore: deprecated_member_use_from_same_package
       initializer?.parent = this;
     }
   }
@@ -1782,6 +2315,7 @@ class SyntheticVariable extends Variable {
   void visitChildren(Visitor v) {
     visitList(annotations, v);
     type.accept(v);
+    // ignore: deprecated_member_use_from_same_package
     initializer?.accept(v);
   }
 
@@ -1911,7 +2445,7 @@ sealed class ContextConsumer implements TreeNode {
 /// Declaration of a variable with an initial value.
 class VariableDeclaration extends TreeNode implements ContextConsumer {
   /// The declared variable.
-  Variable variable;
+  DeclaredVariable variable;
 
   /// Contexts of the variables captured by the late variable initializer.
   ///
@@ -1956,5 +2490,5 @@ class VariableDeclaration extends TreeNode implements ContextConsumer {
   }
 
   @override
-  String toString() => 'VariableDeclaration(${toStringInternal()}';
+  String toString() => 'VariableDeclaration(${toStringInternal()})';
 }

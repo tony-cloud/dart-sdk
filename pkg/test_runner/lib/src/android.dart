@@ -414,7 +414,7 @@ class AndroidEmulators {
 
     p = await Process.start(
       sdkmanager,
-      ["--install", "system-images;android-28;default;x86_64"],
+      ["--install", "system-images;android-30;default;x86_64"],
       environment: _environment,
       mode: ProcessStartMode.inheritStdio,
     );
@@ -446,7 +446,7 @@ class AndroidEmulators {
       "--name",
       "test-$port",
       "--package",
-      "system-images;android-28;default;x86_64",
+      "system-images;android-30;default;x86_64",
     ], environment: _environment);
     _forward(p, "avdmanager create");
     p.stdin.writeln("no"); // Create custom hardware profile?
@@ -565,8 +565,20 @@ class AdbDevicePool {
       ]);
       int disk;
       try {
+        // Sample input that is being parsed below:
+        //
+        // Filesystem       1K-blocks      Used Available Use% Mounted on
+        // /dev/block/dm-64 114786388 110709944   3945372  97% /data/user/0
         disk =
-            int.parse(result.stdout.split('\n')[1].split(' ')[3] as String) *
+            int.parse(
+              result.stdout
+                      .split('\n')[1]
+                      .split(' ')
+                      .where((String v) => v.isNotEmpty)
+                      .toList()[3]
+                      .trim()
+                  as String,
+            ) *
             512;
       } catch (_) {
         print(result.stdout);

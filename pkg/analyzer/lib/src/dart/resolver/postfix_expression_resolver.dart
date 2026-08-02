@@ -7,7 +7,6 @@ import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/src/dart/ast/ast.dart';
-import 'package:analyzer/src/dart/ast/extensions.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/type.dart';
 import 'package:analyzer/src/dart/element/type_system.dart';
@@ -34,20 +33,15 @@ class PostfixExpressionResolver {
   TypeSystemImpl get _typeSystem => _resolver.typeSystem;
 
   void resolve(PostfixExpressionImpl node, {required TypeImpl contextType}) {
-    if (node.operator.type == TokenType.BANG) {
-      _resolveNullCheck(node, contextType: contextType);
-      return;
-    }
-
     var operandResolution = _resolver.resolveForWrite(
-      node: node.operand,
+      node: node.operand2,
       hasRead: true,
     );
 
     var readElement = operandResolution.readElement2;
     var writeElement = operandResolution.writeElement2;
 
-    var operand = node.operand;
+    var operand = node.operand2;
     _resolver.setReadElement(
       operand,
       readElement,
@@ -68,12 +62,11 @@ class PostfixExpressionResolver {
   }
 
   /// Check that the result [type] of a prefix or postfix `++` or `--`
-  /// expression is assignable to the write type of the [operand].
+  /// expression is assignable to the write type of the operand.
   ///
   // TODO(scheglov): this is duplicate
   void _checkForInvalidAssignmentIncDec(
     PostfixExpressionImpl node,
-    Expression operand,
     TypeImpl type,
   ) {
     var operandWriteType = node.writeType!;
@@ -129,7 +122,7 @@ class PostfixExpressionResolver {
   }
 
   void _resolve1(PostfixExpressionImpl node, TypeImpl receiverType) {
-    ExpressionImpl operand = node.operand;
+    ExpressionImpl operand = node.operand2;
 
     if (identical(receiverType, NeverTypeImpl.instance)) {
       _resolver.diagnosticReporter.report(diag.receiverOfTypeNever.at(operand));
@@ -165,20 +158,19 @@ class PostfixExpressionResolver {
   }
 
   void _resolve2(PostfixExpressionImpl node, TypeImpl receiverType) {
-    Expression operand = node.operand;
+    Expression operand = node.operand2;
 
     if (identical(receiverType, NeverTypeImpl.instance)) {
       node.recordStaticType(NeverTypeImpl.instance, resolver: _resolver);
     } else {
       TypeImpl operatorReturnType;
       if (receiverType.isDartCoreInt) {
-        // No need to check for `intVar++`, the result is `int`.
         operatorReturnType = receiverType;
       } else {
         var operatorElement = node.element;
         operatorReturnType = _computeStaticReturnType(operatorElement);
-        _checkForInvalidAssignmentIncDec(node, operand, operatorReturnType);
       }
+      _checkForInvalidAssignmentIncDec(node, operatorReturnType);
       if (operand is SimpleIdentifier) {
         var element = operand.element;
         if (element is PromotableElementImpl) {
@@ -191,37 +183,5 @@ class PostfixExpressionResolver {
       }
       node.recordStaticType(receiverType, resolver: _resolver);
     }
-  }
-
-  void _resolveNullCheck(
-    PostfixExpressionImpl node, {
-    required TypeImpl contextType,
-  }) {
-    var operand = node.operand;
-
-    if (operand is SuperExpression) {
-      _resolver.diagnosticReporter.report(
-        diag.missingAssignableSelector.at(node),
-      );
-      operand.setPseudoExpressionStaticType(DynamicTypeImpl.instance);
-      node.recordStaticType(DynamicTypeImpl.instance, resolver: _resolver);
-      return;
-    }
-
-    _resolver.analyzeExpression(
-      operand,
-      SharedTypeSchemaView(_typeSystem.makeNullable(contextType)),
-      continueNullShorting: true,
-    );
-    operand = _resolver.popRewrite()!;
-
-    var operandType = operand.typeOrThrow;
-
-    var type = _typeSystem.promoteToNonNull(operandType);
-    node.recordStaticType(type, resolver: _resolver);
-
-    _resolver.flowAnalysis.flow?.nonNullAssert_end(
-      _resolver.flowAnalysis.flow?.getExpressionInfo(operand),
-    );
   }
 }

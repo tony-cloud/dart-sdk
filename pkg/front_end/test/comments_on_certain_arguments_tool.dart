@@ -214,7 +214,7 @@ class InvocationVisitor extends RecursiveVisitor {
     Arguments arguments,
     InvocationExpression invocation,
   ) {
-    List<Variable> positionalParameters;
+    List<PositionalParameter> positionalParameters;
     if (node is Procedure) {
       positionalParameters = node.function.positionalParameters;
     } else if (node is Constructor) {
@@ -287,7 +287,7 @@ Map<Uri, Token> cache = {};
 
 void check(
   Expression argumentExpression,
-  Variable parameter,
+  PositionalParameter parameter,
   NamedNode targetNode,
   String expectedComment,
 ) {
@@ -445,6 +445,7 @@ class TestSourceLoader extends SourceLoader {
     SourceCompilationUnit sourceCompilationUnit, {
     bool suppressLexicalErrors = false,
     bool allowLazyStrings = true,
+    bool onlyScanDirectives = false,
   }) async {
     Token result = await super.tokenize(
       sourceCompilationUnit,

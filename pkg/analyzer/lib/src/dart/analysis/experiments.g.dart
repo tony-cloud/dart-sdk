@@ -12,7 +12,7 @@ part of 'experiments.dart';
 
 /// The current version of the Dart language (or, for non-stable releases, the
 /// version of the language currently in the process of being developed).
-const _currentVersion = '3.13.0';
+const _currentVersion = '3.14.0';
 
 /// A map containing information about all known experimental flags.
 final _knownFeatures = <String, ExperimentalFeature>{
@@ -632,8 +632,8 @@ class ExperimentalFeatures {
     isExpired: IsExpired.record_use,
     documentation: 'Output arguments used by static functions.',
     experimentalReleaseVersion: null,
-    releaseVersion: null,
-    channels: ["main", "dev"],
+    releaseVersion: Version.parse('3.13.0'),
+    channels: ["stable", "beta", "dev", "main"],
   );
 
   static final records = ExperimentalFeature(
@@ -888,7 +888,7 @@ class IsEnabledByDefault {
   static const bool private_named_parameters = true;
 
   /// Default state of the experiment "record-use"
-  static const bool record_use = false;
+  static const bool record_use = true;
 
   /// Default state of the experiment "records"
   static const bool records = true;

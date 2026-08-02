@@ -48,7 +48,7 @@ abstract class _Specializer {
 
   /// The parameters that determine arity of the interop procedure that is
   /// created from this config.
-  List<Variable> get parameters;
+  List<FunctionParameter> get parameters;
 
   /// Returns the string that will be the body of the JS trampoline.
   ///
@@ -96,7 +96,7 @@ abstract class _Specializer {
     List<String> jsParameterStrings = [];
     List<PositionalParameter> dartPositionalParameters = [];
     for (int i = 0; i < parameters.length; i++) {
-      final Variable parameter = parameters[i];
+      final FunctionParameter parameter = parameters[i];
       final DartType parameterType = parameter.type;
       final interopFunctionParameterType =
           parameterType == _util.coreTypes.doubleNonNullableRawType
@@ -197,7 +197,7 @@ abstract class _ProcedureSpecializer extends _Specializer {
   _ProcedureSpecializer(super.context, super.interopMethod, super.jsString);
 
   @override
-  List<Variable> get parameters => function.positionalParameters;
+  List<PositionalParameter> get parameters => function.positionalParameters;
 
   /// Returns an invocation of a specialized JS method meant to be used in a
   /// procedure-level lowering.
@@ -352,10 +352,8 @@ abstract class _PositionalInvocationSpecializer extends _InvocationSpecializer {
   );
 
   @override
-  List<Variable> get parameters => function.positionalParameters.sublist(
-    0,
-    invocation.arguments.positional.length,
-  );
+  List<PositionalParameter> get parameters => function.positionalParameters
+      .sublist(0, invocation.arguments.positional.length);
 
   /// Returns an invocation of a specialized JS method meant to be used in an
   /// invocation-level lowering.
@@ -369,15 +367,14 @@ abstract class _PositionalInvocationSpecializer extends _InvocationSpecializer {
     final List<Expression> jsifiedArguments = [];
     final List<Expression> arguments = invocation.arguments.positional;
     for (int i = 0; i < arguments.length; i += 1) {
-      final temp = SyntheticVariable(
-        initializer: arguments[i],
+      final cache = CachedExpression.fromValue(
+        value: arguments[i],
         type: arguments[i].getStaticType(factory._staticTypeContext),
       );
       jsifiedArguments.add(
-        Let(
-          temp,
-          jsifyValue(
-            temp,
+        cache.createLet(
+          body: jsifyValue(
+            cache.variable,
             interopProcedureType.positionalParameters[i],
             factory._util,
             factory._staticTypeContext.typeEnvironment,
@@ -527,15 +524,14 @@ class _ObjectLiteralSpecializer extends _InvocationSpecializer {
         .toList();
     final List<Expression> jsifiedArguments = [];
     for (int i = 0; i < arguments.length; i += 1) {
-      final temp = SyntheticVariable(
-        initializer: arguments[i],
+      final cache = CachedExpression.fromValue(
+        value: arguments[i],
         type: arguments[i].getStaticType(factory._staticTypeContext),
       );
       jsifiedArguments.add(
-        Let(
-          temp,
-          jsifyValue(
-            temp,
+        cache.createLet(
+          body: jsifyValue(
+            cache.variable,
             interopProcedureType.positionalParameters[i],
             factory._util,
             factory._staticTypeContext.typeEnvironment,

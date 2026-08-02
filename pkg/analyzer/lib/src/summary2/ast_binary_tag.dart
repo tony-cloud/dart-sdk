@@ -46,10 +46,13 @@ class Tag {
   static const int CascadeExpression = 95;
   static const int ConditionalExpression = 51;
   static const int ConstructorFieldInitializer = 50;
-  static const int ConstructorName = 7;
-  static const int ConstructorReference = 101;
+  static const int ConstructorTearOff = 101;
+  static const int ConstructorSelector = 120;
+  static const int ConstructorReference2 = 121;
+  static const int ConstructorTypeReference = 122;
   static const int DeclaredIdentifier = 90;
   static const int DefaultFormalParameter = 8;
+  static const int DelimitedFormalParameters = 119;
   static const int DotShorthandConstructorInvocation = 114;
   static const int DotShorthandInvocation = 115;
   static const int DotShorthandPropertyAccess = 113;
@@ -74,7 +77,7 @@ class Tag {
   static const int ImplicitCallReference = 104;
   static const int ImportPrefixReference = 110;
   static const int IndexExpression = 98;
-  static const int InstanceCreationExpression = 25;
+  static const int ConstructorInvocation = 25;
   static const int IntegerLiteralNegative = 73;
   static const int IntegerLiteralNegative1 = 71;
   static const int IntegerLiteralNull = 97;
@@ -91,6 +94,12 @@ class Tag {
   static const int NamedArgument = 60;
   static const int NamedType = 39;
   static const int NullAwareElement = 44;
+  static const int NullAssertionExpression = 123;
+  static const int LogicalNot = 124;
+  static const int LogicalAnd = 125;
+  static const int LogicalOr = 126;
+  static const int IfNull = 127;
+
   static const int NullLiteral = 49;
   static const int ParenthesizedExpression = 53;
   static const int PostfixExpression = 94;

@@ -304,6 +304,7 @@ void Assembler::TsanLoadAcquire(Register dst, Register addr, OperandSize size) {
       ldr(TMP, compiler::Address(
                    THR, kTsanAtomic64LoadRuntimeEntry.OffsetFromThread()));
       break;
+    case kFourBytes:
     case kUnsignedFourBytes:
       ldr(TMP, compiler::Address(
                    THR, kTsanAtomic32LoadRuntimeEntry.OffsetFromThread()));
@@ -317,7 +318,7 @@ void Assembler::TsanLoadAcquire(Register dst, Register addr, OperandSize size) {
   str(TMP, compiler::Address(THR, target::Thread::vm_tag_offset()));
   SetupCSPFromThread(THR);
 
-  MoveRegister(dst, R0);
+  ExtendValue(dst, R0, size);
 
   AddImmediate(SP, FP, -registers.SpillSize());
   PopRegisters(registers);
@@ -1851,7 +1852,7 @@ void LeafRuntimeScope::Call(const RuntimeEntry& entry,
   __ ldr(TMP, compiler::Address(THR, entry.OffsetFromThread()));
   __ str(TMP, compiler::Address(THR, target::Thread::vm_tag_offset()));
   __ Comment("Leaf runtime call: %s", entry.name());
-  __ blr(TMP);
+  __ CallCFunction(TMP);
   __ LoadImmediate(TMP, VMTag::kDartTagId);
   __ str(TMP, compiler::Address(THR, target::Thread::vm_tag_offset()));
   __ SetupCSPFromThread(THR);
@@ -2055,7 +2056,7 @@ void Assembler::TryAllocateObject(intptr_t cid,
   ASSERT(temp_reg != kNoRegister);
   ASSERT(Utils::IsAligned(instance_size,
                           target::ObjectAlignment::kObjectAlignment));
-  if (FLAG_inline_alloc &&
+  if (UseInlineAllocation() &&
       target::Heap::IsAllocatableInNewSpace(instance_size)) {
     // If this allocation is traced, program will jump to failure path
     // (i.e. the allocation stub) which will allocate the object and trace the
@@ -2097,7 +2098,7 @@ void Assembler::TryAllocateArray(intptr_t cid,
                                  Register end_address,
                                  Register temp1,
                                  Register temp2) {
-  if (FLAG_inline_alloc &&
+  if (UseInlineAllocation() &&
       target::Heap::IsAllocatableInNewSpace(instance_size)) {
     // If this allocation is traced, program will jump to failure path
     // (i.e. the allocation stub) which will allocate the object and trace the

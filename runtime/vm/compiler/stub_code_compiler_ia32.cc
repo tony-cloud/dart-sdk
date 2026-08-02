@@ -206,6 +206,13 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
 
   Label body, load_tramp_addr;
   const intptr_t kCallLength = 5;
+  // Padding for ubsan target function pointer validation
+  while (__ CodeSize() <
+         FfiCallbackMetadata::kUbsanTargetValidationPaddingSize) {
+    __ Breakpoint();
+  }
+  ASSERT_EQUAL(FfiCallbackMetadata::kUbsanTargetValidationPaddingSize,
+               __ CodeSize());
   for (intptr_t i = 0; i < FfiCallbackMetadata::NumCallbackTrampolinesPerPage();
        ++i) {
     // The FfiCallbackMetadata table is keyed by the trampoline entry point. So
@@ -221,8 +228,9 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
   }
 
   ASSERT_EQUAL(__ CodeSize(),
-               FfiCallbackMetadata::kNativeCallbackTrampolineSize *
-                   FfiCallbackMetadata::NumCallbackTrampolinesPerPage());
+               FfiCallbackMetadata::kUbsanTargetValidationPaddingSize +
+                   FfiCallbackMetadata::kNativeCallbackTrampolineSize *
+                       FfiCallbackMetadata::NumCallbackTrampolinesPerPage());
 
   const intptr_t shared_stub_start = __ CodeSize();
 
@@ -235,13 +243,14 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
 
   __ Bind(&body);
 
-  // Save THR and EBX which are callee-saved.
+  // Save THR, EBX and EDI which are callee-saved.
   __ pushl(THR);
   __ pushl(EBX);
   __ pushl(ECX);
+  __ pushl(EDI);
 
   // THR & return address
-  COMPILE_ASSERT(FfiCallbackMetadata::kNativeCallbackTrampolineStackDelta == 4);
+  COMPILE_ASSERT(FfiCallbackMetadata::kNativeCallbackTrampolineStackDelta == 6);
 
   // Load the thread, verify the callback ID and exit the safepoint.
   //
@@ -249,7 +258,10 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
   // code size on this shared stub.
   {
     __ EnterFrame(0);
-    __ ReserveAlignedFrameSpace(5 * target::kWordSize);
+    // "8" to keep 16-byte alignment
+    __ ReserveAlignedFrameSpace(8 * target::kWordSize);
+    // SP[6] CallbackMetadata.caller_isolate_group
+    // SP[5] CallbackMetadata.caller_isolate
     // SP[4] CallbackMetadata.epilogue
     // SP[3] CallbackMetadata.is_tail
     // SP[2] CallbackMetadata.entry_point
@@ -269,6 +281,9 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ movl(EAX, Address(SPREG, 2 * target::kWordSize));  // entry_point
     __ movl(ECX, Address(SPREG, 3 * target::kWordSize));  // is_tail
     __ movl(EBX, Address(SPREG, 4 * target::kWordSize));  // epilogue
+    __ movl(EDI, Address(SPREG, 5 * target::kWordSize));  // caller_isolate
+    __ movl(EDX,
+            Address(SPREG, 6 * target::kWordSize));  // caller_isolate_group
 
     __ LeaveFrame();
   }
@@ -284,7 +299,9 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
 
   {
     __ Bind(&call);
+    __ pushl(EDX);
     __ call(EAX);  // entry_point
+    __ popl(ECX);
 
     __ pushl(CallingConventions::kReturnReg);
     __ pushl(CallingConventions::kSecondReturnReg);
@@ -292,8 +309,12 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ movsd(Address(ESP, 0), CallingConventions::kReturnFpuReg);
     // 4 + 4 + 8 = 16 (stack alignment)
 
+    __ pushl(ECX);
+    __ pushl(EDI);
     __ pushl(THR);
     __ call(EBX);  // DLRT_ExitSyncCallback, etc
+    __ popl(EAX);
+    __ popl(EAX);
     __ popl(EAX);
 
     __ movsd(CallingConventions::kReturnFpuReg, Address(ESP, 0));
@@ -301,6 +322,7 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ popl(CallingConventions::kSecondReturnReg);
     __ popl(CallingConventions::kReturnReg);
 
+    __ popl(EDI);
     __ popl(ECX);
     __ popl(EBX);
     __ popl(THR);
@@ -308,7 +330,9 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
   }
   {
     __ Bind(&call_ret4);
+    __ pushl(ECX);
     __ call(EAX);  // entry_point
+    __ popl(ECX);
 
     __ pushl(CallingConventions::kReturnReg);
     __ pushl(CallingConventions::kSecondReturnReg);
@@ -316,8 +340,12 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ movsd(Address(ESP, 0), CallingConventions::kReturnFpuReg);
     // 4 + 4 + 8 = 16 (stack alignment)
 
+    __ pushl(ECX);
+    __ pushl(EDI);
     __ pushl(THR);
     __ call(EBX);  // DLRT_ExitSyncCallback, etc
+    __ popl(EAX);
+    __ popl(EAX);
     __ popl(EAX);
 
     __ movsd(CallingConventions::kReturnFpuReg, Address(ESP, 0));
@@ -325,6 +353,7 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ popl(CallingConventions::kSecondReturnReg);
     __ popl(CallingConventions::kReturnReg);
 
+    __ popl(EDI);
     __ popl(ECX);
     __ popl(EBX);
     __ popl(THR);
@@ -332,8 +361,11 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
   }
   {
     __ Bind(&tail);
+    __ pushl(ECX);
     __ call(EAX);  // entry_point
+    __ popl(ECX);
     __ movl(EAX, EBX);
+    __ popl(EDI);
     __ popl(ECX);
     __ popl(EBX);
     __ popl(THR);
@@ -853,7 +885,7 @@ void StubCodeCompiler::GenerateNoSuchMethodDispatcherStub() {
 // Clobbered:
 //   EBX, EDI
 void StubCodeCompiler::GenerateAllocateArrayStub() {
-  if (!FLAG_use_slow_path && FLAG_inline_alloc) {
+  if (UseInlineAllocation()) {
     Label slow_case;
     // Compute the size to be allocated, it is based on the array length
     // and is computed as:
@@ -1345,7 +1377,7 @@ static void GenerateAllocateContextSpaceStub(Assembler* assembler,
 // Clobbered:
 // EBX, EDX
 void StubCodeCompiler::GenerateAllocateContextStub() {
-  if (!FLAG_use_slow_path && FLAG_inline_alloc) {
+  if (UseInlineAllocation()) {
     Label slow_case;
 
     GenerateAllocateContextSpaceStub(assembler, &slow_case);
@@ -1411,7 +1443,7 @@ void StubCodeCompiler::GenerateAllocateContextStub() {
 // Clobbered:
 //   EBX, ECX, EDX
 void StubCodeCompiler::GenerateCloneContextStub() {
-  if (!FLAG_use_slow_path && FLAG_inline_alloc) {
+  if (UseInlineAllocation()) {
     Label slow_case;
 
     // Load num. variable in the existing context.
@@ -1713,7 +1745,7 @@ void StubCodeCompiler::GenerateAllocationStubForClass(
 
   // AllocateObjectABI::kTypeArgumentsReg: new object type arguments
   //                                       (if is_cls_parameterized).
-  if (!FLAG_use_slow_path && FLAG_inline_alloc &&
+  if (UseInlineAllocation() &&
       target::Heap::IsAllocatableInNewSpace(instance_size) &&
       !target::Class::TraceAllocation(cls)) {
     Label slow_case;
@@ -3286,7 +3318,7 @@ void StubCodeCompiler::GenerateAllocateTypedDataArrayStub(intptr_t cid) {
   COMPILE_ASSERT(AllocateTypedDataArrayABI::kLengthReg == EAX);
   COMPILE_ASSERT(AllocateTypedDataArrayABI::kResultReg == EAX);
 
-  if (!FLAG_use_slow_path && FLAG_inline_alloc) {
+  if (UseInlineAllocation()) {
     // Save length argument for possible runtime call, as
     // EAX is clobbered.
     Label call_runtime;

@@ -187,6 +187,7 @@ class _ParameterInfo {
       (!isUsed || (isNeverPassed || isConstant && !isChecked) && !isWritten);
 
   void observeParameter(Member member, Variable param, SignatureShaker shaker) {
+    if (member.isAbstract) return;
     final Type? type = shaker.typeFlowAnalysis.argumentType(member, param);
 
     // A parameter is considered constant if the TFA has inferred it to have a
@@ -245,7 +246,7 @@ class _Collect extends RecursiveVisitor {
     useDependencies.clear();
     final FunctionNode fun = member.function!;
     for (int i = 0; i < fun.positionalParameters.length; i++) {
-      final Variable param = fun.positionalParameters[i];
+      final PositionalParameter param = fun.positionalParameters[i];
       localParameters[param] = info.ensurePositional(i)
         ..observeParameter(member, param, shaker);
     }
@@ -382,6 +383,7 @@ class _Transform extends RecursiveVisitor {
     _ParameterInfo param,
     Variable variable,
   ) {
+    if (member.isAbstract) return;
     Constant value;
     if (param.isConstant) {
       Type type = shaker.typeFlowAnalysis.argumentType(member, variable)!;
@@ -434,8 +436,8 @@ class _Transform extends RecursiveVisitor {
           eliminateUsedParameter(member, param, variable);
         } else {
           positional.add(variable);
-          variable.initializer = null;
-          variable.hasDeclaredInitializer = false;
+          variable.defaultValue = null;
+          variable.hasDeclaredDefaultValue = false;
         }
       } else {
         unusedParams.add(variable);
@@ -498,7 +500,7 @@ class _Transform extends RecursiveVisitor {
             // The parameter is required, but it is not always passed. This is
             // possible if the method is overridden by a method which makes the
             // parameter optional.
-            assert(variable.initializer == null);
+            assert(variable.defaultValue == null);
             requiredParameterCount++;
           }
         }
@@ -630,21 +632,21 @@ class _Transform extends RecursiveVisitor {
       return exp is VariableGet && unusedParams.contains(exp.variable);
     }
 
-    Map<Expression, Variable> hoisted = {};
+    Map<Expression, CachedExpression> hoisted = {};
     if (hoistingNeeded) {
       if (call is Initializer) {
         final Constructor constructor = call.parent as Constructor;
         forEachArgumentRev(args, info, (Expression arg, _ParameterInfo param) {
           if (mayHaveOrSeeSideEffects(arg) && !isUnusedParam(arg)) {
-            SyntheticVariable argVar = SyntheticVariable(
-              initializer: arg,
+            CachedExpression argCache = CachedExpression.fromValue(
+              value: arg,
               type: arg.getStaticType(typeContext),
               isFinal: true,
             );
             addedInitializers.add(
-              LocalInitializer(argVar)..parent = constructor,
+              argCache.createLocalInitializer()..parent = constructor,
             );
-            hoisted[arg] = argVar;
+            hoisted[arg] = argCache;
           }
         });
       } else {
@@ -652,25 +654,25 @@ class _Transform extends RecursiveVisitor {
         Expression current = call as Expression;
         forEachArgumentRev(args, info, (Expression arg, _ParameterInfo param) {
           if (mayHaveOrSeeSideEffects(arg) && !isUnusedParam(arg)) {
-            SyntheticVariable argVar = SyntheticVariable(
-              initializer: arg,
+            CachedExpression argCache = CachedExpression.fromValue(
+              value: arg,
               type: arg.getStaticType(typeContext),
               isFinal: true,
             );
-            current = Let(argVar, current);
-            hoisted[arg] = argVar;
+            current = argCache.createLet(body: current);
+            hoisted[arg] = argCache;
           }
         });
         if (receiver != null && mayHaveOrSeeSideEffects(receiver)) {
           assert(!isUnusedParam(receiver));
           assert(receiver.parent == call);
-          final SyntheticVariable receiverVar = SyntheticVariable(
-            initializer: receiver,
+          final CachedExpression receiverCache = CachedExpression.fromValue(
+            value: receiver,
             type: receiver.getStaticType(typeContext),
             isFinal: true,
           );
-          current = Let(receiverVar, current);
-          call.replaceChild(receiver, VariableGet(receiverVar));
+          current = receiverCache.createLet(body: current);
+          call.replaceChild(receiver, receiverCache.createRead());
         }
 
         parent.replaceChild(call, current);
@@ -678,9 +680,9 @@ class _Transform extends RecursiveVisitor {
     }
 
     Expression getMaybeHoistedArg(Expression arg) {
-      final variable = hoisted[arg];
-      if (variable == null) return arg;
-      return VariableGet(variable);
+      final cache = hoisted[arg];
+      if (cache == null) return arg;
+      return cache.createRead();
     }
 
     final List<Expression> positional = [];

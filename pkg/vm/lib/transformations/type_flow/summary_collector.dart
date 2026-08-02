@@ -789,49 +789,20 @@ class SummaryCollector extends RecursiveResultVisitor<TypeExpr?> {
         _genericInterfacesInfo,
       );
 
-      // Handle forwarding stubs. We need to check types against the types of
-      // the forwarding stub's target, [member.concreteForwardingStubTarget].
-      FunctionNode useTypesFrom = function;
-      if (member is Procedure &&
-          member.isForwardingStub &&
-          localFunction == null) {
-        final target = member.concreteForwardingStubTarget;
-        if (target != null) {
-          if (target is Field) {
-            useTypesFrom = FunctionNode(
-              null,
-              positionalParameters: [
-                PositionalParameter(
-                  cosmeticName: "value",
-                  type: target.type,
-                  isSynthesized: true,
-                ),
-              ],
-            );
-          } else {
-            useTypesFrom = target.function!;
-          }
-        }
-      }
-
       for (int i = 0; i < function.positionalParameters.length; ++i) {
         final decl = function.positionalParameters[i];
         _declareParameter(
           decl.cosmeticName!,
-          _useTypeCheckForParameter(decl)
-              ? null
-              : useTypesFrom.positionalParameters[i].type,
-          decl.initializer,
+          _useTypeCheckForParameter(decl) ? null : decl.type,
+          decl.defaultValue,
         );
       }
       for (int i = 0; i < function.namedParameters.length; ++i) {
         final decl = function.namedParameters[i];
         _declareParameter(
           decl.parameterName,
-          _useTypeCheckForParameter(decl)
-              ? null
-              : useTypesFrom.namedParameters[i].type,
-          decl.initializer,
+          _useTypeCheckForParameter(decl) ? null : decl.type,
+          decl.defaultValue,
         );
       }
 
@@ -851,19 +822,17 @@ class SummaryCollector extends RecursiveResultVisitor<TypeExpr?> {
       int count = firstParamIndex;
       for (int i = 0; i < function.positionalParameters.length; ++i) {
         final decl = function.positionalParameters[i];
-        final type = useTypesFrom.positionalParameters[i].type;
         TypeExpr param = _summary.statements[count++];
         if (_useTypeCheckForParameter(decl)) {
-          param = _typeCheck(param, type, decl);
+          param = _typeCheck(param, decl.type, decl);
         }
         _declareVariable(decl, param);
       }
       for (int i = 0; i < function.namedParameters.length; ++i) {
         final decl = function.namedParameters[i];
-        final type = useTypesFrom.namedParameters[i].type;
         TypeExpr param = _summary.statements[count++];
         if (_useTypeCheckForParameter(decl)) {
-          param = _typeCheck(param, type, decl);
+          param = _typeCheck(param, decl.type, decl);
         }
         _declareVariable(decl, param);
       }
@@ -1097,7 +1066,7 @@ class SummaryCollector extends RecursiveResultVisitor<TypeExpr?> {
   Parameter _declareParameter(
     String name,
     DartType? type,
-    Expression? initializer, {
+    Expression? defaultValue, {
     bool isReceiver = false,
   }) {
     Type? staticType;
@@ -1108,23 +1077,23 @@ class SummaryCollector extends RecursiveResultVisitor<TypeExpr?> {
     _summary.add(param);
     assert(param.index < _summary.parameterCount);
     if (param.index >= _summary.requiredParameterCount) {
-      if (initializer != null) {
-        if (initializer is ConstantExpression) {
+      if (defaultValue != null) {
+        if (defaultValue is ConstantExpression) {
           param.defaultValue = constantAllocationCollector.typeFor(
-            initializer.constant,
+            defaultValue.constant,
           );
-        } else if (initializer is BasicLiteral ||
-            initializer is SymbolLiteral ||
-            initializer is TypeLiteral) {
-          param.defaultValue = _visit(initializer) as Type;
+        } else if (defaultValue is BasicLiteral ||
+            defaultValue is TypeLiteral) {
+          param.defaultValue = _visit(defaultValue) as Type;
         } else {
-          throw 'Unexpected parameter $name default value ${initializer.runtimeType} $initializer';
+          throw 'Unexpected parameter $name default value '
+              '${defaultValue.runtimeType} $defaultValue';
         }
       } else {
         param.defaultValue = _nullType;
       }
     } else {
-      assert(initializer == null);
+      assert(defaultValue == null);
     }
     return param;
   }
@@ -1390,10 +1359,7 @@ class SummaryCollector extends RecursiveResultVisitor<TypeExpr?> {
         staticResultType = emptyType;
       } else if (target is Procedure) {
         final returnType = target.function.returnType;
-        // TODO(dartbug.com/54200): static type cannot be trusted when
-        // function type is returned.
-        if (returnType is TypeParameterType ||
-            (returnType != staticDartType && returnType is! FunctionType)) {
+        if (returnType is TypeParameterType || returnType != staticDartType) {
           staticResultType = _typesBuilder.fromStaticType(staticDartType, true);
         }
       }
@@ -1961,7 +1927,7 @@ class SummaryCollector extends RecursiveResultVisitor<TypeExpr?> {
 
   @override
   TypeExpr visitLet(Let node) {
-    _declareVariable(node.variable, _visit(node.variable.initializer!));
+    _declareVariable(node.variable, _visit(node.value));
     return _visit(node.body);
   }
 
@@ -2455,9 +2421,9 @@ class SummaryCollector extends RecursiveResultVisitor<TypeExpr?> {
   }
 
   @override
-  TypeExpr visitSymbolLiteral(SymbolLiteral node) {
-    return _staticType(node);
-  }
+  TypeExpr visitSymbolLiteral(SymbolLiteral node) => throw UnsupportedError(
+    "Expected SymbolLiteral to be lowered to SymbolConstant by CFE",
+  );
 
   @override
   TypeExpr visitThisExpression(ThisExpression node) {
@@ -3202,6 +3168,16 @@ class ConstantAllocationCollector implements ConstantVisitor<Type> {
 
   @override
   Type visitSymbolConstant(SymbolConstant constant) {
+    final Class? concreteClass = summaryCollector.target
+        .concreteConstSymbolLiteralClass(
+          summaryCollector._environment.coreTypes,
+        );
+    if (concreteClass != null) {
+      return summaryCollector._entryPointsListener
+          .addAllocatedClass(concreteClass)
+          .cls
+          .constantConcreteType(constant);
+    }
     return summaryCollector._symbolType;
   }
 

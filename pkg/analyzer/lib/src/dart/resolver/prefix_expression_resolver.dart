@@ -40,15 +40,10 @@ class PrefixExpressionResolver {
   void resolve(PrefixExpressionImpl node, {required TypeImpl contextType}) {
     var operator = node.operator.type;
 
-    if (operator == TokenType.BANG) {
-      _resolveNegation(node);
-      return;
-    }
-
-    var operand = node.operand;
+    var operand = node.operand2;
     if (operator.isIncrementOperator) {
       var operandResolution = _resolver.resolveForWrite(
-        node: node.operand,
+        node: node.operand2,
         hasRead: true,
       );
 
@@ -66,7 +61,7 @@ class PrefixExpressionResolver {
         atDynamicTarget: operandResolution.atDynamicTarget,
       );
 
-      _assignmentShared.checkFinalAlreadyAssigned(node.operand);
+      _assignmentShared.checkFinalAlreadyAssigned(node.operand2);
     } else {
       TypeImpl innerContextType;
       if (operator == TokenType.MINUS && operand is IntegerLiteralImpl) {
@@ -155,7 +150,7 @@ class PrefixExpressionResolver {
     TokenType operatorType = operator.type;
     if (operatorType.isUserDefinableOperator ||
         operatorType.isIncrementOperator) {
-      ExpressionImpl operand = node.operand;
+      ExpressionImpl operand = node.operand2;
       String methodName = _getPrefixOperator(node);
       if (operand is ExtensionOverrideImpl) {
         var element = operand.element;
@@ -217,7 +212,7 @@ class PrefixExpressionResolver {
 
   void _resolve2(PrefixExpressionImpl node) {
     TokenType operator = node.operator.type;
-    var readType = node.readType ?? node.operand.staticType;
+    var readType = node.readType ?? node.operand2.staticType;
     if (identical(readType, NeverTypeImpl.instance)) {
       node.recordStaticType(NeverTypeImpl.instance, resolver: _resolver);
     } else {
@@ -231,19 +226,18 @@ class PrefixExpressionResolver {
         var staticMethodElement = node.element;
         staticType = _computeStaticReturnType(staticMethodElement);
       }
-      Expression operand = node.operand;
+      Expression operand = node.operand2;
       if (operand is ExtensionOverride) {
         // No special handling for incremental operators.
       } else if (operator.isIncrementOperator) {
         if (readType!.isDartCoreInt) {
           staticType = _typeProvider.intType;
-        } else {
-          _checkForInvalidAssignmentIncDec(node, staticType);
         }
+        _checkForInvalidAssignmentIncDec(node, staticType);
         if (operand is SimpleIdentifier) {
           var element = operand.element;
           if (element is PromotableElementImpl) {
-            _resolver.flowAnalysis.flow?.storeExpressionInfo(
+            _resolver.flowAnalysis.storeExpressionInfo(
               node,
               _resolver.flowAnalysis.flow?.write(
                 node,
@@ -256,33 +250,6 @@ class PrefixExpressionResolver {
         }
       }
       node.recordStaticType(staticType, resolver: _resolver);
-    }
-  }
-
-  void _resolveNegation(PrefixExpressionImpl node) {
-    var operand = node.operand;
-
-    _resolver.analyzeExpression(
-      operand,
-      SharedTypeSchemaView(_typeProvider.boolType),
-    );
-    operand = _resolver.popRewrite()!;
-    var whyNotPromoted = _resolver.flowAnalysis.flow?.whyNotPromoted(
-      _resolver.flowAnalysis.flow?.getExpressionInfo(operand),
-    );
-
-    _resolver.boolExpressionVerifier.checkForNonBoolNegationExpression(
-      operand,
-      whyNotPromoted: whyNotPromoted,
-    );
-
-    node.recordStaticType(_typeProvider.boolType, resolver: _resolver);
-
-    if (_resolver.flowAnalysis.flow case var flow?) {
-      flow.storeExpressionInfo(
-        node,
-        flow.logicalNot_end(flow.getExpressionInfo(operand)),
-      );
     }
   }
 }

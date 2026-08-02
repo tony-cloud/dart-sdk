@@ -51,8 +51,15 @@ void f(bool x) {
 }
 ''');
 
-    var node = result.findNode.prefix('!x');
+    var node = result.findNode.logicalNot('!x');
     assertResolvedNodeText(node, r'''
+LogicalNot
+  operator: !
+  operand: SimpleIdentifier
+    token: x
+    element: <testLibrary>::@function::f::@formalParameter::x
+    staticType: bool
+  staticType: bool
 PrefixExpression
   operator: !
   operand: SimpleIdentifier
@@ -73,8 +80,15 @@ void f(int x) {
 }
 ''');
 
-    var node = result.findNode.prefix('!x');
+    var node = result.findNode.logicalNot('!x');
     assertResolvedNodeText(node, r'''
+LogicalNot
+  operator: !
+  operand: SimpleIdentifier
+    token: x
+    element: <testLibrary>::@function::f::@formalParameter::x
+    staticType: int
+  staticType: bool
 PrefixExpression
   operator: !
   operand: SimpleIdentifier
@@ -99,8 +113,22 @@ void f(A? a) {
 }
 ''');
 
-    var node = result.findNode.prefix('!a');
+    var node = result.findNode.logicalNot('!a');
     assertResolvedNodeText(node, r'''
+LogicalNot
+  operator: !
+  operand: PropertyAccess
+    target2: SimpleIdentifier
+      token: a
+      element: <testLibrary>::@function::f::@formalParameter::a
+      staticType: A?
+    operator: ?.
+    propertyName: SimpleIdentifier
+      token: foo
+      element: <testLibrary>::@class::A::@getter::foo
+      staticType: bool
+    staticType: bool?
+  staticType: bool
 PrefixExpression
   operator: !
   operand: PropertyAccess
@@ -131,8 +159,14 @@ class A {
 }
 ''');
 
-    var node = result.findNode.singlePrefixExpression;
+    var node = result.findNode.singleLogicalNot;
     assertResolvedNodeText(node, r'''
+LogicalNot
+  operator: !
+  operand: SuperExpression
+    superKeyword: super
+    staticType: A
+  staticType: bool
 PrefixExpression
   operator: !
   operand: SuperExpression
@@ -156,9 +190,9 @@ void f(int x) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: PrefixExpression
+  operand2: PrefixExpression
     operator: ++
-    operand: SimpleIdentifier
+    operand2: SimpleIdentifier
       token: x
       element: <testLibrary>::@function::f::@formalParameter::x
       staticType: null
@@ -192,7 +226,7 @@ void f(A a) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: a
     element: <testLibrary>::@function::f::@formalParameter::a
     staticType: null
@@ -221,13 +255,13 @@ void f(A a) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: IndexExpression
-    target: SimpleIdentifier
+  operand2: IndexExpression
+    target2: SimpleIdentifier
       token: a
       element: <testLibrary>::@function::f::@formalParameter::a
       staticType: A
     leftBracket: [
-    index: IntegerLiteral
+    index2: IntegerLiteral
       literal: 0
       correspondingParameter: <testLibrary>::@class::A::@method::[]=::@formalParameter::index
       staticType: int
@@ -261,12 +295,12 @@ class B extends A {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: IndexExpression
-    target: SuperExpression
+  operand2: IndexExpression
+    target2: SuperExpression
       superKeyword: super
       staticType: B
     leftBracket: [
-    index: IntegerLiteral
+    index2: IntegerLiteral
       literal: 0
       correspondingParameter: <testLibrary>::@class::A::@method::[]=::@formalParameter::index
       staticType: int
@@ -298,12 +332,12 @@ class A {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: IndexExpression
-    target: ThisExpression
+  operand2: IndexExpression
+    target2: ThisExpression
       thisKeyword: this
       staticType: A
     leftBracket: [
-    index: IntegerLiteral
+    index2: IntegerLiteral
       literal: 0
       correspondingParameter: <testLibrary>::@class::A::@method::[]=::@formalParameter::index
       staticType: int
@@ -332,7 +366,7 @@ void f() {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <null>
     staticType: null
@@ -356,7 +390,7 @@ void f(dynamic a) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: -
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: a
     element: <testLibrary>::@function::f::@formalParameter::a
     staticType: dynamic
@@ -382,8 +416,8 @@ void f(A? a) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: -
-  operand: PropertyAccess
-    target: SimpleIdentifier
+  operand2: PropertyAccess
+    target2: SimpleIdentifier
       token: a
       element: <testLibrary>::@function::f::@formalParameter::a
       staticType: A?
@@ -409,7 +443,7 @@ void f(int x) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: -
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <testLibrary>::@function::f::@formalParameter::x
     staticType: int
@@ -435,7 +469,7 @@ void f(Object x) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <testLibrary>::@function::f::@formalParameter::x
     staticType: null
@@ -469,11 +503,11 @@ void f(C c) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: ExtensionOverride
+  operand2: ExtensionOverride
     name: Ext
     argumentList: ArgumentList
       leftParenthesis: (
-      arguments
+      arguments2
         SimpleIdentifier
           token: c
           correspondingParameter: <null>
@@ -505,7 +539,7 @@ void f() {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: int
     element: <null>
     staticType: null
@@ -533,8 +567,8 @@ void f(A? a) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: PropertyAccess
-    target: SimpleIdentifier
+  operand2: PropertyAccess
+    target2: SimpleIdentifier
       token: a
       element: <testLibrary>::@function::f::@formalParameter::a
       staticType: A?
@@ -569,7 +603,7 @@ void f(A a) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: PrefixedIdentifier
+  operand2: PrefixedIdentifier
     prefix: SimpleIdentifier
       token: a
       element: <testLibrary>::@function::f::@formalParameter::a
@@ -605,7 +639,7 @@ void f(A a) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: PrefixedIdentifier
+  operand2: PrefixedIdentifier
     prefix: SimpleIdentifier
       token: a
       element: <testLibrary>::@function::f::@formalParameter::a
@@ -642,7 +676,7 @@ void f() {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: PrefixedIdentifier
+  operand2: PrefixedIdentifier
     prefix: SimpleIdentifier
       token: p
       element: <testLibraryFragment>::@prefix::p
@@ -678,8 +712,19 @@ void f() {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: PropertyAccess
-    target: InstanceCreationExpression
+  operand2: PropertyAccess
+    target2: ConstructorInvocation
+      constructorReference: ConstructorReference2
+        typeReference: ConstructorTypeReference
+          name: A
+          element: <testLibrary>::@class::A
+          type: A
+        element: <testLibrary>::@class::A::@constructor::new
+      argumentList: ArgumentList
+        leftParenthesis: (
+        rightParenthesis: )
+      staticType: A
+    target(v1): InstanceCreationExpression
       constructorName: ConstructorName
         type: NamedType
           name: A
@@ -726,8 +771,8 @@ class B extends A {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: PropertyAccess
-    target: SuperExpression
+  operand2: PropertyAccess
+    target2: SuperExpression
       superKeyword: super
       staticType: B
     operator: .
@@ -761,8 +806,8 @@ class A {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: PropertyAccess
-    target: ThisExpression
+  operand2: PropertyAccess
+    target2: ThisExpression
       thisKeyword: this
       staticType: A
     operator: .
@@ -791,7 +836,7 @@ void f(double x) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <testLibrary>::@function::f::@formalParameter::x
     staticType: null
@@ -815,7 +860,7 @@ void f(int x) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <testLibrary>::@function::f::@formalParameter::x
     staticType: null
@@ -839,7 +884,7 @@ void f(num x) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <testLibrary>::@function::f::@formalParameter::x
     staticType: null
@@ -865,7 +910,7 @@ void f<T extends num>(T x) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <testLibrary>::@function::f::@formalParameter::x
     staticType: null
@@ -896,7 +941,7 @@ class B extends A {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <null>
     staticType: null
@@ -924,7 +969,7 @@ class A {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <null>
     staticType: null
@@ -952,7 +997,7 @@ void f() {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <null>
     staticType: null
@@ -982,7 +1027,7 @@ class A {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <null>
     staticType: null
@@ -1010,7 +1055,7 @@ class A {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SuperExpression
+  operand2: SuperExpression
     superKeyword: super
     staticType: A
   readElement: <null>
@@ -1037,10 +1082,10 @@ void f(Object? x) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SwitchExpression
+  operand2: SwitchExpression
     switchKeyword: switch
     leftParenthesis: (
-    expression: SimpleIdentifier
+    expression2: SimpleIdentifier
       token: x
       element: <testLibrary>::@function::f::@formalParameter::x
       staticType: Object?
@@ -1053,7 +1098,7 @@ PrefixExpression
             name: _
             matchedValueType: Object?
         arrow: =>
-        expression: IntegerLiteral
+        expression2: IntegerLiteral
           literal: 0
           staticType: int
     rightBracket: }
@@ -1082,7 +1127,7 @@ class A {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ++
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <null>
     staticType: null
@@ -1112,8 +1157,8 @@ void f(A? a) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ~
-  operand: PropertyAccess
-    target: SimpleIdentifier
+  operand2: PropertyAccess
+    target2: SimpleIdentifier
       token: a
       element: <testLibrary>::@function::f::@formalParameter::a
       staticType: A?
@@ -1139,7 +1184,7 @@ void f(int x) {
     assertResolvedNodeText(node, r'''
 PrefixExpression
   operator: ~
-  operand: SimpleIdentifier
+  operand2: SimpleIdentifier
     token: x
     element: <testLibrary>::@function::f::@formalParameter::x
     staticType: int

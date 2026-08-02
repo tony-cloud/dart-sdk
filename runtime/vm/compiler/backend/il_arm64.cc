@@ -1438,7 +1438,7 @@ void FfiCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
       ASSERT(branch == R9);
     }
 #endif
-    __ blr(branch);
+    __ CallCFunction(branch);
 
     // Restore the Dart stack pointer.
     __ mov(SP, CSP);
@@ -2731,7 +2731,7 @@ void CreateArrayInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   }
 
   compiler::Label slow_path, done;
-  if (!FLAG_use_slow_path && FLAG_inline_alloc) {
+  if (UseInlineAllocation()) {
     if (compiler->is_optimizing() && !FLAG_precompiled_mode &&
         num_elements()->BindsToConstant() &&
         num_elements()->BoundConstant().IsSmi()) {
@@ -2807,7 +2807,7 @@ void AllocateUninitializedContextInstr::EmitNativeCode(
   compiler->AddSlowPathCode(slow_path);
   intptr_t instance_size = Context::InstanceSize(num_context_variables());
 
-  if (!FLAG_use_slow_path && FLAG_inline_alloc) {
+  if (UseInlineAllocation()) {
     __ TryAllocateArray(kContextCid, instance_size, slow_path->entry_label(),
                         result,  // instance
                         temp0, temp1, temp2);
@@ -4293,17 +4293,16 @@ DEFINE_EMIT(Int32x4Select,
              VRegister mask,
              VRegister trueValue,
              VRegister falseValue,
-             Temp<VRegister> temp)) {
-  // Copy mask.
-  __ vmov(temp, mask);
-  // Invert it.
-  __ vnot(temp, temp);
-  // mask = mask & trueValue.
-  __ vand(mask, mask, trueValue);
-  // temp = temp & falseValue.
-  __ vand(temp, temp, falseValue);
-  // out = mask | temp.
-  __ vorr(out, mask, temp);
+             Temp<VRegister> temp1,
+             Temp<VRegister> temp2)) {
+  // temp2 = ~mask.
+  __ vnot(temp2, mask);
+  // temp1 = mask & trueValue.
+  __ vand(temp1, mask, trueValue);
+  // temp2 = (~mask) & falseValue.
+  __ vand(temp2, temp2, falseValue);
+  // out = temp1 | temp2.
+  __ vorr(out, temp1, temp2);
 }
 
 DEFINE_EMIT(Int32x4WithFlag,

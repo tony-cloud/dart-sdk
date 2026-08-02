@@ -65,8 +65,16 @@ CompilationUnit
                 leftBracket: {
                 statements
                   ExpressionStatement
-                    expression: MethodInvocation
-                      target: InstanceCreationExpression
+                    expression2: MethodInvocation
+                      target2: ConstructorInvocation
+                        keyword: new
+                        constructorReference: ConstructorReference2
+                          typeReference: ConstructorTypeReference
+                            name: C
+                        argumentList: ArgumentList
+                          leftParenthesis: (
+                          rightParenthesis: )
+                      target(v1): InstanceCreationExpression
                         keyword: new
                         constructorName: ConstructorName
                           type: NamedType
@@ -107,9 +115,9 @@ MethodDeclaration
       leftBracket: {
       statements
         ExpressionStatement
-          expression: AwaitExpression
+          expression2: AwaitExpression
             awaitKeyword: await
-            expression: SimpleIdentifier
+            expression2: SimpleIdentifier
               token: x
           semicolon: ;
       rightBracket: }
@@ -172,15 +180,15 @@ MethodDeclaration
       statements
         ReturnStatement
           returnKeyword: return
-          expression: BinaryExpression
-            leftOperand: AwaitExpression
+          expression2: BinaryExpression
+            leftOperand2: AwaitExpression
               awaitKeyword: await
-              expression: SimpleIdentifier
+              expression2: SimpleIdentifier
                 token: x
             operator: +
-            rightOperand: AwaitExpression
+            rightOperand2: AwaitExpression
               awaitKeyword: await
-              expression: SimpleIdentifier
+              expression2: SimpleIdentifier
                 token: y
           semicolon: ;
       rightBracket: }
@@ -209,9 +217,9 @@ MethodDeclaration
       leftBracket: {
       statements
         ExpressionStatement
-          expression: AwaitExpression
+          expression2: AwaitExpression
             awaitKeyword: await
-            expression: MethodInvocation
+            expression2: MethodInvocation
               methodName: SimpleIdentifier
                 token: returnsFuture
               argumentList: ArgumentList
@@ -249,9 +257,9 @@ MethodDeclaration
         IfStatement
           ifKeyword: if
           leftParenthesis: (
-          expression: AwaitExpression
+          expression2: AwaitExpression
             awaitKeyword: await
-            expression: MethodInvocation
+            expression2: MethodInvocation
               methodName: SimpleIdentifier
                 token: returnsFuture
               argumentList: ArgumentList
@@ -265,7 +273,17 @@ MethodDeclaration
           elseStatement: IfStatement
             ifKeyword: if
             leftParenthesis: (
-            expression: PrefixExpression
+            expression2: LogicalNot
+              operator: !
+              operand: AwaitExpression
+                awaitKeyword: await
+                expression2: MethodInvocation
+                  methodName: SimpleIdentifier
+                    token: returnsFuture
+                  argumentList: ArgumentList
+                    leftParenthesis: (
+                    rightParenthesis: )
+            expression(v1): PrefixExpression
               operator: !
               operand: AwaitExpression
                 awaitKeyword: await
@@ -305,15 +323,15 @@ MethodDeclaration
       leftBracket: {
       statements
         ExpressionStatement
-          expression: MethodInvocation
+          expression2: MethodInvocation
             methodName: SimpleIdentifier
               token: print
             argumentList: ArgumentList
               leftParenthesis: (
-              arguments
+              arguments2
                 AwaitExpression
                   awaitKeyword: await
-                  expression: MethodInvocation
+                  expression2: MethodInvocation
                     methodName: SimpleIdentifier
                       token: returnsFuture
                     argumentList: ArgumentList
@@ -351,15 +369,15 @@ MethodDeclaration
       leftBracket: {
       statements
         ExpressionStatement
-          expression: MethodInvocation
+          expression2: MethodInvocation
             methodName: SimpleIdentifier
               token: xor
             argumentList: ArgumentList
               leftParenthesis: (
-              arguments
+              arguments2
                 AwaitExpression
                   awaitKeyword: await
-                  expression: MethodInvocation
+                  expression2: MethodInvocation
                     methodName: SimpleIdentifier
                       token: returnsFuture
                     argumentList: ArgumentList
@@ -367,7 +385,7 @@ MethodDeclaration
                       rightParenthesis: )
                 AwaitExpression
                   awaitKeyword: await
-                  expression: MethodInvocation
+                  expression2: MethodInvocation
                     methodName: SimpleIdentifier
                       token: returnsFuture
                     argumentList: ArgumentList
@@ -375,7 +393,7 @@ MethodDeclaration
                       rightParenthesis: )
                 AwaitExpression
                   awaitKeyword: await
-                  expression: MethodInvocation
+                  expression2: MethodInvocation
                     methodName: SimpleIdentifier
                       token: returnsFuture
                     argumentList: ArgumentList
@@ -411,19 +429,19 @@ MethodDeclaration
       leftBracket: {
       statements
         ExpressionStatement
-          expression: BinaryExpression
-            leftOperand: AwaitExpression
+          expression2: BinaryExpression
+            leftOperand2: AwaitExpression
               awaitKeyword: await
-              expression: MethodInvocation
+              expression2: MethodInvocation
                 methodName: SimpleIdentifier
                   token: returnsFuture
                 argumentList: ArgumentList
                   leftParenthesis: (
                   rightParenthesis: )
             operator: ^
-            rightOperand: AwaitExpression
+            rightOperand2: AwaitExpression
               awaitKeyword: await
-              expression: MethodInvocation
+              expression2: MethodInvocation
                 methodName: SimpleIdentifier
                   token: returnsFuture
                 argumentList: ArgumentList
@@ -458,25 +476,25 @@ MethodDeclaration
       leftBracket: {
       statements
         ExpressionStatement
-          expression: MethodInvocation
+          expression2: MethodInvocation
             methodName: SimpleIdentifier
               token: print
             argumentList: ArgumentList
               leftParenthesis: (
-              arguments
+              arguments2
                 BinaryExpression
-                  leftOperand: AwaitExpression
+                  leftOperand2: AwaitExpression
                     awaitKeyword: await
-                    expression: MethodInvocation
+                    expression2: MethodInvocation
                       methodName: SimpleIdentifier
                         token: returnsFuture
                       argumentList: ArgumentList
                         leftParenthesis: (
                         rightParenthesis: )
                   operator: ^
-                  rightOperand: AwaitExpression
+                  rightOperand2: AwaitExpression
                     awaitKeyword: await
-                    expression: MethodInvocation
+                    expression2: MethodInvocation
                       methodName: SimpleIdentifier
                         token: returnsFuture
                       argumentList: ArgumentList
@@ -504,6 +522,14 @@ ConstructorDeclaration
     token: Foo
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        type: NamedType
+          name: dynamic
+        name: a
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       type: NamedType
         name: dynamic
@@ -515,20 +541,20 @@ ConstructorDeclaration
       fieldName: SimpleIdentifier
         token: x
       equals: =
-      expression: ConditionalExpression
-        condition: IsExpression
-          expression: SimpleIdentifier
+      expression2: ConditionalExpression
+        condition2: IsExpression
+          expression2: SimpleIdentifier
             token: a
           isOperator: is
           type: NamedType
             name: int
         question: ?
-        thenExpression: SetOrMapLiteral
+        thenExpression2: SetOrMapLiteral
           leftBracket: {
           rightBracket: }
           isMap: false
         colon: :
-        elseExpression: ListLiteral
+        elseExpression2: ListLiteral
           leftBracket: [
           rightBracket: ]
   body: BlockFunctionBody
@@ -556,6 +582,18 @@ CompilationUnit
       functionExpression: FunctionExpression
         parameters: FormalParameterList
           leftParenthesis: (
+          requiredPositionalFormalParameters
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: a
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: b
+          rightParenthesis: )
+        parameters(v1): FormalParameterList
+          leftParenthesis: (
           parameter: RegularFormalParameter
             type: NamedType
               name: dynamic
@@ -575,8 +613,8 @@ CompilationUnit
           VariableDeclaration
             name: x
             equals: =
-            initializer: IsExpression
-              expression: SimpleIdentifier
+            initializer2: IsExpression
+              expression2: SimpleIdentifier
                 token: a
               isOperator: is
               type: NamedType
@@ -584,8 +622,8 @@ CompilationUnit
           VariableDeclaration
             name: y
             equals: =
-            initializer: IsExpression
-              expression: SimpleIdentifier
+            initializer2: IsExpression
+              expression2: SimpleIdentifier
                 token: b
               isOperator: is
               type: NamedType
@@ -613,6 +651,18 @@ CompilationUnit
       functionExpression: FunctionExpression
         parameters: FormalParameterList
           leftParenthesis: (
+          requiredPositionalFormalParameters
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: a
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: b
+          rightParenthesis: )
+        parameters(v1): FormalParameterList
+          leftParenthesis: (
           parameter: RegularFormalParameter
             type: NamedType
               name: dynamic
@@ -632,8 +682,8 @@ CompilationUnit
           VariableDeclaration
             name: x
             equals: =
-            initializer: IsExpression
-              expression: SimpleIdentifier
+            initializer2: IsExpression
+              expression2: SimpleIdentifier
                 token: a
               isOperator: is
               type: NamedType
@@ -642,8 +692,8 @@ CompilationUnit
           VariableDeclaration
             name: y
             equals: =
-            initializer: IsExpression
-              expression: SimpleIdentifier
+            initializer2: IsExpression
+              expression2: SimpleIdentifier
                 token: b
               isOperator: is
               type: NamedType
@@ -674,6 +724,18 @@ CompilationUnit
       functionExpression: FunctionExpression
         parameters: FormalParameterList
           leftParenthesis: (
+          requiredPositionalFormalParameters
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: a
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: b
+          rightParenthesis: )
+        parameters(v1): FormalParameterList
+          leftParenthesis: (
           parameter: RegularFormalParameter
             type: NamedType
               name: dynamic
@@ -693,8 +755,8 @@ CompilationUnit
           VariableDeclaration
             name: x
             equals: =
-            initializer: IsExpression
-              expression: SimpleIdentifier
+            initializer2: IsExpression
+              expression2: SimpleIdentifier
                 token: a
               isOperator: is
               type: NamedType
@@ -702,8 +764,8 @@ CompilationUnit
           VariableDeclaration
             name: y
             equals: =
-            initializer: IsExpression
-              expression: SimpleIdentifier
+            initializer2: IsExpression
+              expression2: SimpleIdentifier
                 token: b
               isOperator: is
               type: NamedType
@@ -735,6 +797,18 @@ CompilationUnit
       functionExpression: FunctionExpression
         parameters: FormalParameterList
           leftParenthesis: (
+          requiredPositionalFormalParameters
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: a
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: b
+          rightParenthesis: )
+        parameters(v1): FormalParameterList
+          leftParenthesis: (
           parameter: RegularFormalParameter
             type: NamedType
               name: dynamic
@@ -754,8 +828,8 @@ CompilationUnit
           VariableDeclaration
             name: x
             equals: =
-            initializer: IsExpression
-              expression: SimpleIdentifier
+            initializer2: IsExpression
+              expression2: SimpleIdentifier
                 token: a
               isOperator: is
               type: NamedType
@@ -764,8 +838,8 @@ CompilationUnit
           VariableDeclaration
             name: y
             equals: =
-            initializer: IsExpression
-              expression: SimpleIdentifier
+            initializer2: IsExpression
+              expression2: SimpleIdentifier
                 token: b
               isOperator: is
               type: NamedType
@@ -792,6 +866,18 @@ CompilationUnit
       functionExpression: FunctionExpression
         parameters: FormalParameterList
           leftParenthesis: (
+          requiredPositionalFormalParameters
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: a
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: b
+          rightParenthesis: )
+        parameters(v1): FormalParameterList
+          leftParenthesis: (
           parameter: RegularFormalParameter
             type: NamedType
               name: dynamic
@@ -811,8 +897,8 @@ CompilationUnit
           VariableDeclaration
             name: x
             equals: =
-            initializer: AsExpression
-              expression: SimpleIdentifier
+            initializer2: AsExpression
+              expression2: SimpleIdentifier
                 token: a
               asOperator: as
               type: NamedType
@@ -820,8 +906,8 @@ CompilationUnit
           VariableDeclaration
             name: y
             equals: =
-            initializer: AsExpression
-              expression: SimpleIdentifier
+            initializer2: AsExpression
+              expression2: SimpleIdentifier
                 token: b
               asOperator: as
               type: NamedType
@@ -849,6 +935,18 @@ CompilationUnit
       functionExpression: FunctionExpression
         parameters: FormalParameterList
           leftParenthesis: (
+          requiredPositionalFormalParameters
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: a
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: b
+          rightParenthesis: )
+        parameters(v1): FormalParameterList
+          leftParenthesis: (
           parameter: RegularFormalParameter
             type: NamedType
               name: dynamic
@@ -868,8 +966,8 @@ CompilationUnit
           VariableDeclaration
             name: x
             equals: =
-            initializer: AsExpression
-              expression: SimpleIdentifier
+            initializer2: AsExpression
+              expression2: SimpleIdentifier
                 token: a
               asOperator: as
               type: NamedType
@@ -878,8 +976,8 @@ CompilationUnit
           VariableDeclaration
             name: y
             equals: =
-            initializer: AsExpression
-              expression: SimpleIdentifier
+            initializer2: AsExpression
+              expression2: SimpleIdentifier
                 token: b
               asOperator: as
               type: NamedType
@@ -910,6 +1008,18 @@ CompilationUnit
       functionExpression: FunctionExpression
         parameters: FormalParameterList
           leftParenthesis: (
+          requiredPositionalFormalParameters
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: a
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: b
+          rightParenthesis: )
+        parameters(v1): FormalParameterList
+          leftParenthesis: (
           parameter: RegularFormalParameter
             type: NamedType
               name: dynamic
@@ -929,8 +1039,8 @@ CompilationUnit
           VariableDeclaration
             name: x
             equals: =
-            initializer: AsExpression
-              expression: SimpleIdentifier
+            initializer2: AsExpression
+              expression2: SimpleIdentifier
                 token: a
               asOperator: as
               type: NamedType
@@ -938,8 +1048,8 @@ CompilationUnit
           VariableDeclaration
             name: y
             equals: =
-            initializer: AsExpression
-              expression: SimpleIdentifier
+            initializer2: AsExpression
+              expression2: SimpleIdentifier
                 token: b
               asOperator: as
               type: NamedType
@@ -971,6 +1081,18 @@ CompilationUnit
       functionExpression: FunctionExpression
         parameters: FormalParameterList
           leftParenthesis: (
+          requiredPositionalFormalParameters
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: a
+            RegularFormalParameter
+              type: NamedType
+                name: dynamic
+              name: b
+          rightParenthesis: )
+        parameters(v1): FormalParameterList
+          leftParenthesis: (
           parameter: RegularFormalParameter
             type: NamedType
               name: dynamic
@@ -990,8 +1112,8 @@ CompilationUnit
           VariableDeclaration
             name: x
             equals: =
-            initializer: AsExpression
-              expression: SimpleIdentifier
+            initializer2: AsExpression
+              expression2: SimpleIdentifier
                 token: a
               asOperator: as
               type: NamedType
@@ -1000,8 +1122,8 @@ CompilationUnit
           VariableDeclaration
             name: y
             equals: =
-            initializer: AsExpression
-              expression: SimpleIdentifier
+            initializer2: AsExpression
+              expression2: SimpleIdentifier
                 token: b
               asOperator: as
               type: NamedType
@@ -1046,6 +1168,18 @@ ConstructorDeclaration
     token: C
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        name: _
+      RegularFormalParameter
+        name: _$
+      FieldFormalParameter
+        thisKeyword: this
+        period: .
+        name: __
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       name: _
     parameter: RegularFormalParameter
@@ -1061,11 +1195,11 @@ ConstructorDeclaration
       fieldName: SimpleIdentifier
         token: _a
       equals: =
-      expression: BinaryExpression
-        leftOperand: SimpleIdentifier
+      expression2: BinaryExpression
+        leftOperand2: SimpleIdentifier
           token: _
         operator: +
-        rightOperand: SimpleIdentifier
+        rightOperand2: SimpleIdentifier
           token: _$
   body: BlockFunctionBody
     block: Block
@@ -1122,7 +1256,30 @@ FieldDeclaration
       VariableDeclaration
         name: _allComponents
         equals: =
-        initializer: InstanceCreationExpression
+        initializer2: ConstructorInvocation
+          keyword: new
+          constructorReference: ConstructorReference2
+            typeReference: ConstructorTypeReference
+              name: List
+              typeArguments: TypeArgumentList
+                leftBracket: <
+                arguments
+                  NamedType
+                    name: List
+                    typeArguments: TypeArgumentList
+                      leftBracket: <
+                      arguments
+                        NamedType
+                          name: N
+                      rightBracket: >
+                rightBracket: >
+            selector: ConstructorSelector
+              period: .
+              name2: empty
+          argumentList: ArgumentList
+            leftParenthesis: (
+            rightParenthesis: )
+        initializer(v1): InstanceCreationExpression
           keyword: new
           constructorName: ConstructorName
             type: NamedType
@@ -1164,12 +1321,26 @@ FieldDeclaration
         functionKeyword: Function
         parameters: FormalParameterList
           leftParenthesis: (
+          requiredPositionalFormalParameters
+            RegularFormalParameter
+              type: NamedType
+                name: int
+          rightParenthesis: )
+        parameters(v1): FormalParameterList
+          leftParenthesis: (
           parameter: RegularFormalParameter
             type: NamedType
               name: int
           rightParenthesis: )
       functionKeyword: Function
       parameters: FormalParameterList
+        leftParenthesis: (
+        requiredPositionalFormalParameters
+          RegularFormalParameter
+            type: NamedType
+              name: String
+        rightParenthesis: )
+      parameters(v1): FormalParameterList
         leftParenthesis: (
         parameter: RegularFormalParameter
           type: NamedType
@@ -1195,6 +1366,16 @@ FieldDeclaration
     type: GenericFunctionType
       functionKeyword: Function
       parameters: FormalParameterList
+        leftParenthesis: (
+        requiredPositionalFormalParameters
+          RegularFormalParameter
+            type: NamedType
+              name: int
+          RegularFormalParameter
+            type: NamedType
+              name: String
+        rightParenthesis: )
+      parameters(v1): FormalParameterList
         leftParenthesis: (
         parameter: RegularFormalParameter
           type: NamedType
@@ -1283,9 +1464,9 @@ FieldDeclaration
       VariableDeclaration
         name: operator
         equals: =
-        initializer: ParenthesizedExpression
+        initializer2: ParenthesizedExpression
           leftParenthesis: (
-          expression: IntegerLiteral
+          expression2: IntegerLiteral
             literal: 5
           rightParenthesis: )
   semicolon: ;
@@ -1410,7 +1591,7 @@ FieldDeclaration
       VariableDeclaration
         name: f
         equals: =
-        initializer: IntegerLiteral
+        initializer2: IntegerLiteral
           literal: 0
   semicolon: ;
 ''');
@@ -1430,6 +1611,13 @@ MethodDeclaration
       name: int
     functionKeyword: Function
     parameters: FormalParameterList
+      leftParenthesis: (
+      requiredPositionalFormalParameters
+        RegularFormalParameter
+          type: NamedType
+            name: int
+      rightParenthesis: )
+    parameters(v1): FormalParameterList
       leftParenthesis: (
       parameter: RegularFormalParameter
         type: NamedType
@@ -1498,6 +1686,14 @@ MethodDeclaration
   name: m
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        type: NamedType
+          name: int
+        name: a
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       type: NamedType
         name: int
@@ -1552,6 +1748,14 @@ MethodDeclaration
     rightBracket: >
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        type: NamedType
+          name: T
+        name: p
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       type: NamedType
         name: T
@@ -1559,7 +1763,7 @@ MethodDeclaration
     rightParenthesis: )
   body: ExpressionFunctionBody
     functionDefinition: =>
-    expression: NullLiteral
+    expression2: NullLiteral
       literal: null
     semicolon: ;
 ''');
@@ -1658,7 +1862,7 @@ MethodDeclaration
     rightParenthesis: )
   body: ExpressionFunctionBody
     functionDefinition: =>
-    expression: NullLiteral
+    expression2: NullLiteral
       literal: null
     semicolon: ;
 ''');
@@ -1759,7 +1963,7 @@ MethodDeclaration
   name: C
   body: ExpressionFunctionBody
     functionDefinition: =>
-    expression: IntegerLiteral
+    expression2: IntegerLiteral
       literal: 0
     semicolon: ;
 ''');
@@ -1828,6 +2032,26 @@ MethodDeclaration
       rightBracket: >
     parameters: FormalParameterList
       leftParenthesis: (
+      requiredPositionalFormalParameters
+        RegularFormalParameter
+          type: NamedType
+            importPrefix: ImportPrefixReference
+              name: core
+              period: .
+            name: List
+            typeArguments: TypeArgumentList
+              leftBracket: <
+              arguments
+                NamedType
+                  importPrefix: ImportPrefixReference
+                    name: core
+                    period: .
+                  name: int
+              rightBracket: >
+          name: x
+      rightParenthesis: )
+    parameters(v1): FormalParameterList
+      leftParenthesis: (
       parameter: RegularFormalParameter
         type: NamedType
           importPrefix: ImportPrefixReference
@@ -1851,7 +2075,7 @@ MethodDeclaration
     rightParenthesis: )
   body: ExpressionFunctionBody
     functionDefinition: =>
-    expression: NullLiteral
+    expression2: NullLiteral
       literal: null
     semicolon: ;
 ''');
@@ -1878,6 +2102,26 @@ MethodDeclaration
       rightBracket: >
     parameters: FormalParameterList
       leftParenthesis: (
+      requiredPositionalFormalParameters
+        RegularFormalParameter
+          type: NamedType
+            importPrefix: ImportPrefixReference
+              name: core
+              period: .
+            name: List
+            typeArguments: TypeArgumentList
+              leftBracket: <
+              arguments
+                NamedType
+                  importPrefix: ImportPrefixReference
+                    name: core
+                    period: .
+                  name: int
+              rightBracket: >
+          name: x
+      rightParenthesis: )
+    parameters(v1): FormalParameterList
+      leftParenthesis: (
       parameter: RegularFormalParameter
         type: NamedType
           importPrefix: ImportPrefixReference
@@ -1901,7 +2145,7 @@ MethodDeclaration
     rightParenthesis: )
   body: ExpressionFunctionBody
     functionDefinition: =>
-    expression: NullLiteral
+    expression2: NullLiteral
       literal: null
     semicolon: ;
 ''');
@@ -1986,6 +2230,13 @@ MethodDeclaration
     functionKeyword: Function
     parameters: FormalParameterList
       leftParenthesis: (
+      requiredPositionalFormalParameters
+        RegularFormalParameter
+          type: NamedType
+            name: String
+      rightParenthesis: )
+    parameters(v1): FormalParameterList
+      leftParenthesis: (
       parameter: RegularFormalParameter
         type: NamedType
           name: String
@@ -2063,6 +2314,12 @@ MethodDeclaration
   propertyKeyword: set
   name: C
   parameters: FormalParameterList
+    leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        name: _
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
     leftParenthesis: (
     parameter: RegularFormalParameter
       name: _
@@ -2197,6 +2454,18 @@ MethodDeclaration
   name: f
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        type: NamedType
+          name: int
+        name: x
+      RegularFormalParameter
+        type: NamedType
+          name: int
+        name: y
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       type: NamedType
         name: int
@@ -2232,6 +2501,19 @@ MethodDeclaration
   operatorKeyword: operator
   name: +
   parameters: FormalParameterList
+    leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        type: GenericFunctionType
+          returnType: NamedType
+            name: int
+          functionKeyword: Function
+          parameters: FormalParameterList
+            leftParenthesis: (
+            rightParenthesis: )
+        name: f
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
     leftParenthesis: (
     parameter: RegularFormalParameter
       type: GenericFunctionType
@@ -2274,12 +2556,18 @@ CompilationUnit
             name: >>>
             parameters: FormalParameterList
               leftParenthesis: (
+              requiredPositionalFormalParameters
+                RegularFormalParameter
+                  name: other
+              rightParenthesis: )
+            parameters(v1): FormalParameterList
+              leftParenthesis: (
               parameter: RegularFormalParameter
                 name: other
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression: BooleanLiteral
+              expression2: BooleanLiteral
                 literal: false
               semicolon: ;
         rightBracket: }
@@ -2309,6 +2597,14 @@ CompilationUnit
             name: foo
             parameters: FormalParameterList
               leftParenthesis: (
+              requiredPositionalFormalParameters
+                RegularFormalParameter
+                  type: NamedType
+                    name: int
+                  name: value
+              rightParenthesis: )
+            parameters(v1): FormalParameterList
+              leftParenthesis: (
               parameter: RegularFormalParameter
                 type: NamedType
                   name: int
@@ -2319,11 +2615,11 @@ CompilationUnit
                 leftBracket: {
                 statements
                   ExpressionStatement
-                    expression: AssignmentExpression
-                      leftHandSide: SimpleIdentifier
+                    expression2: AssignmentExpression
+                      leftHandSide2: SimpleIdentifier
                         token: x
                       operator: >>>=
-                      rightHandSide: SimpleIdentifier
+                      rightHandSide2: SimpleIdentifier
                         token: value
                     semicolon: ;
                 rightBracket: }
@@ -2345,6 +2641,14 @@ MethodDeclaration
   operatorKeyword: operator
   name: []
   parameters: FormalParameterList
+    leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        type: NamedType
+          name: int
+        name: i
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
     leftParenthesis: (
     parameter: RegularFormalParameter
       type: NamedType
@@ -2373,6 +2677,14 @@ MethodDeclaration
   name: []=
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        type: NamedType
+          name: int
+        name: i
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       type: NamedType
         name: int
@@ -2400,12 +2712,18 @@ MethodDeclaration
   name: <
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        name: other
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       name: other
     rightParenthesis: )
   body: ExpressionFunctionBody
     functionDefinition: =>
-    expression: BooleanLiteral
+    expression2: BooleanLiteral
       literal: false
     semicolon: ;
 ''');
@@ -2428,6 +2746,17 @@ ConstructorDeclaration
     leftParenthesis: (
     rightParenthesis: )
   separator: =
+  factoryRedirectionTarget: ConstructorReference2
+    typeReference: ConstructorTypeReference
+      importPrefix: ImportPrefixReference
+        name: prefix
+        period: .
+      name: B
+    selector: ConstructorSelector
+      period: .
+      name2: foo
+  body: EmptyFunctionBody
+    semicolon: ;
   redirectedConstructor: ConstructorName
     type: NamedType
       importPrefix: ImportPrefixReference
@@ -2437,8 +2766,6 @@ ConstructorDeclaration
     period: .
     name: SimpleIdentifier
       token: foo
-  body: EmptyFunctionBody
-    semicolon: ;
 ''');
   }
 
@@ -2459,9 +2786,9 @@ ConstructorDeclaration
     rightParenthesis: )
   body: ExpressionFunctionBody
     functionDefinition: =>
-    expression: ThrowExpression
+    expression2: ThrowExpression
       throwKeyword: throw
-      expression: IntegerLiteral
+      expression2: IntegerLiteral
         literal: 0
     semicolon: ;
 ''');
@@ -2483,11 +2810,14 @@ ConstructorDeclaration
     leftParenthesis: (
     rightParenthesis: )
   separator: =
-  redirectedConstructor: ConstructorName
-    type: NamedType
+  factoryRedirectionTarget: ConstructorReference2
+    typeReference: ConstructorTypeReference
       name: B
   body: EmptyFunctionBody
     semicolon: ;
+  redirectedConstructor: ConstructorName
+    type: NamedType
+      name: B
 ''');
   }
 
@@ -2504,6 +2834,14 @@ ConstructorDeclaration
     token: C
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        name: x
+      RegularFormalParameter
+        name: y
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       name: x
     parameter: RegularFormalParameter
@@ -2515,23 +2853,23 @@ ConstructorDeclaration
       fieldName: SimpleIdentifier
         token: _x
       equals: =
-      expression: SimpleIdentifier
+      expression2: SimpleIdentifier
         token: x
     AssertInitializer
       assertKeyword: assert
       leftParenthesis: (
-      condition: BinaryExpression
-        leftOperand: SimpleIdentifier
+      condition2: BinaryExpression
+        leftOperand2: SimpleIdentifier
           token: x
         operator: <
-        rightOperand: SimpleIdentifier
+        rightOperand2: SimpleIdentifier
           token: y
       rightParenthesis: )
     ConstructorFieldInitializer
       fieldName: SimpleIdentifier
         token: _y
       equals: =
-      expression: SimpleIdentifier
+      expression2: SimpleIdentifier
         token: y
   body: EmptyFunctionBody
     semicolon: ;
@@ -2579,9 +2917,9 @@ ConstructorDeclaration
     rightParenthesis: )
   body: ExpressionFunctionBody
     functionDefinition: =>
-    expression: ThrowExpression
+    expression2: ThrowExpression
       throwKeyword: throw
-      expression: IntegerLiteral
+      expression2: IntegerLiteral
         literal: 0
     semicolon: ;
 ''');
@@ -2600,6 +2938,14 @@ ConstructorDeclaration
     token: C
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        name: x
+      RegularFormalParameter
+        name: y
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       name: x
     parameter: RegularFormalParameter
@@ -2611,7 +2957,7 @@ ConstructorDeclaration
       fieldName: SimpleIdentifier
         token: _x
       equals: =
-      expression: SimpleIdentifier
+      expression2: SimpleIdentifier
         token: x
     ConstructorFieldInitializer
       thisKeyword: this
@@ -2619,7 +2965,7 @@ ConstructorDeclaration
       fieldName: SimpleIdentifier
         token: _y
       equals: =
-      expression: SimpleIdentifier
+      expression2: SimpleIdentifier
         token: y
   body: EmptyFunctionBody
     semicolon: ;
@@ -2714,18 +3060,21 @@ CompilationUnit
             initializers
               SuperConstructorInvocation
                 superKeyword: super
-                period: .
-                constructorName: SimpleIdentifier
-                  token: <empty> <synthetic>
+                constructorSelector: ConstructorSelector
+                  period: .
+                  name2: <empty> <synthetic>
                 argumentList: ArgumentList
                   leftParenthesis: ( <synthetic>
                   rightParenthesis: ) <synthetic>
+                period: .
+                constructorName: SimpleIdentifier
+                  token: <empty> <synthetic>
             body: BlockFunctionBody
               block: Block
                 leftBracket: {
                 statements
                   ExpressionStatement
-                    expression: SimpleIdentifier
+                    expression2: SimpleIdentifier
                       token: n
                     semicolon: ; <synthetic>
                 rightBracket: } <synthetic>
@@ -2868,9 +3217,9 @@ ConstructorDeclaration
       fieldName: SimpleIdentifier
         token: a
       equals: =
-      expression: ParenthesizedExpression
+      expression2: ParenthesizedExpression
         leftParenthesis: (
-        expression: SimpleIdentifier
+        expression2: SimpleIdentifier
           token: b
         rightParenthesis: )
   body: BlockFunctionBody
@@ -2895,7 +3244,7 @@ ConstructorFieldInitializer
   fieldName: SimpleIdentifier
     token: a
   equals: =
-  expression: SimpleIdentifier
+  expression2: SimpleIdentifier
     token: b
 ''');
   }
@@ -2913,7 +3262,7 @@ ConstructorFieldInitializer
   fieldName: SimpleIdentifier
     token: a
   equals: =
-  expression: SimpleIdentifier
+  expression2: SimpleIdentifier
     token: b
 ''');
   }
@@ -3030,7 +3379,7 @@ FieldDeclaration
       VariableDeclaration
         name: f
         equals: =
-        initializer: IntegerLiteral
+        initializer2: IntegerLiteral
           literal: 0
   semicolon: ;
 ''');
@@ -3213,7 +3562,7 @@ FieldDeclaration
       VariableDeclaration
         name: f
         equals: =
-        initializer: IntegerLiteral
+        initializer2: IntegerLiteral
           literal: 0
   semicolon: ;
 ''');
@@ -3382,7 +3731,7 @@ MethodDeclaration
   name: a
   body: ExpressionFunctionBody
     functionDefinition: =>
-    expression: IntegerLiteral
+    expression2: IntegerLiteral
       literal: 42
     semicolon: ;
 ''');
@@ -3409,14 +3758,14 @@ FieldDeclaration
       VariableDeclaration
         name: a
         equals: =
-        initializer: IntegerLiteral
+        initializer2: IntegerLiteral
           literal: 1
       VariableDeclaration
         name: b
       VariableDeclaration
         name: c
         equals: =
-        initializer: IntegerLiteral
+        initializer2: IntegerLiteral
           literal: 3
   semicolon: ;
 ''');
@@ -3442,14 +3791,14 @@ FieldDeclaration
       VariableDeclaration
         name: a
         equals: =
-        initializer: IntegerLiteral
+        initializer2: IntegerLiteral
           literal: 1
       VariableDeclaration
         name: b
       VariableDeclaration
         name: c
         equals: =
-        initializer: IntegerLiteral
+        initializer2: IntegerLiteral
           literal: 3
   semicolon: ;
 ''');
@@ -3473,6 +3822,14 @@ MethodDeclaration
   operatorKeyword: operator
   name: +
   parameters: FormalParameterList
+    leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        type: NamedType
+          name: A
+        name: a
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
     leftParenthesis: (
     parameter: RegularFormalParameter
       type: NamedType
@@ -3505,6 +3862,13 @@ MethodDeclaration
   name: a
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        constFinalOrVarKeyword: var
+        name: x
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       constFinalOrVarKeyword: var
       name: x
@@ -3536,6 +3900,13 @@ MethodDeclaration
   name: a
   parameters: FormalParameterList
     leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        constFinalOrVarKeyword: var
+        name: x
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
+    leftParenthesis: (
     parameter: RegularFormalParameter
       constFinalOrVarKeyword: var
       name: x
@@ -3563,6 +3934,17 @@ MethodDeclaration
     name: int
   name: f
   parameters: FormalParameterList
+    leftParenthesis: (
+    requiredPositionalFormalParameters
+      RegularFormalParameter
+        documentationComment: Comment
+          tokens
+            /// Doc
+        type: NamedType
+          name: int
+        name: x
+    rightParenthesis: )
+  parameters(v1): FormalParameterList
     leftParenthesis: (
     parameter: RegularFormalParameter
       documentationComment: Comment

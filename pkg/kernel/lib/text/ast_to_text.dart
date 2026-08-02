@@ -982,8 +982,8 @@ class Printer extends VisitorDefault<void> with VisitorVoidMixin {
   }
 
   void writeParameterList(
-    List<Variable> positional,
-    List<Variable> named,
+    List<PositionalParameter> positional,
+    List<NamedParameter> named,
     int requiredParameterCount,
   ) {
     writeSymbol('(');
@@ -1219,6 +1219,16 @@ class Printer extends VisitorDefault<void> with VisitorVoidMixin {
   }
 
   @override
+  void visitLocalFunctionVariable(LocalFunctionVariable node) {
+    writeVariable(node);
+  }
+
+  @override
+  void visitConstVariable(ConstVariable node) {
+    writeVariable(node);
+  }
+
+  @override
   void visitLateVariable(LateVariable node) {
     writeVariable(node);
   }
@@ -1260,6 +1270,10 @@ class Printer extends VisitorDefault<void> with VisitorVoidMixin {
         writeWord('local-variable');
       case LateVariable():
         writeWord('late-variable');
+      case LocalFunctionVariable():
+        writeWord('local-function-variable');
+      case ConstVariable():
+        writeWord('const-variable');
       case PositionalParameter():
         writeWord('positional-parameter');
       case NamedParameter():
@@ -1443,7 +1457,6 @@ class Printer extends VisitorDefault<void> with VisitorVoidMixin {
     writeAnnotationList(node.annotations);
     writeIndentation();
     writeModifier(node.isAbstract, 'abstract');
-    writeModifier(node.isMacro, 'macro');
     writeModifier(node.isSealed, 'sealed');
     writeModifier(node.isBase, 'base');
     writeModifier(node.isInterface, 'interface');
@@ -2783,6 +2796,8 @@ class Printer extends VisitorDefault<void> with VisitorVoidMixin {
     switch (node) {
       case LocalVariable():
       case LateVariable():
+      case LocalFunctionVariable():
+      case ConstVariable():
       case CatchVariable():
       case ThisVariable():
       case SyntheticVariable():

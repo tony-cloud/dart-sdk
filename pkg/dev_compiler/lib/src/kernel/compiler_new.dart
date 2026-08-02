@@ -594,6 +594,10 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
   /// Imported libraries, and the temporaries used to refer to them.
   final _imports = <Library, js_ast.Identifier>{};
 
+  /// Imported libraries in incremental mode, and the temporaries used to refer
+  /// to them.
+  final _incrementalImports = <Library, js_ast.Identifier>{};
+
   /// Incremental mode for expression compilation.
   ///
   /// If set to true, triggers emitting all used types, symbols, libraries,
@@ -2366,7 +2370,7 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
           namedParameter.name: namedParameter,
       };
       DartType reifyParameter(
-        Variable parameter,
+        FunctionParameter parameter,
         DartType fComputedParameter,
       ) => isCovariantParameter(parameter)
           ? _coreTypes.objectNullableRawType
@@ -4547,6 +4551,7 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
       );
     }
     _incrementalModules.clear();
+    _incrementalImports.clear();
     _privateNames.clear();
     _symbolContainer.setIncrementalMode();
     _incrementalMode = true;
@@ -4618,7 +4623,7 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
     // Import all necessary libraries, including libraries accessed from the
     // current module and libraries accessed from the type table.
     for (var library in _typeTable.incrementalLibraries()) {
-      _setEmitIfIncrementalLibrary(library);
+      _emitLibraryName(library);
     }
     _emitImports(items);
     _emitExportsAsImports(items, _currentLibrary!);
@@ -4896,7 +4901,11 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
 
     _emitCovarianceBoundsCheck(f.typeParameters, body);
 
-    void initParameter(Variable p, js_ast.Identifier jsParam, bool isOptional) {
+    void initParameter(
+      FunctionParameter p,
+      js_ast.Identifier jsParam,
+      bool isOptional,
+    ) {
       // When the parameter is covariant, insert the null check before the
       // covariant cast to avoid a TypeError when testing equality with null.
       if (name == '==') {
@@ -4919,7 +4928,7 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
               isOptional &&
               isConstructorTearOffLowering(f.parent as Procedure) &&
               !p.type.isPotentiallyNullable &&
-              !p.initializer!
+              !p.defaultValue!
                   .getStaticType(_staticTypeContext)
                   .isPotentiallyNonNullable)) {
         var castExpr = _emitCast(jsParam, p.type);
@@ -8935,7 +8944,7 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
   @override
   js_ast.Expression visitLet(Let node) {
     var v = node.variable;
-    var init = _visitExpression(v.initializer!);
+    var init = _visitExpression(node.value);
     var body = _visitExpression(node.body);
     var temp = _tempVariables.remove(v);
     // TODO(eernst): Remove the following `if` if anonymous-methods is rejected.
@@ -9761,9 +9770,10 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
   js_ast.Identifier _emitLibraryName(Library library) {
     _setEmitIfIncrementalLibrary(library);
 
+    var activeImports = _incrementalMode ? _incrementalImports : _imports;
     // It's either one of the libraries in this module, or it's an import.
     return _libraries[library] ??
-        _imports.putIfAbsent(library, () {
+        activeImports.putIfAbsent(library, () {
           if (_isSdkInternalRuntime(library)) return _runtimeLibraryId;
           if (_isDartLibrary(library, '_rti')) return _rtiLibraryId;
           return js_ast.ScopedId(_jsLibraryName(library));
@@ -9772,8 +9782,9 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
 
   /// Emits imports into [items].
   void _emitImports(List<js_ast.ModuleItem> items) {
+    var activeImports = _incrementalMode ? _incrementalImports : _imports;
     var modules = <String, List<Library>>{};
-    for (var import in _imports.keys) {
+    for (var import in activeImports.keys) {
       modules.putIfAbsent(_libraryToModule(import), () => []).add(import);
     }
     // TODO(nshahan): Update this code and the representation of
@@ -9801,7 +9812,10 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
                 js_ast.ImportDeclaration(
                   from: js.string('${library.importUri}'),
                   namedImports: [
-                    js_ast.NameSpecifier(aliasId, asName: _imports[library]),
+                    js_ast.NameSpecifier(
+                      aliasId,
+                      asName: activeImports[library],
+                    ),
                   ],
                 ),
               );
@@ -9809,7 +9823,7 @@ class LibraryCompiler extends ComputeOnceConstantVisitor<js_ast.Expression>
               items.add(
                 js_ast.ImportDeclaration(
                   from: js.string('${library.importUri}'),
-                  namedImports: [js_ast.NameSpecifier(_imports[library])],
+                  namedImports: [js_ast.NameSpecifier(activeImports[library])],
                 ),
               );
             }

@@ -214,7 +214,7 @@ final class _AnalysisOptionsTextWriter {
         'unignorableDiagnosticCodeNames',
         options.unignorableDiagnosticCodeNames,
       );
-      _writeStringList('excludePatterns', options.excludePatterns);
+      _writeExcludePatterns(options.excludePatterns2);
 
       _writeBool('lint', options.lint, _defaultOptions.lint);
       _writeLintRules(options.lintRules);
@@ -344,6 +344,11 @@ final class _AnalysisOptionsTextWriter {
       defaultCodeStyleOptions.sortConstructorsFirst,
     );
     addBoolProperty(
+      'sortUnnamedConstructorsFirst',
+      codeStyleOptions.sortUnnamedConstructorsFirst,
+      defaultCodeStyleOptions.sortUnnamedConstructorsFirst,
+    );
+    addBoolProperty(
       'specifyReturnTypes',
       codeStyleOptions.specifyReturnTypes,
       defaultCodeStyleOptions.specifyReturnTypes,
@@ -378,6 +383,21 @@ final class _AnalysisOptionsTextWriter {
     _sink.writeElements('errorProcessors', processors, (processor) {
       var severity = processor.severity?.name.toLowerCase() ?? 'ignore';
       _sink.writelnWithIndent('${processor.code}: $severity');
+    });
+  }
+
+  void _writeExcludePatterns(
+    List<AnalysisOptionsExcludePattern> excludePatterns,
+  ) {
+    _sink.writeElements('excludePatterns', excludePatterns, (excludePattern) {
+      _sink.writelnWithIndent('AnalysisOptionsExcludePattern');
+      _sink.withIndent(() {
+        _sink.writelnWithIndent(
+          'declaringFile: '
+          '${_toPosixPath(excludePattern.declaringFile.path)}',
+        );
+        _sink.writelnWithIndent('pattern: ${excludePattern.pattern}');
+      });
     });
   }
 

@@ -58,6 +58,8 @@ import 'augmentation_type_parameter_count_test.dart'
     as augmentation_type_parameter_count;
 import 'augmentation_type_parameter_name_test.dart'
     as augmentation_type_parameter_name;
+import 'augmentation_variable_different_getter_setter_types_test.dart'
+    as augmentation_variable_different_getter_setter_types;
 import 'augmentation_without_declaration_test.dart'
     as augmentation_without_declaration;
 import 'await_in_late_local_variable_initializer_test.dart'
@@ -205,6 +207,8 @@ import 'deprecated_mixin_function_test.dart' as deprecated_mixin_function;
 import 'deprecated_mixin_test.dart' as deprecated_mixin;
 import 'deprecated_optional_test.dart' as deprecated_optional;
 import 'deprecated_subclass_test.dart' as deprecated_subclass;
+import 'different_inherited_getter_and_setter_types_test.dart'
+    as different_inherited_getter_and_setter_types;
 import 'doc_directive_argument_wrong_format_test.dart'
     as doc_directive_argument_wrong_format;
 import 'doc_directive_has_extra_arguments_test.dart'
@@ -417,6 +421,7 @@ import 'inference_failure_on_untyped_parameter_test.dart'
 import 'initializer_for_non_existent_field_test.dart'
     as initializer_for_non_existent_field;
 import 'initializer_for_static_field_test.dart' as initializer_for_static_field;
+import 'initializing_declaring_test.dart' as initializing_declaring;
 import 'initializing_formal_for_non_existent_field_test.dart'
     as initializing_formal_for_non_existent_field;
 import 'instance_access_to_static_member_test.dart'
@@ -997,6 +1002,7 @@ main() {
     augmentation_type_parameter_bound.main();
     augmentation_type_parameter_count.main();
     augmentation_type_parameter_name.main();
+    augmentation_variable_different_getter_setter_types.main();
     augmentation_without_declaration.main();
     await_in_late_local_variable_initializer.main();
     await_in_wrong_context.main();
@@ -1095,6 +1101,7 @@ main() {
     deprecated_mixin.main();
     deprecated_optional.main();
     deprecated_subclass.main();
+    different_inherited_getter_and_setter_types.main();
     doc_directive_argument_wrong_format.main();
     doc_directive_has_extra_arguments.main();
     doc_directive_has_unexpected_named_argument.main();
@@ -1227,6 +1234,7 @@ main() {
     inference_failure_on_untyped_parameter.main();
     initializer_for_non_existent_field.main();
     initializer_for_static_field.main();
+    initializing_declaring.main();
     initializing_formal_for_non_existent_field.main();
     instance_access_to_static_member.main();
     instance_member_access_from_factory.main();

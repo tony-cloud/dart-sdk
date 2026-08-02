@@ -147,7 +147,7 @@ type CanonicalName {
 
 type ComponentFile {
   UInt32 magic = 0x90ABCDEF;
-  UInt32 formatVersion = 136;
+  UInt32 formatVersion = 139;
   Byte[10] shortSdkHash;
   List<String> problemsAsJson; // Described in problems.md.
   Library[] libraries;
@@ -318,7 +318,7 @@ type Class extends Node {
   FileOffset fileOffset; // Offset of the name of the class.
   FileOffset fileEndOffset;
   UInt flags (isAbstract, isEnum, isAnonymousMixin, isEliminatedMixin,
-              isMixinDeclaration, hasConstConstructor, isMacro, isSealed,
+              isMixinDeclaration, hasConstConstructor, isSealed,
               isMixinClass, isBase, isInterface, isFinal);
   StringReference name;
   List<Expression> annotations;
@@ -798,6 +798,7 @@ type InstanceInvocation extends Expression {
   Name name;
   Arguments arguments;
   DartType functionType;
+  DartType resultType;
   MemberReference interfaceTarget;
   MemberReference interfaceTargetOrigin; // May be NullReference.
 }
@@ -1553,6 +1554,16 @@ type LocalVariable extends Variable {
 
 type LateVariable extends Variable {
   Byte tag = 156;
+  VariableInternal variable;
+}
+
+type LocalFunctionVariable extends Variable {
+  Byte tag = 162;
+  VariableInternal variable;
+}
+
+type ConstVariable extends Variable {
+  Byte tag = 163;
   VariableInternal variable;
 }
 

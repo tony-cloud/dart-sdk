@@ -3121,7 +3121,7 @@ void CreateArrayInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   }
 
   compiler::Label slow_path, done;
-  if (!FLAG_use_slow_path && FLAG_inline_alloc) {
+  if (UseInlineAllocation()) {
     if (compiler->is_optimizing() && !FLAG_precompiled_mode &&
         num_elements()->BindsToConstant() &&
         compiler::target::IsSmi(num_elements()->BoundConstant())) {
@@ -3197,7 +3197,7 @@ void AllocateUninitializedContextInstr::EmitNativeCode(
   compiler->AddSlowPathCode(slow_path);
   intptr_t instance_size = Context::InstanceSize(num_context_variables());
 
-  if (!FLAG_use_slow_path && FLAG_inline_alloc) {
+  if (UseInlineAllocation()) {
     __ TryAllocateArray(kContextCid, instance_size, slow_path->entry_label(),
                         result,  // instance
                         temp0, temp1, temp2);
@@ -5162,17 +5162,16 @@ DEFINE_EMIT(Int32x4Select,
              QRegister mask,
              QRegister trueValue,
              QRegister falseValue,
-             Temp<QRegister> temp)) {
-  // Copy mask.
-  __ vmovq(temp, mask);
-  // Invert it.
-  __ vmvnq(temp, temp);
-  // mask = mask & trueValue.
-  __ vandq(mask, mask, trueValue);
-  // temp = temp & falseValue.
-  __ vandq(temp, temp, falseValue);
-  // out = mask | temp.
-  __ vorrq(out, mask, temp);
+             Temp<QRegister> temp1,
+             Temp<QRegister> temp2)) {
+  // temp2 = ~mask.
+  __ vmvnq(temp2, mask);
+  // temp1 = mask & trueValue.
+  __ vandq(temp1, mask, trueValue);
+  // temp2 = (~mask) & falseValue.
+  __ vandq(temp2, temp2, falseValue);
+  // out = temp1 | temp2.
+  __ vorrq(out, temp1, temp2);
 }
 
 DEFINE_EMIT(Int32x4WithFlag,
