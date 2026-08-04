@@ -160,7 +160,6 @@ class WasmTarget extends Target {
     'dart:_compact_hash',
     'dart:_http',
     'dart:_internal',
-    'dart:_js_interop_wasm',
     'dart:_list',
     'dart:_string',
     'dart:_wasm',
@@ -173,6 +172,7 @@ class WasmTarget extends Target {
     if (mode == .standalone)
       'dart:_embedder'
     else ...[
+      'dart:_js_interop_wasm',
       'dart:_js_helper',
       'dart:_js_types',
       'dart:js_interop',
