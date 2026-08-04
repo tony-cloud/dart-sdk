@@ -142,6 +142,7 @@ List<String> librariesToIndex(wasm.Mode mode) {
     "dart:_boxed_int",
     "dart:_compact_hash",
     "dart:_internal",
+    if (mode != .standalone) "dart:_js_interop_wasm",
     "dart:_js_helper",
     "dart:_js_types",
     "dart:_list",

@@ -195,6 +195,7 @@ class WasmTarget extends Target {
     if (mode == .standalone)
       'dart:_embedder'
     else ...[
+      'dart:_js_interop_wasm',
       'dart:_js_helper',
       'dart:_js_types',
       'dart:js_interop',
