@@ -105,6 +105,10 @@ static const char* const kSnapshotKindNames[] = {
   V(load_isolate_snapshot_data, load_isolate_snapshot_data_filename)           \
   V(load_isolate_snapshot_instructions,                                        \
     load_isolate_snapshot_instructions_filename)                               \
+  V(vm_snapshot_data, vm_snapshot_data_filename)                               \
+  V(vm_snapshot_instructions, vm_snapshot_instructions_filename)               \
+  V(isolate_snapshot_data, isolate_snapshot_data_filename)                     \
+  V(isolate_snapshot_instructions, isolate_snapshot_instructions_filename)     \
   V(snapshot_data, snapshot_data_filename)                                     \
   V(snapshot_text, snapshot_text_filename)                                     \
   V(assembly, assembly_filename)                                               \
@@ -253,6 +257,20 @@ static int ParseArguments(int argc,
   } else if (version) {
     Syslog::PrintErr("Dart SDK version: %s\n", Dart_VersionString());
     Platform::Exit(0);
+  }
+
+  // Flutter's engine build still names the two core snapshot outputs as
+  // vm_snapshot_data and vm_snapshot_instructions. The public Dart
+  // gen_snapshot API uses snapshot_data and snapshot_text; accept the legacy
+  // names as aliases and mirror the generated files for Flutter's isolate
+  // snapshot outputs.
+  if (snapshot_kind == kCore) {
+    if (snapshot_data_filename == nullptr) {
+      snapshot_data_filename = vm_snapshot_data_filename;
+    }
+    if (snapshot_text_filename == nullptr) {
+      snapshot_text_filename = vm_snapshot_instructions_filename;
+    }
   }
 
   // Verify consistency of arguments.
@@ -682,6 +700,13 @@ static void CreateAndWriteCoreSnapshot() {
   WriteFile(snapshot_data_filename, snapshot_data_buffer, snapshot_data_size);
   // Create empty file for the convenience of build systems.
   WriteFile(snapshot_text_filename, nullptr, 0);
+  if (isolate_snapshot_data_filename != nullptr) {
+    WriteFile(isolate_snapshot_data_filename, snapshot_data_buffer,
+              snapshot_data_size);
+  }
+  if (isolate_snapshot_instructions_filename != nullptr) {
+    WriteFile(isolate_snapshot_instructions_filename, nullptr, 0);
+  }
 }
 
 static std::unique_ptr<MappedMemory> MapFile(const char* filename,
