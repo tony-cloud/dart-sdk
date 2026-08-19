@@ -291,11 +291,11 @@ abstract class AstCodeGenerator
     ) {
       final localIndex = implicitParams + index;
       w.Local local = paramLocals[localIndex];
-      final variableName = variable.cosmeticName;
-      if (variableName != null && variableName.isNotEmpty) {
+      final variableName = variable.parameterName;
+      if (variableName.isNotEmpty) {
         b.localNames[local.index] = variableName;
       }
-      if (defaultValue == ParameterInfo.defaultValueSentinel) {
+      if (!isRequired && defaultValue == ParameterInfo.defaultValueSentinel) {
         // The default value for this parameter differs between implementations
         // within the same selector. This means that callers will pass the
         // default value sentinel to indicate that the parameter is not given.
@@ -315,7 +315,10 @@ abstract class AstCodeGenerator
         );
         b.ref_eq();
         b.if_();
-        translateExpression(variable.defaultValue!, local.type);
+        instantiateConstant(
+          ParameterInfo.defaultValue(variable, member)!,
+          local.type,
+        );
         b.local_set(local);
         b.end();
       }
@@ -327,6 +330,7 @@ abstract class AstCodeGenerator
         final incomingArgumentType = translator.translateTypeOfParameter(
           variable,
           isRequired,
+          member,
         );
         if (!local.type.isSubtypeOf(incomingArgumentType)) {
           final newLocal = addLocal(incomingArgumentType);
@@ -354,7 +358,7 @@ abstract class AstCodeGenerator
           }
           b.local_get(operand);
           _generateArgumentTypeCheck(
-            variable.cosmeticName!,
+            variable.parameterName,
             operand.type as w.RefType,
             variableTypeToCheck,
           );
@@ -2737,7 +2741,7 @@ abstract class AstCodeGenerator
       ParameterInfo.fromLocalFunction(decl.function),
       1,
     );
-    b.comment("Local call of ${decl.variable.cosmeticName}");
+    b.comment("Local call of ${decl.variable.name}");
     return translator.outputOrVoid(translator.callTarget(lambda.callTarget, b));
   }
 
@@ -3342,8 +3346,8 @@ abstract class AstCodeGenerator
     DartType bound,
   ) {
     b.local_get(typeLocal);
-    final boundLocal = b.addLocal(translator.runtimeTypeType);
-    types.makeType(this, bound);
+    final boundType = types.makeType(this, bound);
+    final boundLocal = b.addLocal(boundType);
     b.local_tee(boundLocal);
     call(translator.isTypeSubtype.reference);
 
@@ -3932,7 +3936,7 @@ class DynamicForwarderCodeGenerator extends AstCodeGenerator {
           final param = targetPositionalParams[i];
           b.local_get(paramValue);
           _generateArgumentTypeCheck(
-            param.cosmeticName!,
+            param.parameterName,
             translator.topType,
             param.type,
           );
@@ -3941,8 +3945,10 @@ class DynamicForwarderCodeGenerator extends AstCodeGenerator {
       } else {
         // Default to use if the callee has the `i` parameter.
         final defaultFunctionValue = i < targetPositionalParams.length
-            ? (targetPositionalParams[i].defaultValue as ConstantExpression?)
-                  ?.constant
+            ? ParameterInfo.defaultValue(
+                targetPositionalParams[i],
+                targetProcedure,
+              )
             : null;
         // Default to use if callee doesn't have the `i` parameter.
         final defaultValue = targetParamInfo.positional[i];
@@ -3950,7 +3956,7 @@ class DynamicForwarderCodeGenerator extends AstCodeGenerator {
         // a selector signature (which is based on all implementations of a
         // selector) and therefore may have more parameters than the actual
         // target needs (the others are ignored in the callee).
-        final value = defaultFunctionValue ?? defaultValue!;
+        final value = (defaultFunctionValue ?? defaultValue)!;
         instantiateConstantBackendUse(value, targetParamType);
       }
     }
@@ -3983,8 +3989,9 @@ class DynamicForwarderCodeGenerator extends AstCodeGenerator {
         translator.convertType(b, paramValue.type, targetParamType);
       } else {
         // Default to use if callee has the `name` parameter.
-        final defaultFunctionValue =
-            (namedParam?.defaultValue as ConstantExpression?)?.constant;
+        final defaultFunctionValue = namedParam == null
+            ? null
+            : ParameterInfo.defaultValue(namedParam, targetProcedure);
         // Default to use if callee doesn't have `name` parameter.
         final defaultValue = targetParamInfo.named[name];
         // The target wasm function corresponding to an instance method may have
@@ -3997,9 +4004,7 @@ class DynamicForwarderCodeGenerator extends AstCodeGenerator {
     }
 
     final outputs = translator.callTarget(callTarget, b);
-    if (outputs.isNotEmpty) {
-      translator.convertType(b, outputs.single, returnType);
-    }
+    translator.convertType(b, translator.outputOrVoid(outputs), returnType);
     b.return_();
     b.end();
   }
@@ -4031,7 +4036,11 @@ class DynamicForwarderCodeGenerator extends AstCodeGenerator {
       b.local_get(receiverLocal);
       translator.convertType(b, receiverLocal.type, getterInputs.single);
       call(target);
-      translator.convertType(b, getterOutputs.single, translator.topType);
+      translator.convertType(
+        b,
+        translator.outputOrVoid(getterOutputs),
+        translator.topType,
+      );
     }
 
     b.end(); // end function
@@ -5342,9 +5351,8 @@ class SwitchInfo {
           successLabel,
           switchExprLocal.type as w.RefType,
           equalsMemberSignature.inputs[0].withNullability(
-                switchExprLocal.type.nullable,
-              )
-              as w.RefType,
+            switchExprLocal.type.nullable,
+          ) as w.RefType,
         );
         codeGen.b.drop();
       };
@@ -6077,6 +6085,29 @@ extension MacroAssembler on w.InstructionsBuilder {
       translator.classInfoCollector.topInfo.struct,
       FieldIndex.classId,
     );
+  }
+
+  /// Load the class ID of the given possibly-nullable object.
+  ///
+  /// If the object is in fact null, then 0 is loaded, not the class ID of the
+  /// Null type. (Any constant will work as long as it's not used for any other
+  /// concrete class).
+  void loadClassIdNullable(Translator translator, w.ValueType receiverType) {
+    assert(receiverType.isSubtypeOf(translator.topType));
+
+    if (!receiverType.nullable) {
+      loadClassId(translator, translator.topTypeNonNullable);
+      return;
+    }
+
+    final done = block(const [], const [w.NumType.i32]);
+    final notNull = block(const [], [translator.topTypeNonNullable]);
+    br_on_non_null(notNull);
+    i32_const(0);
+    br(done);
+    end(); // notNull
+    loadClassId(translator, translator.topTypeNonNullable);
+    end(); // done
   }
 
   void fillTableRange(

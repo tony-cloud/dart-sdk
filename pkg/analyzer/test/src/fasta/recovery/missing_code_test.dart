@@ -30,7 +30,7 @@ f() => [a, , b];
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -62,7 +62,7 @@ f() => [a, b c];
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -94,7 +94,7 @@ f() => [a, if (x) b c];
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -132,7 +132,7 @@ f() => [a, if (x) b else y c];
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -177,7 +177,7 @@ f() => {a: b, c: d e: f};
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -222,7 +222,7 @@ f() => {a: b, if (x) c: d e: f};
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -273,7 +273,7 @@ f() => {a: b, if (x) c: d else y: z e: f};
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -331,7 +331,7 @@ f() => {: b};
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -364,7 +364,7 @@ f() => {a: };
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -397,7 +397,7 @@ f() => {a: , b: c};
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -442,7 +442,7 @@ f() => x &
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -451,11 +451,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: &
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: bitwiseAnd
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: &
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -473,7 +480,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -499,11 +506,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: &
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: bitwiseAnd
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: &
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -521,7 +535,7 @@ convert(x) => as T;
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: convert
       functionExpression: FunctionExpression
@@ -559,7 +573,7 @@ convert(x) => x as ;
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: convert
       functionExpression: FunctionExpression
@@ -599,7 +613,7 @@ f() {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -618,11 +632,17 @@ CompilationUnit
                       name: x
                 semicolon: ;
               ExpressionStatement
-                expression2: AssignmentExpression
-                  leftHandSide2: SimpleIdentifier
+                expression2: DirectAssignment
+                  target: UnqualifiedNameAssignmentTarget
+                    name: x
+                  operator: =
+                  value: SimpleIdentifier
+                    token: <empty> <synthetic>
+                expression(v1): AssignmentExpression
+                  leftHandSide: SimpleIdentifier
                     token: x
                   operator: =
-                  rightHandSide2: SimpleIdentifier
+                  rightHandSide: SimpleIdentifier
                     token: <empty> <synthetic>
                 semicolon: ; <synthetic>
             rightBracket: }
@@ -640,7 +660,7 @@ f() => x |
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -649,11 +669,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: |
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: bitwiseOr
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: |
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -671,7 +698,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -697,11 +724,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: |
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: bitwiseOr
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: |
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -720,7 +754,7 @@ f(x) {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -743,7 +777,12 @@ CompilationUnit
                 expression2: CascadeExpression
                   target2: SimpleIdentifier
                     token: x
-                  cascadeSections2
+                  sections
+                    CascadeSection
+                      operator: ..
+                      body: CascadePropertyExtraction
+                        propertyName: <empty> <synthetic>
+                  cascadeSections
                     PropertyAccess
                       operator: ..
                       propertyName: SimpleIdentifier
@@ -762,7 +801,7 @@ class {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -801,7 +840,7 @@ f(int a int b) { }
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -846,7 +885,7 @@ f() => x ? y :
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -879,7 +918,7 @@ f() => x ? : z
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -912,7 +951,7 @@ f() => x ==
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -921,11 +960,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: ==
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: equal
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: ==
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -943,7 +989,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -969,11 +1015,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: ==
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: equal
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: ==
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -989,7 +1042,7 @@ f(x) = x;
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1021,7 +1074,7 @@ f(x) return x;
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1055,7 +1108,7 @@ f() => x >
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1064,11 +1117,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: >
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: greaterThan
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: >
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -1086,7 +1146,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1112,11 +1172,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: >
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: greaterThan
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: >
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -1134,7 +1201,7 @@ f() => x >>
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1143,11 +1210,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: >>
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: shiftRight
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: >>
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -1165,7 +1239,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1191,11 +1265,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: >>
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: shiftRight
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: >>
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -1213,7 +1294,7 @@ f() => x >=
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1222,11 +1303,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: >=
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: greaterThanOrEqual
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: >=
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -1244,7 +1332,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1270,11 +1358,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: >=
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: greaterThanOrEqual
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: >=
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -1292,7 +1387,7 @@ f() => x ^
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1301,11 +1396,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: ^
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: bitwiseXor
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: ^
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -1323,7 +1425,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1349,11 +1451,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: ^
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: bitwiseXor
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: ^
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -1373,7 +1482,7 @@ class Test {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1382,7 +1491,8 @@ CompilationUnit
         leftBracket: {
         members
           ConstructorDeclaration
-            typeName: SimpleIdentifier
+            typeName2: Test
+            typeName(v1): SimpleIdentifier
               token: Test
             parameters: FormalParameterList
               leftParenthesis: (
@@ -1420,7 +1530,7 @@ class Test {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1429,7 +1539,8 @@ CompilationUnit
         leftBracket: {
         members
           ConstructorDeclaration
-            typeName: SimpleIdentifier
+            typeName2: Test
+            typeName(v1): SimpleIdentifier
               token: Test
             parameters: FormalParameterList
               leftParenthesis: (
@@ -1443,7 +1554,8 @@ CompilationUnit
                   literal: true
                 rightParenthesis: )
               ConstructorFieldInitializer
-                fieldName: SimpleIdentifier
+                fieldName2: x
+                fieldName(v1): SimpleIdentifier
                   token: x
                 equals: =
                 expression2: IntegerLiteral
@@ -1467,7 +1579,7 @@ class Test {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1476,7 +1588,8 @@ CompilationUnit
         leftBracket: {
         members
           ConstructorDeclaration
-            typeName: SimpleIdentifier
+            typeName2: Test
+            typeName(v1): SimpleIdentifier
               token: Test
             parameters: FormalParameterList
               leftParenthesis: (
@@ -1492,7 +1605,8 @@ CompilationUnit
               ConstructorFieldInitializer
                 thisKeyword: this
                 period: .
-                fieldName: SimpleIdentifier
+                fieldName2: x
+                fieldName(v1): SimpleIdentifier
                   token: x
                 equals: =
                 expression2: IntegerLiteral
@@ -1515,7 +1629,7 @@ f() {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1554,7 +1668,7 @@ f(x) {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1601,7 +1715,7 @@ f() => x <
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1610,11 +1724,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: <
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: lessThan
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: <
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -1632,7 +1753,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1658,11 +1779,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: <
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: lessThan
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: <
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -1680,7 +1808,7 @@ f() => x <<
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1689,11 +1817,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: <<
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: shiftLeft
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: <<
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -1711,7 +1846,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1737,11 +1872,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: <<
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: shiftLeft
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: <<
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -1759,7 +1901,7 @@ f() => x <=
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1768,11 +1910,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: <=
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: lessThanOrEqual
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: <=
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -1790,7 +1939,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1816,11 +1965,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: <=
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: lessThanOrEqual
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: <=
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -1838,7 +1994,7 @@ f() => x -
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -1847,11 +2003,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: -
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: subtract
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: -
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -1869,7 +2032,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1895,11 +2058,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: -
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: subtract
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: -
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -1917,7 +2087,7 @@ class Bar {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -1959,7 +2129,7 @@ int f int x, int y) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     TopLevelVariableDeclaration
       variables: VariableDeclarationList
         type: NamedType
@@ -2001,7 +2171,7 @@ f(x) => x ?? throw 0;
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2045,7 +2215,7 @@ f() => x %
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2054,11 +2224,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: %
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: modulo
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: %
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -2076,7 +2253,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -2102,11 +2279,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: %
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: modulo
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: %
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -2124,7 +2308,7 @@ f() => x +
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2133,11 +2317,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: +
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: add
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: +
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -2155,7 +2346,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -2181,11 +2372,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: +
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: add
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: +
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -2205,7 +2403,7 @@ f() {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2249,7 +2447,7 @@ f() => x /
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2258,11 +2456,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: /
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: divide
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: /
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -2280,7 +2485,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -2306,11 +2511,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: /
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: divide
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: /
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -2328,7 +2540,7 @@ f() => x *
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2337,11 +2549,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: *
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: multiply
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: *
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -2359,7 +2578,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -2385,11 +2604,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: *
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: multiply
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: *
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -2413,7 +2639,7 @@ f() {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2460,7 +2686,7 @@ f() => x ~/
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2469,11 +2695,18 @@ CompilationUnit
           rightParenthesis: )
         body: ExpressionFunctionBody
           functionDefinition: =>
-          expression2: BinaryExpression
-            leftOperand2: SimpleIdentifier
+          expression2: BinaryOperatorInvocation
+            leftOperand: SimpleIdentifier
               token: x
             operator: ~/
-            rightOperand2: SimpleIdentifier
+            rightOperand: SimpleIdentifier
+              token: <empty> <synthetic>
+            binaryOperator: truncatingDivide
+          expression(v1): BinaryExpression
+            leftOperand: SimpleIdentifier
+              token: x
+            operator: ~/
+            rightOperand: SimpleIdentifier
               token: <empty> <synthetic>
           semicolon: ; <synthetic>
 ''');
@@ -2491,7 +2724,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -2517,11 +2750,18 @@ CompilationUnit
               rightParenthesis: )
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: BinaryExpression
-                leftOperand2: SuperExpression
+              expression2: BinaryOperatorInvocation
+                leftOperand: SuperExpression
                   superKeyword: super
                 operator: ~/
-                rightOperand2: SimpleIdentifier
+                rightOperand: SimpleIdentifier
+                  token: <empty> <synthetic>
+                binaryOperator: truncatingDivide
+              expression(v1): BinaryExpression
+                leftOperand: SuperExpression
+                  superKeyword: super
+                operator: ~/
+                rightOperand: SimpleIdentifier
                   token: <empty> <synthetic>
               semicolon: ; <synthetic>
         rightBracket: }
@@ -2541,7 +2781,7 @@ f({a, }) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2578,7 +2818,7 @@ f({a, , b}) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2621,7 +2861,7 @@ f([a, ]) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2658,7 +2898,7 @@ f([a, , b]) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2701,7 +2941,7 @@ f(a, ) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2733,7 +2973,7 @@ f(a, , b) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -2776,7 +3016,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -2793,7 +3033,8 @@ CompilationUnit
                   name: f
             semicolon: ;
           ConstructorDeclaration
-            typeName: SimpleIdentifier
+            typeName2: C
+            typeName(v1): SimpleIdentifier
               token: C
             parameters: FormalParameterList
               leftParenthesis: (
@@ -2825,7 +3066,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -2842,7 +3083,8 @@ CompilationUnit
                   name: f
             semicolon: ;
           ConstructorDeclaration
-            typeName: SimpleIdentifier
+            typeName2: C
+            typeName(v1): SimpleIdentifier
               token: C
             parameters: FormalParameterList
               leftParenthesis: (
@@ -2878,7 +3120,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -2895,7 +3137,8 @@ CompilationUnit
                   name: f
             semicolon: ;
           ConstructorDeclaration
-            typeName: SimpleIdentifier
+            typeName2: C
+            typeName(v1): SimpleIdentifier
               token: C
             parameters: FormalParameterList
               leftParenthesis: (
@@ -2931,7 +3174,7 @@ class C {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     ClassDeclaration
       classKeyword: class
       namePart: NameWithTypeParameters
@@ -2948,7 +3191,8 @@ CompilationUnit
                   name: f
             semicolon: ;
           ConstructorDeclaration
-            typeName: SimpleIdentifier
+            typeName2: C
+            typeName(v1): SimpleIdentifier
               token: C
             parameters: FormalParameterList
               leftParenthesis: (
@@ -2985,7 +3229,7 @@ f({a: 0) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3032,7 +3276,7 @@ f({a: 0]) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3077,7 +3321,7 @@ f(a}) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3109,7 +3353,7 @@ f(a]) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3143,7 +3387,7 @@ f([a = 0}) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3189,7 +3433,7 @@ f([a = 0) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3238,7 +3482,7 @@ h(v1, v2, v) {
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: g
       functionExpression: FunctionExpression
@@ -3299,19 +3543,21 @@ CompilationUnit
                     leftParenthesis: (
                     arguments2
                       LogicalOr
-                        leftOperand: BinaryExpression
-                          leftOperand2: SimpleIdentifier
+                        leftOperand: BinaryOperatorInvocation
+                          leftOperand: SimpleIdentifier
                             token: v1
                           operator: ==
-                          rightOperand2: SimpleIdentifier
+                          rightOperand: SimpleIdentifier
                             token: v2
+                          binaryOperator: equal
                         operator: ||
-                        rightOperand: BinaryExpression
-                          leftOperand2: SimpleIdentifier
+                        rightOperand: BinaryOperatorInvocation
+                          leftOperand: SimpleIdentifier
                             token: v1
                           operator: ==
-                          rightOperand2: SimpleIdentifier
+                          rightOperand: SimpleIdentifier
                             token: v
+                          binaryOperator: equal
                       IntegerLiteral
                         literal: 3
                       BooleanLiteral
@@ -3351,7 +3597,7 @@ f({a: }) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3396,7 +3642,7 @@ f({a: , b}) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3445,7 +3691,7 @@ f([a = ]) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3490,7 +3736,7 @@ f([a = , b]) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3540,7 +3786,7 @@ f([a = 0], {b: 1}) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3586,7 +3832,7 @@ f([a = 0], {b: 1}, [c = 2]) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3631,7 +3877,7 @@ f({a: 0}, {b: 1}) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3676,7 +3922,7 @@ f([a = 0], [b = 1]) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3721,7 +3967,7 @@ f(a: 0) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3761,7 +4007,7 @@ f(a = 0) {}
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     FunctionDeclaration
       name: f
       functionExpression: FunctionExpression
@@ -3805,7 +4051,7 @@ typedef Predicate = bool <E>(E element);
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
 CompilationUnit
-  declarations
+  declarations2
     GenericTypeAlias
       typedefKeyword: typedef
       name: Predicate

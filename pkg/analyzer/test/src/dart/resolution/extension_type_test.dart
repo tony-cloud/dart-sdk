@@ -260,7 +260,8 @@ extension type const A.named(int it) {
 ConstructorDeclaration
   constKeyword: const
   factoryKeyword: factory
-  typeName: SimpleIdentifier
+  typeName2: A
+  typeName(v1): SimpleIdentifier
     token: A
     element: <testLibrary>::@extensionType::A
     staticType: null
@@ -338,7 +339,8 @@ ConstructorDeclaration
     ConstructorFieldInitializer
       thisKeyword: this
       period: .
-      fieldName: SimpleIdentifier
+      fieldName2: it
+      fieldName(v1): SimpleIdentifier
         token: it
         element: <testLibrary>::@extensionType::A::@field::it
         staticType: null
@@ -346,6 +348,7 @@ ConstructorDeclaration
       expression2: IntegerLiteral
         literal: 0
         staticType: int
+      fieldElement: <testLibrary>::@extensionType::A::@field::it
   body: EmptyFunctionBody
     semicolon: ;
   declaredFragment: <testLibraryFragment> named@33
@@ -375,7 +378,8 @@ ConstructorDeclaration
     ConstructorFieldInitializer
       thisKeyword: this
       period: .
-      fieldName: SimpleIdentifier
+      fieldName2: it
+      fieldName(v1): SimpleIdentifier
         token: it
         element: <testLibrary>::@extensionType::A::@field::it
         staticType: null
@@ -383,6 +387,7 @@ ConstructorDeclaration
       expression2: IntegerLiteral
         literal: 0
         staticType: int
+      fieldElement: <testLibrary>::@extensionType::A::@field::it
   body: EmptyFunctionBody
     semicolon: ;
   declaredFragment: <testLibraryFragment> named@39
@@ -410,7 +415,8 @@ ConstructorDeclaration
     ConstructorFieldInitializer
       thisKeyword: this
       period: .
-      fieldName: SimpleIdentifier
+      fieldName2: it
+      fieldName(v1): SimpleIdentifier
         token: it
         element: <testLibrary>::@extensionType::A::@field::it
         staticType: null
@@ -418,6 +424,7 @@ ConstructorDeclaration
       expression2: IntegerLiteral
         literal: 0
         staticType: int
+      fieldElement: <testLibrary>::@extensionType::A::@field::it
   body: EmptyFunctionBody
     semicolon: ;
   declaredFragment: <testLibraryFragment> new@null
@@ -446,7 +453,8 @@ ConstructorDeclaration
     ConstructorFieldInitializer
       thisKeyword: this
       period: .
-      fieldName: SimpleIdentifier
+      fieldName2: it
+      fieldName(v1): SimpleIdentifier
         token: it
         element: <testLibrary>::@extensionType::A::@field::it
         staticType: null
@@ -454,6 +462,7 @@ ConstructorDeclaration
       expression2: IntegerLiteral
         literal: 0
         staticType: int
+      fieldElement: <testLibrary>::@extensionType::A::@field::it
   body: EmptyFunctionBody
     semicolon: ;
   declaredFragment: <testLibraryFragment> new@null
@@ -473,7 +482,8 @@ extension type A(int it) {
     assertResolvedNodeText(node, r'''
 ConstructorDeclaration
   factoryKeyword: factory
-  typeName: SimpleIdentifier
+  typeName2: A
+  typeName(v1): SimpleIdentifier
     token: A
     element: <testLibrary>::@extensionType::A
     staticType: null
@@ -534,7 +544,8 @@ extension type A.named(int it) {
     assertResolvedNodeText(node, r'''
 ConstructorDeclaration
   factoryKeyword: factory
-  typeName: SimpleIdentifier
+  typeName2: A
+  typeName(v1): SimpleIdentifier
     token: A
     element: <testLibrary>::@extensionType::A
     staticType: null
@@ -600,7 +611,8 @@ extension type A(int it) {
     var node = result.findNode.singleConstructorDeclaration;
     assertResolvedNodeText(node, r'''
 ConstructorDeclaration
-  typeName: SimpleIdentifier
+  typeName2: A
+  typeName(v1): SimpleIdentifier
     token: A
     element: <testLibrary>::@extensionType::A
     staticType: null
@@ -614,7 +626,8 @@ ConstructorDeclaration
     ConstructorFieldInitializer
       thisKeyword: this
       period: .
-      fieldName: SimpleIdentifier
+      fieldName2: it
+      fieldName(v1): SimpleIdentifier
         token: it
         element: <testLibrary>::@extensionType::A::@field::it
         staticType: null
@@ -622,6 +635,7 @@ ConstructorDeclaration
       expression2: IntegerLiteral
         literal: 0
         staticType: int
+      fieldElement: <testLibrary>::@extensionType::A::@field::it
   body: EmptyFunctionBody
     semicolon: ;
   declaredFragment: <testLibraryFragment> named@31
@@ -640,7 +654,8 @@ extension type A.named(int it) {
     var node = result.findNode.singleConstructorDeclaration;
     assertResolvedNodeText(node, r'''
 ConstructorDeclaration
-  typeName: SimpleIdentifier
+  typeName2: A
+  typeName(v1): SimpleIdentifier
     token: A
     element: <testLibrary>::@extensionType::A
     staticType: null
@@ -652,7 +667,8 @@ ConstructorDeclaration
     ConstructorFieldInitializer
       thisKeyword: this
       period: .
-      fieldName: SimpleIdentifier
+      fieldName2: it
+      fieldName(v1): SimpleIdentifier
         token: it
         element: <testLibrary>::@extensionType::A::@field::it
         staticType: null
@@ -660,6 +676,7 @@ ConstructorDeclaration
       expression2: IntegerLiteral
         literal: 0
         staticType: int
+      fieldElement: <testLibrary>::@extensionType::A::@field::it
   body: EmptyFunctionBody
     semicolon: ;
   declaredFragment: <testLibraryFragment> new@null
@@ -4585,7 +4602,8 @@ ExtensionTypeDeclaration
     leftBracket: {
     members
       ConstructorDeclaration
-        typeName: SimpleIdentifier
+        typeName2: A
+        typeName(v1): SimpleIdentifier
           token: A
           element: <testLibrary>::@extensionType::A
           staticType: null
@@ -4673,7 +4691,8 @@ ExtensionTypeDeclaration
     members
       ConstructorDeclaration
         constKeyword: const
-        typeName: SimpleIdentifier
+        typeName2: A
+        typeName(v1): SimpleIdentifier
           token: A
           element: <testLibrary>::@extensionType::A
           staticType: null
@@ -4707,7 +4726,8 @@ ExtensionTypeDeclaration
         separator: :
         initializers
           ConstructorFieldInitializer
-            fieldName: SimpleIdentifier
+            fieldName2: it
+            fieldName(v1): SimpleIdentifier
               token: it
               element: <testLibrary>::@extensionType::A::@field::it
               staticType: null
@@ -4716,6 +4736,7 @@ ExtensionTypeDeclaration
               token: a
               element: <testLibrary>::@extensionType::A::@constructor::named::@formalParameter::a
               staticType: int
+            fieldElement: <testLibrary>::@extensionType::A::@field::it
         body: EmptyFunctionBody
           semicolon: ;
         declaredFragment: <testLibraryFragment> named@37

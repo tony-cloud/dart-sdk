@@ -3092,7 +3092,8 @@ class Function : public Object {
   ClassPtr Owner() const { return Owner(ptr()); }
   static ClassPtr Owner(FunctionPtr function);
   void set_owner(const Object& value) const;
-  ScriptPtr script() const;
+  ScriptPtr script() const { return script(ptr()); }
+  static ScriptPtr script(FunctionPtr function);
 #if !defined(DART_PRECOMPILED_RUNTIME)
   KernelProgramInfoPtr KernelProgramInfo() const;
 #endif
@@ -4629,7 +4630,8 @@ class Field : public Object {
   inline void set_field_id_unsafe(intptr_t field_id) const;
 
   ClassPtr Owner() const;
-  ScriptPtr Script() const;
+  ScriptPtr Script() const { return Script(ptr()); }
+  static ScriptPtr Script(FieldPtr field);
 #if !defined(DART_PRECOMPILED_RUNTIME)
   KernelProgramInfoPtr KernelProgramInfo() const;
 #endif
@@ -7092,8 +7094,7 @@ class Code : public Object {
 #else
     auto instr = InstructionsOf(code);
     if (instr == Instructions::null()) {
-      // TODO(alexmarkov): keep size in the Code objects.
-      return 0;
+      return code->untag()->instructions_length_;
     }
     return Instructions::Size(instr);
 #endif

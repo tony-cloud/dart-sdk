@@ -655,9 +655,9 @@ Future<CompilationResult> _runCodegenPhase(
       moduleOutputData.mainModule.moduleImportName,
       translator.functions.translatedProcedures,
       translator.internalizedStringsForJSRuntime,
-      translator.options.requireJsStringBuiltin,
       translator.options.enableDeferredLoading ||
           translator.options.enableMultiModuleStressTestMode,
+      options.supportsES6Modules,
     );
 
     final supportJs = _generateSupportJs(options.translatorOptions);
@@ -903,7 +903,7 @@ String _generateSupportJs(TranslatorOptions options) {
   final requiredFeatures = [
     supportsWasmGC,
     supportsWasmSimd,
-    if (options.requireJsStringBuiltin) supportsJsStringBuiltins,
+    supportsJsStringBuiltins,
   ];
   return '(${requiredFeatures.join('&&')})';
 }

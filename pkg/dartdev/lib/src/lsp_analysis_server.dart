@@ -204,9 +204,6 @@ class LspAnalysisServer {
     );
     var serverCapabilities = initializeResult.capabilities;
     var experimentalCapabilities = serverCapabilities.experimental;
-    // TODO(dantup): This should never occur unless the server we have spawned
-    //  is somehow older than this code change. Is it possible? How should we
-    //  handle it?
     assert(experimentalCapabilities is Map<String, Object?>);
     assert(
       (experimentalCapabilities as Map<String, Object?>).containsKey(
@@ -257,6 +254,23 @@ class LspAnalysisServer {
         position: pos,
       ),
       Hover.fromJson,
+    );
+  }
+
+  /// Sends a migrate request.
+  Future<DartMigrateResult?> migrate(
+    List<Uri> uris, {
+    bool? apply,
+    List<MigrationStep>? steps,
+  }) {
+    return _expectSuccessfulResponse(
+      CustomMethods.migrate,
+      DartMigrateParams(
+        uris: uris,
+        apply: apply,
+        steps: steps,
+      ),
+      DartMigrateResult.fromJson,
     );
   }
 

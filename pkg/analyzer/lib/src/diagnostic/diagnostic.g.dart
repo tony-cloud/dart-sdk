@@ -4928,6 +4928,24 @@ const DiagnosticWithoutArguments equalKeysInMapPattern =
       expectedTypes: [],
     );
 
+/// A warning code indicating that an exclude glob pattern is invalid.
+///
+/// Parameters:
+/// String pattern: the glob pattern
+const DiagnosticWithArguments<
+  LocatableDiagnostic Function({required String pattern})
+>
+excludeInvalidGlob = DiagnosticWithArguments(
+  name: 'exclude_invalid_glob',
+  problemMessage:
+      "The exclude glob pattern '{0}' shouldn't start with a forward slash.",
+  correctionMessage: "Remove the leading forward slash.",
+  type: DiagnosticType.STATIC_WARNING,
+  uniqueName: 'exclude_invalid_glob',
+  withArguments: _withArgumentsExcludeInvalidGlob,
+  expectedTypes: [ExpectedType.string],
+);
+
 /// No parameters.
 const DiagnosticWithoutArguments expectedCaseOrDefault =
     DiagnosticWithoutArgumentsImpl(
@@ -14084,28 +14102,6 @@ const DiagnosticWithoutArguments platformValueDisallowed =
       expectedTypes: [],
     );
 
-/// An error code indicating plugins have been specified in an "inner"
-/// analysis options file.
-///
-/// Parameters:
-/// String contextRoot: the root of the analysis context
-const DiagnosticWithArguments<
-  LocatableDiagnostic Function({required String contextRoot})
->
-pluginsInInnerOptions = DiagnosticWithArguments(
-  name: 'plugins_in_inner_options',
-  problemMessage:
-      "Plugins can only be specified in the root of a pub workspace or the root "
-      "of a package that isn't in a workspace.",
-  correctionMessage:
-      "Try specifying plugins in an analysis options file at '{0}'.",
-  hasPublishedDocs: true,
-  type: DiagnosticType.STATIC_WARNING,
-  uniqueName: 'plugins_in_inner_options',
-  withArguments: _withArgumentsPluginsInInnerOptions,
-  expectedTypes: [ExpectedType.string],
-);
-
 /// No parameters.
 const DiagnosticWithoutArguments positionalAfterNamedArgument =
     DiagnosticWithoutArgumentsImpl(
@@ -19864,6 +19860,12 @@ LocatableDiagnostic _withArgumentsEnumWithAbstractMember({
   ]);
 }
 
+LocatableDiagnostic _withArgumentsExcludeInvalidGlob({
+  required String pattern,
+}) {
+  return LocatableDiagnosticImpl(diag.excludeInvalidGlob, [pattern]);
+}
+
 LocatableDiagnostic _withArgumentsExpectedInstead({required String expected}) {
   return LocatableDiagnosticImpl(diag.expectedInstead, [expected]);
 }
@@ -21682,12 +21684,6 @@ LocatableDiagnostic _withArgumentsPermissionImpliesUnsupportedHardware({
   return LocatableDiagnosticImpl(diag.permissionImpliesUnsupportedHardware, [
     name,
   ]);
-}
-
-LocatableDiagnostic _withArgumentsPluginsInInnerOptions({
-  required String contextRoot,
-}) {
-  return LocatableDiagnosticImpl(diag.pluginsInInnerOptions, [contextRoot]);
 }
 
 LocatableDiagnostic _withArgumentsPrefixCollidesWithTopLevelMember({

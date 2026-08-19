@@ -247,7 +247,7 @@ void f() {
   $code;
 }
 ''');
-    var node = parseResult.findNode.singleAssignmentExpression;
+    var node = parseResult.findNode.singleDirectAssignment;
     _assertSource(code, node);
   }
 
@@ -263,7 +263,7 @@ void f() async => await e;
     var parseResult = parseTestCodeWithDiagnostics(r'''
 var v = a + b;
 ''');
-    var node = parseResult.findNode.singleBinaryExpression;
+    var node = parseResult.findNode.singleBinaryOperatorInvocation;
     _assertSource('a + b', node);
   }
 
@@ -271,7 +271,7 @@ var v = a + b;
     var parseResult = parseTestCodeWithDiagnostics(r'''
 var v = a * (b + c);
 ''');
-    var node = parseResult.findNode.binary('a *');
+    var node = parseResult.findNode.binaryOperatorInvocation('a *');
     _assertSource('a * (b + c)', node);
   }
 
@@ -883,6 +883,17 @@ var a;
 ''');
     var node = parseResult.findNode.unit;
     _assertSource('#!/bin/dartvm library my; var a;', node);
+  }
+
+  void test_visitCompoundAssignment() {
+    var code = 'a += b';
+    var parseResult = parseTestCodeWithDiagnostics('''
+void f() {
+  $code;
+}
+''');
+    var node = parseResult.findNode.singleCompoundAssignment;
+    _assertSource(code, node);
   }
 
   void test_visitConditionalExpression() {
@@ -2187,13 +2198,6 @@ void f () {
     _assertSource(code, node);
   }
 
-  void test_visitFunctionDeclaration_getter() {
-    var code = 'get foo {}';
-    var parseResult = parseTestCodeWithDiagnostics(code);
-    var node = parseResult.findNode.singleFunctionDeclaration;
-    _assertSource(code, node);
-  }
-
   void test_visitFunctionDeclaration_local_blockBody() {
     var code = 'void foo() {}';
     var parseResult = parseTestCodeWithDiagnostics('''
@@ -2443,6 +2447,17 @@ final x = a ?? (b ?? c);
     _assertSource('a ?? (b ?? c)', node);
   }
 
+  void test_visitIfNullAssignment() {
+    var code = 'a ??= b';
+    var parseResult = parseTestCodeWithDiagnostics('''
+void f() {
+  $code;
+}
+''');
+    var node = parseResult.findNode.singleIfNullAssignment;
+    _assertSource(code, node);
+  }
+
   void test_visitIfStatement_withElse() {
     var code = 'if (c) {} else {}';
     var parseResult = parseTestCodeWithDiagnostics('''
@@ -2604,7 +2619,16 @@ import 'a.dart' $code;
     var parseResult = parseTestCodeWithDiagnostics('''
 final x = $code;
 ''');
-    var node = parseResult.findNode.singleIndexExpression;
+    var node = parseResult.findNode.singleIndexExpression2;
+    _assertSource(code, node);
+  }
+
+  void test_visitIndexExpression_nullAware() {
+    var code = 'a?[0]';
+    var parseResult = parseTestCodeWithDiagnostics('''
+final x = $code;
+''');
+    var node = parseResult.findNode.singleIndexExpression2;
     _assertSource(code, node);
   }
 
@@ -3484,14 +3508,14 @@ void f([$code]) {}
     _assertSource(code, node);
   }
 
-  void test_visitPostfixExpression() {
+  void test_visitPostfixIncrement() {
     var code = 'a++';
     var parseResult = parseTestCodeWithDiagnostics('''
 int f() {
   $code;
 }
 ''');
-    var node = parseResult.findNode.singlePostfixExpression;
+    var node = parseResult.findNode.singlePostfixIncrement;
     _assertSource(code, node);
   }
 
@@ -3516,17 +3540,6 @@ int f() {
 }
 ''');
     var node = parseResult.findNode.singlePrefixedIdentifier;
-    _assertSource(code, node);
-  }
-
-  void test_visitPrefixExpression() {
-    var code = '-foo';
-    var parseResult = parseTestCodeWithDiagnostics('''
-int f() {
-  $code;
-}
-''');
-    var node = parseResult.findNode.singlePrefixExpression;
     _assertSource(code, node);
   }
 
@@ -3584,8 +3597,8 @@ class A() {
     _assertSource(code, node);
   }
 
-  void test_visitPropertyAccess() {
-    var code = '(foo).bar';
+  void test_visitPropertyAccess_conditional() {
+    var code = 'foo?.bar';
     var parseResult = parseTestCodeWithDiagnostics('''
 final x = $code;
 ''');
@@ -3593,12 +3606,12 @@ final x = $code;
     _assertSource(code, node);
   }
 
-  void test_visitPropertyAccess_conditional() {
-    var code = 'foo?.bar';
+  void test_visitPropertyExtraction() {
+    var code = '(foo).bar';
     var parseResult = parseTestCodeWithDiagnostics('''
 final x = $code;
 ''');
-    var node = parseResult.findNode.singlePropertyAccess;
+    var node = parseResult.findNode.singleReceiverPropertyExtraction;
     _assertSource(code, node);
   }
 
@@ -4291,6 +4304,13 @@ void f() {
     _assertSource(code, node);
   }
 
+  void test_visitTopLevelGetterDeclaration() {
+    var code = 'get foo {}';
+    var parseResult = parseTestCodeWithDiagnostics(code);
+    var node = parseResult.findNode.singleTopLevelGetterDeclaration;
+    _assertSource(code, node);
+  }
+
   void test_visitTopLevelVariableDeclaration_abstract() {
     var code = 'abstract var a;';
     var parseResult = parseTestCodeWithDiagnostics('''
@@ -4486,6 +4506,17 @@ class A$code {}
 class A$code {}
 ''');
     var node = parseResult.findNode.singleTypeParameterList;
+    _assertSource(code, node);
+  }
+
+  void test_visitUnaryOperatorInvocation() {
+    var code = '-foo';
+    var parseResult = parseTestCodeWithDiagnostics('''
+int f() {
+  $code;
+}
+''');
+    var node = parseResult.findNode.singleUnaryOperatorInvocation;
     _assertSource(code, node);
   }
 

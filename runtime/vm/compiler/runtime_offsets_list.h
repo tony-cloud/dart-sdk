@@ -113,6 +113,9 @@
   CONSTANT(Instructions, kPolymorphicEntryOffsetAOT)                           \
   CONSTANT(Instructions, kBarePayloadAlignment)                                \
   CONSTANT(Instructions, kNonBarePayloadAlignment)                             \
+  CONSTANT(NativeArguments, kArgcBitsPos)                                      \
+  CONSTANT(NativeArguments, kArgcBitsSize)                                     \
+  CONSTANT(NativeArguments, kGenericFunctionBitPos)                            \
   CONSTANT(NativeEntry, kNumCallWrapperArguments)                              \
   CONSTANT(Page, kBytesPerCardLog2)                                            \
   CONSTANT(Page, kPageMask)                                                    \
@@ -123,6 +126,7 @@
   CONSTANT(RecordShape, kMaxNumFields)                                         \
   CONSTANT(RecordShape, kNumFieldsMask)                                        \
   CONSTANT(String, kMaxElements)                                               \
+  CONSTANT(Symbols, kNumberOfOneCharCodeSymbols)                               \
   CONSTANT(OneByteString, kMaxNewSpaceElements)                                \
   CONSTANT(TwoByteString, kMaxNewSpaceElements)                                \
   CONSTANT(SubtypeTestCache, kFunctionTypeArguments)                           \

@@ -671,7 +671,7 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
   }
 
   @override
-  Constant visitBinaryExpression(BinaryExpression node) {
+  Constant visitBinaryOperatorInvocation(BinaryOperatorInvocation node) {
     var operatorElement = node.element;
     var operatorContainer = operatorElement?.enclosingElement;
     switch (operatorContainer) {
@@ -688,13 +688,13 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
     }
 
     TokenType operatorType = node.operator.type;
-    var leftResult = evaluateConstant(node.leftOperand2);
+    var leftResult = evaluateConstant(node.leftOperand as Expression);
     if (leftResult is! DartObjectImpl) {
       return leftResult;
     }
 
     // Evaluate eager operators.
-    var rightResult = evaluateConstant(node.rightOperand2);
+    var rightResult = evaluateConstant(node.rightOperand);
     if (rightResult is! DartObjectImpl) {
       return rightResult;
     }
@@ -1040,18 +1040,7 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
 
   @override
   Constant visitIntegerLiteral(IntegerLiteral node) {
-    if (node.staticType == _typeProvider.doubleType) {
-      return DartObjectImpl(
-        typeSystem,
-        _typeProvider.doubleType,
-        DoubleState(node.value?.toDouble()),
-      );
-    }
-    return DartObjectImpl(
-      typeSystem,
-      _typeProvider.intType,
-      IntState(node.value),
-    );
+    return _evaluateIntegerLiteral(node, negated: false);
   }
 
   @override
@@ -1212,6 +1201,21 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
       evaluateConstant(node.expression2);
 
   @override
+  Constant visitPostfixDecrement(PostfixDecrement node) {
+    return InvalidConstant.genericError(node: node);
+  }
+
+  @override
+  Constant visitPostfixIncrement(PostfixIncrement node) {
+    return InvalidConstant.genericError(node: node);
+  }
+
+  @override
+  Constant visitPrefixDecrement(PrefixDecrement node) {
+    return InvalidConstant.genericError(node: node);
+  }
+
+  @override
   Constant visitPrefixedIdentifier(covariant PrefixedIdentifierImpl node) {
     var prefixNode = node.prefix;
     var prefixElement = prefixNode.element;
@@ -1231,8 +1235,9 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
       if (prefixElement is! InterfaceElement) {
         var propertyAccessResult = _evaluatePropertyAccess(
           prefixResult,
-          node.identifier,
           node,
+          propertyName: node.identifier.name,
+          propertyElement: node.identifier.element,
           isNullAware: false,
         );
         if (propertyAccessResult != null) {
@@ -1251,35 +1256,8 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
   }
 
   @override
-  Constant visitPrefixExpression(PrefixExpression node) {
-    var operatorElement = node.element;
-    var operatorContainer = operatorElement?.enclosingElement;
-    switch (operatorContainer) {
-      case ExtensionElement():
-        return InvalidConstant.forEntity(
-          entity: node,
-          locatableDiagnostic: diag.constEvalExtensionMethod,
-        );
-      case ExtensionTypeElement():
-        return InvalidConstant.forEntity(
-          entity: node,
-          locatableDiagnostic: diag.constEvalExtensionTypeMethod,
-        );
-    }
-
-    var operand = evaluateConstant(node.operand2);
-    if (operand is! DartObjectImpl) {
-      return operand;
-    }
-    if (node.operator.type == TokenType.TILDE) {
-      return _dartObjectComputer.bitNot(node, operand);
-    } else if (node.operator.type == TokenType.MINUS) {
-      return _dartObjectComputer.negated(node, operand);
-    } else {
-      // TODO(srawlins): Use a specific error code.
-      // https://github.com/dart-lang/sdk/issues/47061
-      return InvalidConstant.genericError(node: node);
-    }
+  Constant visitPrefixIncrement(PrefixIncrement node) {
+    return InvalidConstant.genericError(node: node);
   }
 
   @override
@@ -1309,8 +1287,9 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
 
       var propertyAccessResult = _evaluatePropertyAccess(
         prefixResult,
-        node.propertyName,
         node,
+        propertyName: node.propertyName.name,
+        propertyElement: node.propertyName.element,
         isNullAware: node.isNullAware,
       );
       if (propertyAccessResult != null) {
@@ -1323,6 +1302,29 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
       identifier: node.propertyName,
       element: node.propertyName.element,
     );
+  }
+
+  @override
+  Constant visitReceiverPropertyExtraction(
+    covariant ReceiverPropertyExtractionImpl node,
+  ) {
+    var targetResult = evaluateConstant(node.receiver);
+    if (targetResult is! DartObjectImpl) {
+      return targetResult;
+    }
+
+    var propertyElement = switch (node.resolution) {
+      NamedReadResolutionWithElementImpl(:var element) => element,
+      _ => null,
+    };
+    return _evaluatePropertyAccess(
+          targetResult,
+          node,
+          propertyName: node.propertyName.lexeme,
+          propertyElement: propertyElement,
+          isNullAware: false,
+        ) ??
+        InvalidConstant.genericError(node: node);
   }
 
   @override
@@ -1473,6 +1475,42 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
 
   @override
   Constant visitTypeLiteral(TypeLiteral node) => evaluateConstant(node.type);
+
+  @override
+  Constant visitUnaryOperatorInvocation(UnaryOperatorInvocation node) {
+    var operatorElement = node.element;
+    switch (operatorElement?.enclosingElement) {
+      case ExtensionElement():
+        return InvalidConstant.forEntity(
+          entity: node,
+          locatableDiagnostic: diag.constEvalExtensionMethod,
+        );
+      case ExtensionTypeElement():
+        return InvalidConstant.forEntity(
+          entity: node,
+          locatableDiagnostic: diag.constEvalExtensionTypeMethod,
+        );
+    }
+
+    if (node.unaryOperator == UnaryOperator.negate) {
+      var operand = node.operand;
+      if (operand is IntegerLiteral) {
+        return _evaluateIntegerLiteral(operand, negated: true);
+      }
+    }
+
+    var operand = evaluateConstant(node.operand as Expression);
+    if (operand is! DartObjectImpl) {
+      return operand;
+    }
+    return switch (node.unaryOperator) {
+      UnaryOperator.negate => _dartObjectComputer.negated(node, operand),
+      UnaryOperator.bitwiseComplement => _dartObjectComputer.bitNot(
+        node,
+        operand,
+      ),
+    };
+  }
 
   /// Builds a list constant by adding the evaluated entries of [elements] to
   /// the given [list].
@@ -1870,18 +1908,36 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
     return result;
   }
 
+  DartObjectImpl _evaluateIntegerLiteral(
+    IntegerLiteral node, {
+    required bool negated,
+  }) {
+    if (node.staticType == _typeProvider.doubleType) {
+      return DartObjectImpl(
+        typeSystem,
+        _typeProvider.doubleType,
+        DoubleState(node.parseDoubleValue(negated: negated)),
+      );
+    }
+    return DartObjectImpl(
+      typeSystem,
+      _typeProvider.intType,
+      IntState(node.parseIntValue(negated: negated)),
+    );
+  }
+
   /// Attempt to evaluate a constant property access.
   ///
   /// Return a valid [DartObjectImpl] if the given [targetResult] represents a
-  /// `String` and the [identifier] is `length`, an [InvalidConstant] if there's
+  /// `String` and the [propertyName] is `length`, an [InvalidConstant] if there's
   /// an error, and `null` otherwise.
   Constant? _evaluatePropertyAccess(
     DartObjectImpl targetResult,
-    SimpleIdentifier identifier,
     AstNode errorNode, {
+    required String propertyName,
+    required Element? propertyElement,
     required bool isNullAware,
   }) {
-    var propertyElement = identifier.element;
     if (propertyElement is GetterElement && propertyElement.isStatic) {
       return null;
     }
@@ -1903,7 +1959,7 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
     var targetType = targetResult.type;
 
     // Evaluate a constant that reads the length of a `String`.
-    if (identifier.name == 'length') {
+    if (propertyName == 'length') {
       if (targetType is InterfaceType && targetType.isDartCoreString) {
         return _dartObjectComputer.stringLength(errorNode, targetResult);
       } else if (targetType.isDartCoreNull && isNullAware) {
@@ -1911,8 +1967,7 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
       }
     }
 
-    var element = identifier.element;
-    if (element != null && element is ExecutableElement && element.isStatic) {
+    if (propertyElement is ExecutableElement && propertyElement.isStatic) {
       return null;
     }
 
@@ -1920,7 +1975,7 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
     return InvalidConstant.forEntity(
       entity: errorNode,
       locatableDiagnostic: diag.constEvalPropertyAccess.withArguments(
-        propertyName: identifier.name,
+        propertyName: propertyName,
         type: targetType.getDisplayString(),
       ),
     );
@@ -1948,7 +2003,7 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
         : element;
 
     // TODO(srawlins): Remove this check when [FunctionReference]s are inserted
-    // for generic function instantiation for pre-constructor-references code.
+    // for generic function instantiation for pre-constructor-tear-offs code.
     if (expression is SimpleIdentifier &&
         (expression.tearOffTypeArgumentTypes?.any(hasTypeParameterReference) ??
             false)) {
@@ -2326,7 +2381,7 @@ class DartObjectComputer {
   DartObjectComputer(this._typeSystem, this._featureSet);
 
   Constant add(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2399,7 +2454,7 @@ class DartObjectComputer {
   }
 
   Constant divide(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2414,7 +2469,7 @@ class DartObjectComputer {
   }
 
   Constant eagerAnd(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2429,7 +2484,7 @@ class DartObjectComputer {
   }
 
   Constant eagerOr(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2444,7 +2499,7 @@ class DartObjectComputer {
   }
 
   Constant eagerXor(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2474,7 +2529,7 @@ class DartObjectComputer {
   }
 
   Constant greaterThan(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2489,7 +2544,7 @@ class DartObjectComputer {
   }
 
   Constant greaterThanOrEqual(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2504,7 +2559,7 @@ class DartObjectComputer {
   }
 
   Constant integerDivide(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2576,7 +2631,7 @@ class DartObjectComputer {
   }
 
   Constant lessThan(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2591,7 +2646,7 @@ class DartObjectComputer {
   }
 
   Constant lessThanOrEqual(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2617,7 +2672,7 @@ class DartObjectComputer {
   }
 
   Constant logicalShiftRight(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2632,7 +2687,7 @@ class DartObjectComputer {
   }
 
   Constant minus(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2658,7 +2713,7 @@ class DartObjectComputer {
   }
 
   Constant notEqual(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2684,7 +2739,7 @@ class DartObjectComputer {
   }
 
   Constant remainder(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2699,7 +2754,7 @@ class DartObjectComputer {
   }
 
   Constant shiftLeft(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2714,7 +2769,7 @@ class DartObjectComputer {
   }
 
   Constant shiftRight(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -2740,7 +2795,7 @@ class DartObjectComputer {
   }
 
   Constant times(
-    BinaryExpression node,
+    Expression node,
     DartObjectImpl leftOperand,
     DartObjectImpl rightOperand,
   ) {
@@ -3145,7 +3200,7 @@ class _ConstructorInvocationEvaluator {
         );
         switch (evaluationResult) {
           case DartObjectImpl():
-            var fieldName = initializer.fieldName.name;
+            var fieldName = initializer.fieldName2.lexeme;
             _fieldMap[fieldName] = evaluationResult;
             var getter = definingType.getGetter(fieldName);
             if (getter != null) {

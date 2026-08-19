@@ -833,6 +833,7 @@ final class Arm64Assembler extends Assembler with Uint32OutputBuffer {
     int instanceSize,
     Label slowPath, {
     required bool initializeFields,
+    Register initValueReg = nullReg,
   }) {
     final endReg = scratch1Reg;
     final newTopReg = scratch2Reg;
@@ -853,10 +854,10 @@ final class Arm64Assembler extends Assembler with Uint32OutputBuffer {
       if (instanceSize <= maxUnrolledSize) {
         int offset = vmOffsets.Instance_first_field_offset;
         for (; offset + 2 * wordSize <= instanceSize; offset += 2 * wordSize) {
-          stp(nullReg, nullReg, pairAddress(resultReg, offset));
+          stp(initValueReg, initValueReg, pairAddress(resultReg, offset));
         }
         if (offset < instanceSize) {
-          str(nullReg, address(resultReg, offset));
+          str(initValueReg, address(resultReg, offset));
           offset += wordSize;
         }
         assert(offset == instanceSize);
@@ -871,8 +872,8 @@ final class Arm64Assembler extends Assembler with Uint32OutputBuffer {
         final loop = Label();
         bind(loop);
         stp(
-          nullReg,
-          nullReg,
+          initValueReg,
+          initValueReg,
           WritebackRegOffsetAddress(
             fieldReg,
             2 * wordSize,
@@ -885,6 +886,63 @@ final class Arm64Assembler extends Assembler with Uint32OutputBuffer {
         cmp(fieldReg, newTopReg);
         b(loop, Condition.unsignedLess);
       }
+    }
+
+    addImmediate(resultReg, resultReg, heapObjectTag);
+  }
+
+  /// Generate code for inline variable-length array allocation.
+  void inlineArrayAllocation(
+    Register resultReg,
+    Register tagsReg,
+    Register instanceSizeReg,
+    Register lengthReg,
+    Register scratch1Reg,
+    Register scratch2Reg,
+    Label slowPath, {
+    required bool initializeFields,
+    int? lengthFieldOffset,
+    int? dataFieldOffset,
+    int? headerSize,
+    Register initValueReg = nullReg,
+  }) {
+    final endReg = scratch1Reg;
+    final newTopReg = scratch2Reg;
+    // Load Thread.top_ and Thread.end_.
+    ldp(resultReg, endReg, pairAddress(threadReg, vmOffsets.Thread_top_offset));
+    // TODO: get rid of this overflow check
+    adds(newTopReg, resultReg, instanceSizeReg);
+    b(slowPath, .unsignedGreaterOrEqual);
+    cmp(endReg, newTopReg);
+    b(slowPath, .unsignedLessOrEqual);
+
+    // TLAB has enough space. Update top and initialize object.
+    str(newTopReg, address(threadReg, vmOffsets.Thread_top_offset));
+    str(tagsReg, address(resultReg, vmOffsets.Object_tags_offset));
+    // TODO: figure out if we need store-store barrier here.
+
+    if (initializeFields) {
+      // TODO: support compressed pointers.
+      final fieldReg = scratch1Reg;
+
+      str(lengthReg, address(resultReg, lengthFieldOffset!));
+      addImmediate(fieldReg, resultReg, headerSize!);
+      if (dataFieldOffset != null) {
+        str(fieldReg, address(resultReg, dataFieldOffset));
+      }
+
+      final loop = Label();
+      bind(loop);
+      stp(
+        initValueReg,
+        initValueReg,
+        WritebackRegOffsetAddress(fieldReg, 2 * wordSize, isPostIndexed: true),
+      );
+      // There is at least two word (kAllocationRedZoneSize) gap at the end of page
+      // which makes it possible to initialize objects by two words at once and
+      // write slightly beyond the end.
+      cmp(fieldReg, newTopReg);
+      b(loop, Condition.unsignedLess);
     }
 
     addImmediate(resultReg, resultReg, heapObjectTag);
@@ -1114,6 +1172,17 @@ final class Arm64Assembler extends Assembler with Uint32OutputBuffer {
     madd(rd, rn, rm, ZR, sz);
   }
 
+  void umulh(Register rd, Register rn, Register rm) {
+    _emitMul(
+      B22 | B23 | B24 | B25 | B27 | B28,
+      rd,
+      rn,
+      rm,
+      ZR,
+      OperandSize.s64,
+    );
+  }
+
   void _emitMul(
     int opcode,
     Register rd,
@@ -1175,6 +1244,14 @@ final class Arm64Assembler extends Assembler with Uint32OutputBuffer {
       condition,
       sz,
     );
+  }
+
+  void csetm(
+    Register rd,
+    Condition condition, [
+    OperandSize sz = OperandSize.s64,
+  ]) {
+    csinv(rd, ZR, ZR, condition.inverted, sz);
   }
 
   void csneg(
@@ -1443,6 +1520,26 @@ final class Arm64Assembler extends Assembler with Uint32OutputBuffer {
     );
   }
 
+  void clz(Register rd, Register rn, [OperandSize sz = OperandSize.s64]) {
+    _emitDataProcessing1(B12, rd, rn, sz);
+  }
+
+  void _emitDataProcessing1(
+    int opcode,
+    Register rd,
+    Register rn,
+    OperandSize sz,
+  ) {
+    assert(sz.is32or64);
+    emit(
+      (B22 | B23 | B25 | B27 | B28 | B30) |
+          opcode |
+          rd.encodingRd() |
+          rn.encodingRn() |
+          (sz.is64 ? B31 : 0),
+    );
+  }
+
   // Logical operations with immediate or shifted register.
   void and(
     Register rd,
@@ -1655,7 +1752,7 @@ final class Arm64Assembler extends Assembler with Uint32OutputBuffer {
   void ldr(Register rt, Address a, [OperandSize sz = OperandSize.s64]) {
     final needsSignExtension = !sz.is64 && sz.isSigned;
     _emitLoadStore(
-      B22 | B27 | B28 | B29 | (needsSignExtension ? B23 : 0),
+      B27 | B28 | B29 | (needsSignExtension ? B23 : B22),
       rt,
       a,
       sz,
@@ -1675,6 +1772,10 @@ final class Arm64Assembler extends Assembler with Uint32OutputBuffer {
               rt.encodingRt() |
               a.encoding(sz) |
               (sz.log2sizeInBytes << 30),
+        );
+      case RegExtRegAddress():
+        emit(
+          opcode | rt.encodingRt() | a.encoding | (sz.log2sizeInBytes << 30),
         );
       case WritebackRegOffsetAddress():
         // Same value and base registers in case of pre- and
@@ -2368,6 +2469,18 @@ extension on WritebackRegOffsetAddress {
   }
 }
 
+extension on RegExtRegAddress {
+  int get encoding {
+    assert(ext == .UXTW || ext == .UXTX || ext == .SXTW || ext == .SXTX);
+    return B11 |
+        B21 |
+        base.encodingRn(allowSP: true) |
+        (scaled ? B12 : 0) |
+        (ext.index << 13) |
+        reg.encodingRm();
+  }
+}
+
 extension on Label {
   int encodingImm14(int branchOffset) {
     final relativeOffset = relativeBranchOffset(branchOffset);
@@ -2390,20 +2503,38 @@ extension on Label {
 
 extension on Condition {
   int get encoding => switch (this) {
-    Condition.equal => 0, // EQ
-    Condition.notEqual => 1, // NE
-    Condition.unsignedGreaterOrEqual => 2, // CS/HS
-    Condition.unsignedLess => 3, // CC/LO
-    Condition.negative => 4, // MI
-    Condition.positiveOrZero => 5, // PL
-    Condition.overflow => 6, // VS
-    Condition.noOverflow => 7, // VC
-    Condition.unsignedGreater => 8, // HI
-    Condition.unsignedLessOrEqual => 9, // LS
-    Condition.greaterOrEqual => 10, // GE
-    Condition.less => 11, // LT
-    Condition.greater => 12, // GT
-    Condition.lessOrEqual => 13, // LE
-    Condition.unconditional => 14, // AL
+    .equal => 0, // EQ
+    .notEqual => 1, // NE
+    .unsignedGreaterOrEqual => 2, // CS/HS
+    .unsignedLess => 3, // CC/LO
+    .negative => 4, // MI
+    .positiveOrZero => 5, // PL
+    .overflow => 6, // VS
+    .noOverflow => 7, // VC
+    .unsignedGreater => 8, // HI
+    .unsignedLessOrEqual => 9, // LS
+    .greaterOrEqual => 10, // GE
+    .less => 11, // LT
+    .greater => 12, // GT
+    .lessOrEqual => 13, // LE
+    .unconditional => 14, // AL
+  };
+
+  Condition get inverted => switch (this) {
+    .equal => .notEqual,
+    .notEqual => .equal,
+    .unsignedGreaterOrEqual => .unsignedLess,
+    .unsignedLess => .unsignedGreaterOrEqual,
+    .negative => .positiveOrZero,
+    .positiveOrZero => .negative,
+    .overflow => .noOverflow,
+    .noOverflow => .overflow,
+    .unsignedGreater => .unsignedLessOrEqual,
+    .unsignedLessOrEqual => .unsignedGreater,
+    .greaterOrEqual => .less,
+    .less => .greaterOrEqual,
+    .greater => .lessOrEqual,
+    .lessOrEqual => .greater,
+    .unconditional => throw '${this} cannot be negated',
   };
 }

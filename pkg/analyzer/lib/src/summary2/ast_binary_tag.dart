@@ -30,6 +30,28 @@ enum ElementTag {
 
 enum ImportElementPrefixKind { isDeferred, isNotDeferred, isNull }
 
+enum IndexReadResolutionTag { dynamic_, invalid, method }
+
+enum IndexWriteResolutionTag { dynamic_, invalid, method }
+
+enum NamedReadResolutionTag {
+  getterInvocation,
+  invalid,
+  variableRead,
+  dynamicPropertyRead,
+  executableTearOff,
+  recordFieldRead,
+  functionCallTearOff,
+  functionInterfaceCallTearOff,
+}
+
+enum NamedWriteResolutionTag {
+  invalid,
+  setterInvocation,
+  variableWrite,
+  dynamicPropertyWrite,
+}
+
 class Tag {
   static const int Nothing = 0;
   static const int Something = 1;
@@ -41,9 +63,9 @@ class Tag {
   static const int AssertInitializer = 82;
   static const int AssignmentExpression = 96;
   static const int AwaitExpression = 100;
-  static const int BinaryExpression = 52;
   static const int BooleanLiteral = 4;
   static const int CascadeExpression = 95;
+  static const int CompoundAssignment = 138;
   static const int ConditionalExpression = 51;
   static const int ConstructorFieldInitializer = 50;
   static const int ConstructorTearOff = 101;
@@ -99,11 +121,27 @@ class Tag {
   static const int LogicalAnd = 125;
   static const int LogicalOr = 126;
   static const int IfNull = 127;
-
+  static const int UnaryOperatorInvocation = 128;
+  static const int BinaryOperatorInvocation = 129;
+  static const int PostfixDecrement = 132;
+  static const int PostfixIncrement = 130;
+  static const int PrefixDecrement = 133;
+  static const int PrefixIncrement = 131;
+  static const int DirectAssignment = 134;
+  static const int UnqualifiedNameAssignmentTarget = 135;
+  static const int IfNullAssignment = 136;
+  static const int InvalidExpressionAssignmentTarget = 137;
+  static const int ReceiverPropertyAssignmentTarget = 139;
+  static const int ReceiverPropertyExtraction = 140;
+  static const int IndexAssignmentTarget = 141;
+  static const int IndexExpression2 = 142;
+  static const int CascadeSection = 143;
+  static const int CascadeIndexExpression = 144;
+  static const int CascadeIndexAssignmentTarget = 145;
+  static const int CascadePropertyExtraction = 146;
+  static const int CascadePropertyAssignmentTarget = 147;
   static const int NullLiteral = 49;
   static const int ParenthesizedExpression = 53;
-  static const int PostfixExpression = 94;
-  static const int PrefixExpression = 79;
   static const int PrefixedIdentifier = 32;
   static const int PropertyAccess = 62;
   static const int RecordLiteral = 105;

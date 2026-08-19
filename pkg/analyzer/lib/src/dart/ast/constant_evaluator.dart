@@ -415,7 +415,7 @@ class ConstantEvaluator extends GeneralizingAstVisitor<Object> {
 /// The implementations are kept separate so that the two AST views can
 /// evolve independently.
 @Deprecated('This has no uses in package:analyzer and not exhaustive.')
-class ConstantEvaluator2 extends GeneralizingAstVisitor2<Object> {
+class ConstantEvaluator2 extends UnifyingAstVisitor2<Object> {
   /// The value returned for expressions (or non-expression nodes) that are not
   /// compile-time constant expressions.
   static Object NOT_A_CONSTANT = Object();
@@ -434,7 +434,7 @@ class ConstantEvaluator2 extends GeneralizingAstVisitor2<Object> {
   }
 
   @override
-  Object? visitBinaryExpression(BinaryExpression node) {
+  Object? visitBinaryOperatorInvocation(BinaryOperatorInvocation node) {
     var leftOperand = node.leftOperand.accept2(this);
     if (identical(leftOperand, NOT_A_CONSTANT)) {
       return leftOperand;
@@ -552,7 +552,7 @@ class ConstantEvaluator2 extends GeneralizingAstVisitor2<Object> {
       break;
     }
     // TODO(brianwilkerson): This doesn't handle numeric conversions.
-    return visitExpression(node);
+    return visitNode(node);
   }
 
   @override
@@ -663,30 +663,11 @@ class ConstantEvaluator2 extends GeneralizingAstVisitor2<Object> {
       _getConstantValue(null);
 
   @override
-  Object? visitPrefixExpression(PrefixExpression node) {
-    var operand = node.operand.accept2(this);
-    if (identical(operand, NOT_A_CONSTANT)) {
-      return operand;
-    }
-    while (true) {
-      if (node.operator.type == TokenType.TILDE) {
-        if (operand is int) {
-          return ~operand;
-        }
-      } else if (node.operator.type == TokenType.MINUS) {
-        if (operand == null) {
-          return null;
-        } else if (operand is num) {
-          return -operand;
-        }
-      } else {}
-      break;
-    }
-    return NOT_A_CONSTANT;
-  }
+  Object? visitPropertyAccess(PropertyAccess node) => _getConstantValue(null);
 
   @override
-  Object? visitPropertyAccess(PropertyAccess node) => _getConstantValue(null);
+  Object? visitReceiverPropertyExtraction(ReceiverPropertyExtraction node) =>
+      _getConstantValue(null);
 
   @override
   Object? visitSetOrMapLiteral(SetOrMapLiteral node) {
@@ -743,6 +724,20 @@ class ConstantEvaluator2 extends GeneralizingAstVisitor2<Object> {
       buffer.write(component.lexeme);
     }
     return buffer.toString();
+  }
+
+  @override
+  Object? visitUnaryOperatorInvocation(UnaryOperatorInvocation node) {
+    var operand = (node.operand as Expression).accept2(this);
+    if (identical(operand, NOT_A_CONSTANT)) {
+      return operand;
+    }
+    return switch (node.unaryOperator) {
+      UnaryOperator.negate when operand == null => null,
+      UnaryOperator.negate when operand is num => -operand,
+      UnaryOperator.bitwiseComplement when operand is int => ~operand,
+      _ => NOT_A_CONSTANT,
+    };
   }
 
   /// Return the constant value of the static constant represented by the given

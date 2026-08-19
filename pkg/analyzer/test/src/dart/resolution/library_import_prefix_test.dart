@@ -57,7 +57,7 @@ ConstructorInvocation
         staticType: InvalidType
     rightParenthesis: )
   staticType: C<dynamic>
-InstanceCreationExpression
+V1: InstanceCreationExpression
   keyword: new
   constructorName: ConstructorName
     type: NamedType
@@ -154,6 +154,31 @@ SimpleIdentifier
   token: p
   element: <testLibraryFragment>::@prefix::p
   staticType: null
+''');
+  }
+
+  test_declaration() async {
+    var result = await resolveTestCodeWithDiagnostics(r'''
+// ignore: unused_import
+import 'dart:async' as p;
+''');
+
+    var node = result.findNode.singleImportDirective;
+    assertResolvedNodeText(node, r'''
+ImportDirective
+  importKeyword: import
+  uri: SimpleStringLiteral
+    literal: 'dart:async'
+  asKeyword: as
+  prefixName: p
+  semicolon: ;
+  prefix: SimpleIdentifier
+    token: p
+    element: <testLibraryFragment>::@prefix::p
+    staticType: null
+  libraryImport: LibraryImport
+    uri: DirectiveUriWithLibrary
+      uri: dart:async
 ''');
   }
 

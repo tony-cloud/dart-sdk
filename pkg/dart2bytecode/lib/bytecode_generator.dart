@@ -812,7 +812,7 @@ class BytecodeGenerator extends RecursiveVisitor {
   }
 
   ParameterDeclaration getParameterDeclaration(FunctionParameter parameter) {
-    final name = parameter.cosmeticName!;
+    final name = parameter.parameterName;
     final lib = name.startsWith('_') ? enclosingMember!.enclosingLibrary : null;
     final nameHandle = objectTable.getNameHandle(lib, name);
     final typeHandle = objectTable.getHandle(parameter.type)!;
@@ -2541,7 +2541,7 @@ class BytecodeGenerator extends RecursiveVisitor {
   void _genArgumentTypeCheck(FunctionParameter variable) {
     final DartType type = variable.type;
     asm.emitPush(locals.getParamIndexInFrame(variable));
-    _genAssertAssignable(type, name: variable.cosmeticName);
+    _genAssertAssignable(type, name: variable.parameterName);
     asm.emitDrop1();
   }
 
@@ -2706,7 +2706,7 @@ class BytecodeGenerator extends RecursiveVisitor {
     for (var v in function.positionalParameters) {
       parameters.add(
         new NameAndType(
-          objectTable.getPublicNameHandle(v.cosmeticName!),
+          objectTable.getPublicNameHandle(v.parameterName),
           objectTable.getHandle(v.type)!,
         ),
       );
@@ -4292,7 +4292,7 @@ class BytecodeGenerator extends RecursiveVisitor {
   @override
   void visitFunctionDeclaration(ast.FunctionDeclaration node) {
     _genPushContextIfCaptured(node.variable);
-    _genClosure(node, node.variable.cosmeticName!, node.function);
+    _genClosure(node, node.variable.name, node.function);
     asm.emitSourcePosition();
     _genStoreVar(node.variable);
   }

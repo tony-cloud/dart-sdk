@@ -1590,7 +1590,7 @@ void OneByteStringFromCharCodeInstr::EmitNativeCode(
   __ movq(result,
           compiler::Address(result, char_code,
                             TIMES_HALF_WORD_SIZE,  // Char code is a smi.
-                            Symbols::kNullCharCodeSymbolOffset * kWordSize));
+                            0));
 }
 
 LocationSummary* StringToCharCodeInstr::MakeLocationSummary(Zone* zone,
@@ -4291,6 +4291,7 @@ DEFINE_EMIT(SimdBinaryOp,
   SIMD_OP_FLOAT_ARITH(V, Sqrt, sqrt)                                           \
   SIMD_OP_FLOAT_ARITH(V, Negate, negate)                                       \
   SIMD_OP_FLOAT_ARITH(V, Abs, abs)                                             \
+  V(Int32x4Not, notps)                                                         \
   V(Float32x4Reciprocal, rcpps)                                                \
   V(Float32x4ReciprocalSqrt, rsqrtps)
 
@@ -6332,6 +6333,11 @@ void BinaryUint32OpInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
 }
 
 DEFINE_BACKEND(UnaryUint32Op, (SameAsFirstInput, Register value)) {
+  ASSERT(instr->op_kind() == Token::kBIT_NOT);
+  __ notl(value);
+}
+
+DEFINE_BACKEND(UnaryInt32Op, (SameAsFirstInput, Register value)) {
   ASSERT(instr->op_kind() == Token::kBIT_NOT);
   __ notl(value);
 }

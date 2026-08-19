@@ -10,6 +10,8 @@ import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/error/error.dart';
+// ignore: implementation_imports
+import 'package:analyzer/src/dart/element/extensions.dart';
 
 import '../analyzer.dart';
 import '../diagnostic.dart' as diag;
@@ -48,6 +50,7 @@ class NoDynamicCasts extends AnalysisRule {
       ..addIfStatement(this, visitor)
       ..addListLiteral(this, visitor)
       ..addPrefixExpression(this, visitor)
+      ..addRecordLiteral(this, visitor)
       ..addReturnStatement(this, visitor)
       ..addSetOrMapLiteral(this, visitor)
       ..addVariableDeclaration(this, visitor)
@@ -126,11 +129,17 @@ class _Visitor(final AnalysisRule _rule, final RuleContext _context)
 
   @override
   void visitIfElement(IfElement node) {
+    // Check if the expression is implicitly cast to bool, _only_ if this is not
+    // an if-case.
+    if (node.caseClause != null) return;
     _check(node.expression, _context.typeProvider.boolType);
   }
 
   @override
   void visitIfStatement(IfStatement node) {
+    // Check if the expression is implicitly cast to bool, _only_ if this is not
+    // an if-case.
+    if (node.caseClause != null) return;
     _check(node.expression, _context.typeProvider.boolType);
   }
 
@@ -148,6 +157,21 @@ class _Visitor(final AnalysisRule _rule, final RuleContext _context)
   void visitPrefixExpression(PrefixExpression node) {
     if (node.operator.type == TokenType.BANG) {
       _check(node.operand, _context.typeProvider.boolType);
+    }
+  }
+
+  @override
+  void visitRecordLiteral(RecordLiteral node) {
+    var type = node.staticType;
+    if (type is! RecordType) return;
+    var positionalIndex = 0;
+    for (var field in node.fields) {
+      var fieldType = switch (field) {
+        RecordLiteralNamedField(:var name) =>
+          type.namedField(name.lexeme)?.type,
+        _ => type.positionalFields.elementAtOrNull(positionalIndex++)?.type,
+      };
+      _check(field.fieldExpression, fieldType);
     }
   }
 

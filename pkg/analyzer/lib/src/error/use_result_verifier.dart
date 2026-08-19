@@ -48,6 +48,12 @@ class UseResultVerifier {
     _check(node, element);
   }
 
+  void checkPropertyExtraction(PropertyExtraction node) {
+    if (node.resolution case NamedReadResolutionWithElementImpl(:var element)) {
+      _check(node, element);
+    }
+  }
+
   void checkSimpleIdentifier(SimpleIdentifier node) {
     if (node.inDeclarationContext()) {
       return;
@@ -185,8 +191,10 @@ class UseResultVerifier {
         parent is IfElement ||
         parent is LogicalNot ||
         parent is ParenthesizedExpression ||
-        parent is PrefixExpression ||
-        parent is SpreadElement) {
+        parent is PrefixIncrement ||
+        parent is PrefixDecrement ||
+        parent is SpreadElement ||
+        parent is UnaryOperatorInvocation) {
       return _isUsed(parent);
     }
 
@@ -202,7 +210,9 @@ class UseResultVerifier {
         // Node should always be RHS so no need to check for a property
         // assignment.
         parent is AssignmentExpression ||
-        parent is BinaryExpression ||
+        parent is DirectAssignment ||
+        parent is IfNullAssignment ||
+        parent is BinaryOperatorInvocation ||
         parent is IfNull ||
         parent is ConstructorFieldInitializer ||
         parent is DoStatement ||
@@ -211,7 +221,9 @@ class UseResultVerifier {
         parent is ForLoopParts ||
         parent is FunctionExpressionInvocation ||
         parent is IfStatement ||
+        parent is IndexAssignmentTarget ||
         parent is IndexExpression ||
+        parent is IndexExpression2 ||
         parent is InterpolationExpression ||
         parent is ListLiteral ||
         parent is MapLiteralEntry ||
@@ -220,6 +232,7 @@ class UseResultVerifier {
         parent is PatternAssignment ||
         parent is PatternVariableDeclaration ||
         parent is PropertyAccess ||
+        parent is PropertyExtraction ||
         parent is RecordLiteral ||
         parent is RecordLiteralNamedField ||
         parent is ReturnStatement ||

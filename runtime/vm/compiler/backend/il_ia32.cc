@@ -1389,7 +1389,7 @@ void OneByteStringFromCharCodeInstr::EmitNativeCode(
   __ movl(result,
           compiler::Address(result, char_code,
                             TIMES_HALF_WORD_SIZE,  // Char code is a smi.
-                            Symbols::kNullCharCodeSymbolOffset * kWordSize));
+                            0));
 }
 
 LocationSummary* StringToCharCodeInstr::MakeLocationSummary(Zone* zone,
@@ -4092,6 +4092,7 @@ DEFINE_EMIT(SimdBinaryOp,
   SIMD_OP_FLOAT_ARITH(V, Sqrt, sqrt)                                           \
   SIMD_OP_FLOAT_ARITH(V, Negate, negate)                                       \
   SIMD_OP_FLOAT_ARITH(V, Abs, abs)                                             \
+  V(Int32x4Not, notps)                                                         \
   V(Float32x4Reciprocal, reciprocalps)                                         \
   V(Float32x4ReciprocalSqrt, rsqrtps)
 
@@ -5947,6 +5948,26 @@ LocationSummary* UnaryUint32OpInstr::MakeLocationSummary(Zone* zone,
 }
 
 void UnaryUint32OpInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
+  Register out = locs()->out(0).reg();
+  ASSERT(locs()->in(0).reg() == out);
+
+  ASSERT(op_kind() == Token::kBIT_NOT);
+
+  __ notl(out);
+}
+
+LocationSummary* UnaryInt32OpInstr::MakeLocationSummary(Zone* zone,
+                                                        bool opt) const {
+  const intptr_t kNumInputs = 1;
+  const intptr_t kNumTemps = 0;
+  LocationSummary* summary = new (zone)
+      LocationSummary(zone, kNumInputs, kNumTemps, LocationSummary::kNoCall);
+  summary->set_in(0, Location::RequiresRegister());
+  summary->set_out(0, Location::SameAsFirstInput());
+  return summary;
+}
+
+void UnaryInt32OpInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   Register out = locs()->out(0).reg();
   ASSERT(locs()->in(0).reg() == out);
 

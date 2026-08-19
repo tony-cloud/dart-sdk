@@ -98,18 +98,17 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
   }
 
   @override
-  void visitBinaryExpression(BinaryExpression node) {
-    _writeByte(Tag.BinaryExpression);
+  void visitBinaryOperatorInvocation(BinaryOperatorInvocation node) {
+    _writeByte(Tag.BinaryOperatorInvocation);
 
-    _writeNode(node.leftOperand2);
-    _writeNode(node.rightOperand2);
+    _writeNode(node.leftOperand);
+    _writeNode(node.rightOperand);
 
     var operatorToken = node.operator.type;
     var binaryToken = TokensWriter.astToBinaryTokenType(operatorToken);
     _writeByte(binaryToken.index);
 
     _sink.writeElement(node.element);
-    _sink.writeType(node.staticInvokeType);
     _storeExpression(node);
   }
 
@@ -124,7 +123,67 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
   void visitCascadeExpression(CascadeExpression node) {
     _writeByte(Tag.CascadeExpression);
     _writeNode(node.target2);
-    _writeNodeList(node.cascadeSections2);
+    _writeNodeList(node.sections);
+  }
+
+  @override
+  void visitCascadeIndexAssignmentTarget(
+    covariant CascadeIndexAssignmentTargetImpl node,
+  ) {
+    _writeByte(Tag.CascadeIndexAssignmentTarget);
+    _writeNode(node.index);
+    _sink.writeOptionalObject(node.read, _writeIndexReadResolution);
+    _sink.writeOptionalObject(node.write, _writeIndexWriteResolution);
+  }
+
+  @override
+  void visitCascadeIndexExpression(covariant CascadeIndexExpressionImpl node) {
+    _writeByte(Tag.CascadeIndexExpression);
+    _writeNode(node.index);
+    _sink.writeOptionalObject(node.resolution, _writeIndexReadResolution);
+    _storeExpression(node);
+  }
+
+  @override
+  void visitCascadePropertyAssignmentTarget(
+    covariant CascadePropertyAssignmentTargetImpl node,
+  ) {
+    _writeByte(Tag.CascadePropertyAssignmentTarget);
+    _writeStringReference(node.propertyName.lexeme);
+    _sink.writeOptionalObject(node.read, _writeNamedReadResolution);
+    _sink.writeOptionalObject(node.write, _writeNamedWriteResolution);
+  }
+
+  @override
+  void visitCascadePropertyExtraction(
+    covariant CascadePropertyExtractionImpl node,
+  ) {
+    _writeByte(Tag.CascadePropertyExtraction);
+    _writeStringReference(node.propertyName.lexeme);
+    _sink.writeOptionalObject(node.resolution, _writeNamedReadResolution);
+    _storeExpression(node);
+  }
+
+  @override
+  void visitCascadeSection(CascadeSection node) {
+    _writeByte(Tag.CascadeSection);
+    _writeByte(node.isNullAware ? 1 : 0);
+    _writeNode(node.body);
+  }
+
+  @override
+  void visitCompoundAssignment(CompoundAssignment node) {
+    _writeByte(Tag.CompoundAssignment);
+    _writeNode(node.target);
+    _writeNode(node.value);
+
+    var operatorToken = node.operator.type;
+    var binaryToken = TokensWriter.astToBinaryTokenType(operatorToken);
+    _writeByte(binaryToken.index);
+
+    _sink.writeElement(node.element);
+    _sink.writeType(node.operatorResultType);
+    _storeExpression(node);
   }
 
   @override
@@ -142,7 +201,8 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
 
     _writeByte(AstBinaryFlags.encode(hasThis: node.thisKeyword != null));
 
-    _writeNode(node.fieldName);
+    _writeStringReference(node.fieldName2.lexeme);
+    _sink.writeElement(node.fieldElement);
     _writeNode(node.expression2);
   }
 
@@ -219,6 +279,14 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
     _writeByte(Tag.DelimitedFormalParameters);
     _writeByte(AstBinaryFlags.encode(isNamed: node.isNamed));
     _writeNodeList(node.formalParameters);
+  }
+
+  @override
+  void visitDirectAssignment(DirectAssignment node) {
+    _writeByte(Tag.DirectAssignment);
+    _writeNode(node.target);
+    _writeNode(node.value);
+    _storeExpression(node);
   }
 
   @override
@@ -375,6 +443,14 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
   }
 
   @override
+  void visitIfNullAssignment(IfNullAssignment node) {
+    _writeByte(Tag.IfNullAssignment);
+    _writeNode(node.target);
+    _writeNode(node.value);
+    _storeExpression(node);
+  }
+
+  @override
   void visitImplicitCallReference(ImplicitCallReference node) {
     _writeByte(Tag.ImplicitCallReference);
     _writeNode(node.expression2);
@@ -394,6 +470,16 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
   }
 
   @override
+  void visitIndexAssignmentTarget(covariant IndexAssignmentTargetImpl node) {
+    _writeByte(Tag.IndexAssignmentTarget);
+    _writeByte(AstBinaryFlags.encode(hasQuestion: node.question != null));
+    _writeNode(node.receiver);
+    _writeNode(node.index);
+    _sink.writeOptionalObject(node.read, _writeIndexReadResolution);
+    _sink.writeOptionalObject(node.write, _writeIndexWriteResolution);
+  }
+
+  @override
   void visitIndexExpression(IndexExpression node) {
     _writeByte(Tag.IndexExpression);
     _writeByte(
@@ -407,6 +493,16 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
 
     _sink.writeElement(node.element);
 
+    _storeExpression(node);
+  }
+
+  @override
+  void visitIndexExpression2(covariant IndexExpression2Impl node) {
+    _writeByte(Tag.IndexExpression2);
+    _writeByte(AstBinaryFlags.encode(hasQuestion: node.question != null));
+    _writeNode(node.receiver);
+    _writeNode(node.index);
+    _sink.writeOptionalObject(node.resolution, _writeIndexReadResolution);
     _storeExpression(node);
   }
 
@@ -462,6 +558,14 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
     _writeByte(Tag.InterpolationString);
     _writeStringReference(node.contents.lexeme);
     _writeStringReference(node.value);
+  }
+
+  @override
+  void visitInvalidExpressionAssignmentTarget(
+    InvalidExpressionAssignmentTarget node,
+  ) {
+    _writeByte(Tag.InvalidExpressionAssignmentTarget);
+    _writeNode(node.expression);
   }
 
   @override
@@ -604,23 +708,24 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
   }
 
   @override
-  void visitPostfixExpression(PostfixExpression node) {
-    _writeByte(Tag.PostfixExpression);
+  void visitPostfixDecrement(PostfixDecrement node) {
+    _writeByte(Tag.PostfixDecrement);
+    _writeNode(node.target);
+    _writeIncrementOrDecrementResolution(node);
+  }
 
-    _writeNode(node.operand2);
+  @override
+  void visitPostfixIncrement(PostfixIncrement node) {
+    _writeByte(Tag.PostfixIncrement);
+    _writeNode(node.target);
+    _writeIncrementOrDecrementResolution(node);
+  }
 
-    var operatorToken = node.operator.type;
-    var binaryToken = TokensWriter.astToBinaryTokenType(operatorToken);
-    _writeByte(binaryToken.index);
-
-    _sink.writeElement(node.element);
-    if (operatorToken.isIncrementOperator) {
-      _sink.writeElement(node.readElement);
-      _sink.writeType(node.readType);
-      _sink.writeElement(node.writeElement);
-      _sink.writeType(node.writeType);
-    }
-    _storeExpression(node);
+  @override
+  void visitPrefixDecrement(PrefixDecrement node) {
+    _writeByte(Tag.PrefixDecrement);
+    _writeNode(node.target);
+    _writeIncrementOrDecrementResolution(node);
   }
 
   @override
@@ -634,24 +739,10 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
   }
 
   @override
-  void visitPrefixExpression(PrefixExpression node) {
-    _writeByte(Tag.PrefixExpression);
-
-    var operatorToken = node.operator.type;
-    var binaryToken = TokensWriter.astToBinaryTokenType(operatorToken);
-    _writeByte(binaryToken.index);
-
-    _writeNode(node.operand2);
-
-    _sink.writeElement(node.element);
-    if (operatorToken.isIncrementOperator) {
-      _sink.writeElement(node.readElement);
-      _sink.writeType(node.readType);
-      _sink.writeElement(node.writeElement);
-      _sink.writeType(node.writeType);
-    }
-
-    _storeExpression(node);
+  void visitPrefixIncrement(PrefixIncrement node) {
+    _writeByte(Tag.PrefixIncrement);
+    _writeNode(node.target);
+    _writeIncrementOrDecrementResolution(node);
   }
 
   @override
@@ -676,6 +767,30 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
     _writeOptionalNode(node.target2);
     _writeNode(node.propertyName);
     // TODO(scheglov): Get from the property?
+    _storeExpression(node);
+  }
+
+  @override
+  void visitReceiverPropertyAssignmentTarget(
+    covariant ReceiverPropertyAssignmentTargetImpl node,
+  ) {
+    _writeByte(Tag.ReceiverPropertyAssignmentTarget);
+    _writeNode(node.receiver);
+    _writeByte(TokensWriter.astToBinaryTokenType(node.operator.type).index);
+    _writeStringReference(node.propertyName.lexeme);
+    _sink.writeOptionalObject(node.read, _writeNamedReadResolution);
+    _sink.writeOptionalObject(node.write, _writeNamedWriteResolution);
+  }
+
+  @override
+  void visitReceiverPropertyExtraction(
+    covariant ReceiverPropertyExtractionImpl node,
+  ) {
+    _writeByte(Tag.ReceiverPropertyExtraction);
+    _writeNode(node.receiver);
+    _writeByte(TokensWriter.astToBinaryTokenType(node.operator.type).index);
+    _writeStringReference(node.propertyName.lexeme);
+    _sink.writeOptionalObject(node.resolution, _writeNamedReadResolution);
     _storeExpression(node);
   }
 
@@ -895,6 +1010,28 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
   }
 
   @override
+  void visitUnaryOperatorInvocation(UnaryOperatorInvocation node) {
+    _writeByte(Tag.UnaryOperatorInvocation);
+
+    var binaryToken = TokensWriter.astToBinaryTokenType(node.operator.type);
+    _writeByte(binaryToken.index);
+    _writeNode(node.operand);
+
+    _storeExpression(node);
+    _sink.writeElement(node.element);
+  }
+
+  @override
+  void visitUnqualifiedNameAssignmentTarget(
+    covariant UnqualifiedNameAssignmentTargetImpl node,
+  ) {
+    _writeByte(Tag.UnqualifiedNameAssignmentTarget);
+    _writeStringReference(node.name.lexeme);
+    _sink.writeOptionalObject(node.read, _writeNamedReadResolution);
+    _sink.writeOptionalObject(node.write, _writeNamedWriteResolution);
+  }
+
+  @override
   void visitVariableDeclarationList(VariableDeclarationList node) {
     _writeByte(Tag.VariableDeclarationList);
     _writeByte(
@@ -1015,6 +1152,97 @@ class AstBinaryWriter extends ThrowingAstVisitor2<void> {
 
   void _writeDouble(double value) {
     _sink.writeDouble(value);
+  }
+
+  void _writeIncrementOrDecrementResolution(
+    IncrementOrDecrementExpression node,
+  ) {
+    _sink.writeElement(node.element);
+    _sink.writeType(node.operatorResultType);
+    _storeExpression(node);
+  }
+
+  void _writeIndexReadResolution(IndexReadResolutionImpl resolution) {
+    switch (resolution) {
+      case DynamicIndexReadResolutionImpl():
+        _writeByte(IndexReadResolutionTag.dynamic_.index);
+      case InvalidIndexReadResolutionImpl(:var recovery):
+        _writeByte(IndexReadResolutionTag.invalid.index);
+        _sink.writeOptionalObject(recovery, _writeIndexReadResolution);
+      case MethodIndexReadResolutionImpl(:var element, :var type):
+        _writeByte(IndexReadResolutionTag.method.index);
+        _sink.writeElement(element);
+        _sink.writeType(type);
+    }
+  }
+
+  void _writeIndexWriteResolution(IndexWriteResolutionImpl resolution) {
+    switch (resolution) {
+      case DynamicIndexWriteResolutionImpl():
+        _writeByte(IndexWriteResolutionTag.dynamic_.index);
+      case InvalidIndexWriteResolutionImpl(:var recovery):
+        _writeByte(IndexWriteResolutionTag.invalid.index);
+        _sink.writeOptionalObject(recovery, _writeIndexWriteResolution);
+      case MethodIndexWriteResolutionImpl(:var element):
+        _writeByte(IndexWriteResolutionTag.method.index);
+        _sink.writeElement(element);
+    }
+  }
+
+  void _writeNamedReadResolution(NamedReadResolutionImpl resolution) {
+    switch (resolution) {
+      case DynamicPropertyReadResolutionImpl():
+        _writeByte(NamedReadResolutionTag.dynamicPropertyRead.index);
+      case ExecutableTearOffResolutionImpl():
+        _writeByte(NamedReadResolutionTag.executableTearOff.index);
+        _sink.writeElement(resolution.element);
+      case FunctionCallTearOffResolutionImpl():
+        _writeByte(NamedReadResolutionTag.functionCallTearOff.index);
+        _sink.writeType(resolution.type);
+        _sink.writeType(resolution.associatedFunctionType);
+      case FunctionInterfaceCallTearOffResolutionImpl():
+        _writeByte(NamedReadResolutionTag.functionInterfaceCallTearOff.index);
+        _sink.writeType(resolution.type);
+      case GetterInvocationResolutionImpl():
+        _writeByte(NamedReadResolutionTag.getterInvocation.index);
+        _sink.writeElement(resolution.element);
+        _sink.writeType(resolution.type);
+      case InvalidNamedReadResolutionImpl():
+        _writeByte(NamedReadResolutionTag.invalid.index);
+        _sink.writeType(resolution.type);
+        _sink.writeList(resolution.candidates, _sink.writeElement);
+        _sink.writeOptionalObject(resolution.recovery, (recovery) {
+          _writeNamedReadResolution(recovery);
+        });
+      case RecordFieldReadResolutionImpl():
+        _writeByte(NamedReadResolutionTag.recordFieldRead.index);
+        _sink.writeType(resolution.type);
+      case VariableReadResolutionImpl():
+        _writeByte(NamedReadResolutionTag.variableRead.index);
+        _sink.writeElement(resolution.element);
+        _sink.writeType(resolution.type);
+    }
+  }
+
+  void _writeNamedWriteResolution(NamedWriteResolutionImpl resolution) {
+    switch (resolution) {
+      case InvalidNamedWriteResolutionImpl():
+        _writeByte(NamedWriteResolutionTag.invalid.index);
+        _sink.writeType(resolution.acceptedType);
+        _sink.writeList(resolution.candidates, _sink.writeElement);
+        _sink.writeOptionalObject(resolution.recovery, (recovery) {
+          _writeNamedWriteResolution(recovery);
+        });
+      case SetterInvocationResolutionImpl():
+        _writeByte(NamedWriteResolutionTag.setterInvocation.index);
+        _sink.writeElement(resolution.element);
+      case VariableWriteResolutionImpl():
+        _writeByte(NamedWriteResolutionTag.variableWrite.index);
+        _sink.writeElement(resolution.element);
+        _sink.writeType(resolution.acceptedType);
+      case DynamicPropertyWriteResolutionImpl():
+        _writeByte(NamedWriteResolutionTag.dynamicPropertyWrite.index);
+    }
   }
 
   void _writeNode(AstNode node) {

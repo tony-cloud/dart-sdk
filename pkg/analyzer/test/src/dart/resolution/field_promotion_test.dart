@@ -30,12 +30,28 @@ void f(C c) {
   }
 }
 ''');
-    var node = result.findNode.propertyAccess('._foo;');
+    var node = result.findNode.receiverPropertyExtraction('._foo;');
     assertResolvedNodeText(node, r'''
-PropertyAccess
-  target2: ParenthesizedExpression
+ReceiverPropertyExtraction
+  receiver: ParenthesizedExpression
     leftParenthesis: (
     expression2: SimpleIdentifier
+      token: c
+      element: <testLibrary>::@function::f::@formalParameter::c
+      staticType: C
+    rightParenthesis: )
+    staticType: C
+  operator: .
+  propertyName: _foo
+  resolution: GetterInvocationResolution
+    element: <testLibrary>::@class::C::@getter::_foo
+    invokeType: int? Function()
+    type: int?
+  staticType: int?
+V1: PropertyAccess
+  target: ParenthesizedExpression
+    leftParenthesis: (
+    expression: SimpleIdentifier
       token: c
       element: <testLibrary>::@function::f::@formalParameter::c
       staticType: C
@@ -94,7 +110,14 @@ void f(C c) {
     var node = result.findNode.methodInvocation('_field.toString');
     assertResolvedNodeText(node, r'''
 MethodInvocation
-  target2: PropertyAccess
+  target2: CascadePropertyExtraction
+    propertyName: _field
+    resolution: GetterInvocationResolution
+      element: <testLibrary>::@class::C::@getter::_field
+      invokeType: Object? Function()
+      type: int
+    staticType: int
+  target(v1): PropertyAccess
     operator: ..
     propertyName: SimpleIdentifier
       token: _field
@@ -126,9 +149,16 @@ void f(C? c) {
 }
 ''');
     // The `!` in the first statement promotes _field within the cascade
-    var node2 = result.findNode.propertyAccess('_field.toString');
+    var node2 = result.findNode.cascadePropertyExtraction('_field.toString');
     assertResolvedNodeText(node2, r'''
-PropertyAccess
+CascadePropertyExtraction
+  propertyName: _field
+  resolution: GetterInvocationResolution
+    element: <testLibrary>::@class::C::@getter::_field
+    invokeType: Object? Function()
+    type: Object
+  staticType: Object
+V1: PropertyAccess
   operator: ..
   propertyName: SimpleIdentifier
     token: _field
@@ -596,12 +626,28 @@ void f(C c) {
   }
 }
 ''');
-    var node = result.findNode.propertyAccess('._foo;');
+    var node = result.findNode.receiverPropertyExtraction('._foo;');
     assertResolvedNodeText(node, r'''
-PropertyAccess
-  target2: ParenthesizedExpression
+ReceiverPropertyExtraction
+  receiver: ParenthesizedExpression
     leftParenthesis: (
     expression2: SimpleIdentifier
+      token: c
+      element: <testLibrary>::@function::f::@formalParameter::c
+      staticType: C
+    rightParenthesis: )
+    staticType: C
+  operator: .
+  propertyName: _foo
+  resolution: GetterInvocationResolution
+    element: <testLibrary>::@class::C::@getter::_foo
+    invokeType: int? Function()
+    type: int
+  staticType: int
+V1: PropertyAccess
+  target: ParenthesizedExpression
+    leftParenthesis: (
+    expression: SimpleIdentifier
       token: c
       element: <testLibrary>::@function::f::@formalParameter::c
       staticType: C

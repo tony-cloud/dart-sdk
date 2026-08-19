@@ -20,6 +20,7 @@ import 'package:native_compiler/back_end/code.dart';
 import 'package:native_compiler/back_end/code_metadata.dart';
 import 'package:native_compiler/back_end/object_pool.dart';
 import 'package:native_compiler/configuration.dart';
+import 'package:native_compiler/runtime/constant_objects.dart';
 import 'package:native_compiler/runtime/names.dart';
 import 'package:native_compiler/runtime/object_layout.dart';
 import 'package:native_compiler/runtime/type_utils.dart';
@@ -105,6 +106,7 @@ enum ObjectPoolEntryKind {
   dynamicCall,
   unboxedInt,
   unboxedDouble,
+  nativeFunction,
 }
 
 abstract base class SerializationCluster {
@@ -167,6 +169,9 @@ class SnapshotSerializer {
     addBaseObject(ExceptionHandlers(hasAsyncHandler: false));
     addBaseObject(ExceptionHandlers(hasAsyncHandler: true));
     addBaseObject(PcDescriptors());
+    addBaseObject(RuntimeConstantObject(.uninitializedIndex));
+    addBaseObject(RuntimeConstantObject(.uninitializedData));
+    addBaseObject(RuntimeConstantObject(.mutableEmptyList));
     // TODO: generate these stubs instead of referencing them from the VM.
     addBaseObject(StubCode.Subtype1TestCache);
     addBaseObject(StubCode.Subtype2TestCache);
@@ -185,6 +190,7 @@ class SnapshotSerializer {
     addBaseObject(StubCode.ReturnAsync);
     addBaseObject(StubCode.ReturnAsyncNotFuture);
     addBaseObject(StubCode.ReturnAsyncStar);
+    addBaseObject(StubCode.CallBootstrapNative);
     numObjects = numBaseObjects;
   }
 
@@ -819,7 +825,7 @@ final class FunctionSerializationCluster extends SerializationCluster {
         data = ClosureData(function.enclosingFunction);
         positionalParameterNames = getListConstant([
           '#closure', // Implicit closure parameter.
-          for (final p in functionNode.positionalParameters) p.cosmeticName!,
+          for (final p in functionNode.positionalParameters) p.parameterName,
         ]);
         startFileOffset = functionNode.fileOffset;
         endFileOffset = functionNode.fileEndOffset;
@@ -1802,6 +1808,7 @@ final class ObjectPoolSerializationCluster extends SerializationCluster {
           case SubtypeTestCacheWithName():
             serializer.push(entry.stc);
             serializer.push(entry.name);
+          case NativeFunction():
           case ReservedEntry():
             break;
         }
@@ -1849,6 +1856,8 @@ final class ObjectPoolSerializationCluster extends SerializationCluster {
               serializer.writeRefId(entry.stc);
               serializer.writeUint(ObjectPoolEntryKind.objectRef.index);
               serializer.writeRefId(entry.name);
+            case NativeFunction():
+              serializer.writeUint(ObjectPoolEntryKind.nativeFunction.index);
             case ReservedEntry():
           }
         } else if (entry is UnboxedIntConstant) {
