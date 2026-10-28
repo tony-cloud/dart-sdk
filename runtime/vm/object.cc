@@ -8138,9 +8138,10 @@ bool Function::IsShorebirdPatchable() const {
   if (IsNull()) return false;
   const auto& owner = Class::Handle(Owner());
   const auto& library = Library::Handle(owner.library());
-  // SDK code belongs to the signed runtime. App and package bodies must remain
-  // replaceable without requiring source annotations or executable writes.
-  return !library.is_dart_scheme();
+  // The no-TFA compiler profile persists this flag so both compiler and AOT
+  // runtime agree on the ABI. Ordinary TFA-built SDK tools retain their native
+  // unboxing, register arguments and dispatch-table conventions.
+  return library.is_shorebird_patchable();
 }
 #endif
 

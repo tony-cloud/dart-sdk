@@ -27,9 +27,23 @@ def main():
     with tempfile.TemporaryDirectory(prefix='dart-aot-tool-dispatch-') as tmp:
         work = Path(tmp)
         source = work / 'main.dart'
-        source.write_text("void main() {\n"
+        classes = [
+            'abstract class V implements Comparable<V> { final int n; V(this.n); }\n'
+        ]
+        for i in range(6):
+            classes.append(f'class C{i} extends V {{ C{i}(int n):super(n); '
+                           'int compareTo(V other) => n + other.n; }\n')
+        classes.append('@pragma("vm:never-inline")\n'
+                       'int compare(Comparable<V> a, V b) => a.compareTo(b);\n')
+        values = ', '.join(f'C{i}(n)' for i in range(6))
+        source.write_text(''.join(classes) + "void main() {\n"
                           "  if (Uri.directory('/tmp').path != '/tmp/') {\n"
                           "    throw StateError('Incorrect SDK dispatch');\n"
+                          "  }\n"
+                          "  final n = DateTime.now().microsecondsSinceEpoch % 1000 + 100;\n"
+                          f"  final values = <V>[{values}];\n"
+                          "  if (compare(values[n % values.length], C0(7)) != n + 7) {\n"
+                          "    throw StateError('Incorrect SDK interface return ABI');\n"
                           "  }\n"
                           "  print('TFA AOT SDK dispatch passed');\n"
                           "}\n")

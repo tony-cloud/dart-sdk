@@ -21,6 +21,7 @@ import tempfile
 
 HARNESS = r'''
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -45,7 +46,9 @@ int64_t Probe(const char* name = "probe") {
 }
 
 int main(int argc, char** argv) {
-  if (argc != 7 || !Dart_IsPrecompiledRuntime()) return 2;
+  const bool reject_profile = argc == 4 &&
+      std::strcmp(argv[2], "--reject-profile") == 0;
+  if ((argc != 7 && !reject_profile) || !Dart_IsPrecompiledRuntime()) return 2;
   char* error = nullptr;
   auto snapshot = DartEngine_AotSnapshotFromFile(argv[1], &error);
   if (error) { std::cerr << error << std::endl; return 1; }
@@ -54,6 +57,19 @@ int main(int argc, char** argv) {
   DartEngine_AcquireIsolate(isolate);
   Dart_EnterScope();
   if (Probe() != 1) return 3;
+  if (reject_profile) {
+    std::ifstream input(argv[3], std::ios::binary);
+    std::vector<uint8_t> patch((std::istreambuf_iterator<char>(input)), {});
+    auto result = Dart_ReloadBytecodePatch(patch.data(), patch.size());
+    if (!Dart_IsError(result) ||
+        std::strstr(Dart_GetError(result), "no-TFA interpreter patch profile") ==
+            nullptr || Probe() != 1) return 7;
+    Dart_ExitScope();
+    DartEngine_ReleaseIsolate();
+    DartEngine_Shutdown();
+    std::cout << "Unsafe TFA base rejected without changing its body." << std::endl;
+    return 0;
+  }
   for (int i = 2; i < argc; ++i) {
     std::cout << "Loading " << argv[i] << std::endl;
     std::ifstream input(argv[i], std::ios::binary);
@@ -220,6 +236,27 @@ def main():
         run(args.cxx, '-std=c++17', f'-I{root / "runtime"}',
             f'-I{root / "runtime/engine"}', harness, f'-L{build}',
             '-ldart_engine_aot_shared', f'-Wl,-rpath,{build}', '-o', executable)
+
+        # An otherwise valid replacement must not enter an ordinary TFA base:
+        # its native callers may use different boxing and argument conventions.
+        tfa_source = work / 'tfa.dart'
+        tfa_source.write_text("@pragma('vm:entry-point')\n"
+                              'int probe() => 1;\nvoid main() {}\n')
+        tfa_kernel = work / 'tfa.dill'
+        run(build / 'dart', root / 'pkg/vm/bin/gen_kernel.dart', '--aot',
+            f'--platform={platform}', f'--output={tfa_kernel}', tfa_source)
+        tfa_snapshot = work / 'tfa.snapshot'
+        if sys.platform == 'darwin':
+            run(build / 'gen_snapshot', '--snapshot-kind=app-aot-macho-dylib',
+                f'--macho={tfa_snapshot}', tfa_kernel)
+            run('codesign', '--force', '--sign', '-', tfa_snapshot)
+        else:
+            run(build / 'gen_snapshot', '--snapshot-kind=app-aot-elf',
+                f'--elf={tfa_snapshot}', tfa_kernel)
+        tfa_source.write_text(tfa_source.read_text().replace('=> 1', '=> 2'))
+        tfa_patch = work / 'tfa.bytecode'
+        run(*bytecode_command, '-o', tfa_patch, tfa_source)
+        run(executable, tfa_snapshot, '--reject-profile', tfa_patch)
         run(executable, snapshot, *patches)
 
 

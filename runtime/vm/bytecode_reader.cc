@@ -2980,6 +2980,13 @@ void BytecodeReaderHelper::ReadLoadedFunctionPatchDeclarations(
           "Bytecode patch introduces a function absent from the "
           "base snapshot.");
     }
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (!function.IsShorebirdPatchable()) {
+      RejectBytecodePatch(
+          "Bytecode patch requires a base compiled with the "
+          "no-TFA interpreter patch profile.");
+    }
+#endif
     FunctionType& signature = FunctionType::Handle(Z, function.signature());
     if (signature.IsNull() || function.is_static() != is_static) {
       RejectBytecodePatch(

@@ -5416,6 +5416,14 @@ class Library : public Object {
     set_flags(UntaggedLibrary::DartSchemeBit::update(value, untag()->flags_));
   }
 
+  bool is_shorebird_patchable() const {
+    return UntaggedLibrary::ShorebirdPatchableBit::decode(untag()->flags_);
+  }
+  void set_is_shorebird_patchable(bool value) const {
+    set_flags(
+        UntaggedLibrary::ShorebirdPatchableBit::update(value, untag()->flags_));
+  }
+
   // Includes 'dart:async', 'dart:typed_data', etc.
   bool IsAnyCoreLibrary() const;
 

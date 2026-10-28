@@ -1906,6 +1906,10 @@ class UntaggedLibrary : public UntaggedObject {
   // True if debugger can stop in library.
   using DebuggableBit =
       BitField<decltype(flags_), bool, DartSchemeBit::kNextBit>;
+  // The compiler preserved the boxed, indirect-call ABI for body patching.
+  // This bit survives in AOT snapshots after kernel metadata is discarded.
+  using ShorebirdPatchableBit =
+      BitField<decltype(flags_), bool, DebuggableBit::kNextBit>;
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
   uint32_t kernel_library_index_;

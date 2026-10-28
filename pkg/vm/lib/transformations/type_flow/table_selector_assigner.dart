@@ -17,6 +17,9 @@ void annotateWithoutTypeFlow(Component component) {
   final attributes = ProcedureAttributesMetadataRepository();
   final unboxing = UnboxingInfoMetadataRepository();
   for (final library in component.libraries) {
+    attributes.mapping[library] = const ProcedureAttributesMetadata(
+      isWithoutTypeFlowAnalysis: true,
+    );
     for (final member in library.members) {
       unboxing.mapping[member] = UnboxingInfoMetadata(0)..setFullyBoxed();
     }

@@ -782,6 +782,15 @@ LibraryPtr KernelLoader::LoadLibrary(intptr_t index) {
       library_kernel_offset_, library_kernel_offset_ + library_size);
   library.set_kernel_library_index(index);
   library.set_kernel_program_info(kernel_program_info_);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (FLAG_precompiled_mode) {
+    ProcedureAttributesMetadataHelper attributes(&helper_);
+    const auto metadata =
+        attributes.GetProcedureAttributes(library_kernel_offset_);
+    library.set_is_shorebird_patchable(!library.is_dart_scheme() &&
+                                       metadata.is_without_type_flow_analysis);
+  }
+#endif
 
   const intptr_t start_offset =
       kernel_program_info_.KernelLibraryStartOffset(index);
