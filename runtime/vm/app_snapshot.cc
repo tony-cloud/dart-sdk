@@ -7225,6 +7225,7 @@ class ProgramSerializationRoots : public SerializationRoots {
   ONLY_IN_PRODUCT(ONLY_IN_AOT(                                                 \
       V(closure_functions, GrowableObjectArray, GrowableObjectArray::null()))) \
   ONLY_IN_AOT(V(closure_functions_table, Array, Array::null()))                \
+  ONLY_IN_AOT(V(ffi_callback_functions, Array, Array::null()))                 \
   ONLY_IN_AOT(V(canonicalized_stack_map_entries, CompressedStackMaps,          \
                 CompressedStackMaps::null()))
 
@@ -7245,6 +7246,12 @@ class ProgramSerializationRoots : public SerializationRoots {
     object_store->set_##name(Type::Handle(init));                              \
   } while (0);
 
+    // The FFI callback function set is a compiler deduplication cache. It may
+    // contain callbacks created while precompiling constructors which are
+    // later tree-shaken, along with signatures referring to dropped classes.
+    // The AOT runtime uses ffi_callback_code by callback ID, not this cache.
+    // Keep that code array and its indices unchanged, and restore the cache
+    // after serialization for any remaining compiler visitors/loading units.
     RESET_ROOT_LIST(SAVE_AND_RESET_ROOT)
 #undef SAVE_AND_RESET_ROOT
 #undef ONLY_IN_AOT

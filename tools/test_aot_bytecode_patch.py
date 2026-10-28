@@ -48,7 +48,9 @@ int64_t Probe(const char* name = "probe") {
 int main(int argc, char** argv) {
   const bool reject_profile = argc == 4 &&
       std::strcmp(argv[2], "--reject-profile") == 0;
-  if ((argc != 7 && !reject_profile) || !Dart_IsPrecompiledRuntime()) return 2;
+  const bool ffi_only = argc == 3 && std::strcmp(argv[2], "--ffi") == 0;
+  if ((argc != 7 && !reject_profile && !ffi_only) ||
+      !Dart_IsPrecompiledRuntime()) return 2;
   char* error = nullptr;
   auto snapshot = DartEngine_AotSnapshotFromFile(argv[1], &error);
   if (error) { std::cerr << error << std::endl; return 1; }
@@ -57,6 +59,14 @@ int main(int argc, char** argv) {
   DartEngine_AcquireIsolate(isolate);
   Dart_EnterScope();
   if (Probe() != 1) return 3;
+  if (ffi_only) {
+    Dart_ExitScope();
+    DartEngine_ReleaseIsolate();
+    DartEngine_Shutdown();
+    std::cout << "Dead FFI callback discarded; live callback roundtrip passed."
+              << std::endl;
+    return 0;
+  }
   if (reject_profile) {
     std::ifstream input(argv[3], std::ios::binary);
     std::vector<uint8_t> patch((std::istreambuf_iterator<char>(input)), {});
@@ -236,6 +246,55 @@ def main():
         run(args.cxx, '-std=c++17', f'-I{root / "runtime"}',
             f'-I{root / "runtime/engine"}', harness, f'-L{build}',
             '-ldart_engine_aot_shared', f'-Wl,-rpath,{build}', '-o', executable)
+
+        # Without TFA, constructor precompilation creates callback cache entries
+        # even for dead platform code. Their signatures must not keep dropped
+        # Struct classes alive in the AOT snapshot. Exercise a live callback too
+        # so removing that compiler cache cannot break callback ID lookup.
+        ffi_source = work / 'ffi.dart'
+        ffi_source.write_text(r'''
+import 'dart:ffi';
+
+final class UnusedStruct extends Struct {
+  @IntPtr()
+  external int value;
+}
+
+class UnusedConstructor {
+  UnusedConstructor() {
+    callback = NativeCallable<Pointer<UnusedStruct> Function(Pointer<UnusedStruct>)>
+        .isolateLocal((Pointer<UnusedStruct> value) => value);
+  }
+  late final NativeCallable<Pointer<UnusedStruct> Function(Pointer<UnusedStruct>)>
+      callback;
+}
+
+@pragma('vm:entry-point')
+int probe() {
+  final callback = NativeCallable<IntPtr Function(IntPtr)>.isolateLocal(
+      (int value) => value + 1, exceptionalReturn: -1);
+  try {
+    final function = callback.nativeFunction.asFunction<int Function(int)>();
+    return function(41) == 42 ? 1 : 0;
+  } finally {
+    callback.close();
+  }
+}
+
+void main() { print(probe()); }
+''')
+        ffi_kernel = work / 'ffi.dill'
+        run(build / 'dart', root / 'pkg/vm/bin/gen_kernel.dart', '--aot', '--no-tfa',
+            f'--platform={platform}', f'--output={ffi_kernel}', ffi_source)
+        ffi_snapshot = work / 'ffi.snapshot'
+        if sys.platform == 'darwin':
+            run(build / 'gen_snapshot', '--snapshot-kind=app-aot-macho-dylib',
+                f'--macho={ffi_snapshot}', ffi_kernel)
+            run('codesign', '--force', '--sign', '-', ffi_snapshot)
+        else:
+            run(build / 'gen_snapshot', '--snapshot-kind=app-aot-elf',
+                f'--elf={ffi_snapshot}', ffi_kernel)
+        run(executable, ffi_snapshot, '--ffi')
 
         # An otherwise valid replacement must not enter an ordinary TFA base:
         # its native callers may use different boxing and argument conventions.
