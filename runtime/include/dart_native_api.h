@@ -11,6 +11,27 @@
 
 #include "dart_api.h" /* NOLINT */
 
+/**
+ * Returns the complete serialized data region size of a snapshot produced by
+ * this SDK, including alignment padding and the read-only object image.
+ *
+ * The pointer must reference a complete, readable snapshot for the current
+ * architecture. This is not a validator for untrusted or truncated input.
+ * Returns 0 for NULL or an invalid header. No current isolate is required.
+ */
+DART_EXPORT intptr_t Dart_SnapshotDataSize(const uint8_t* snapshot_data);
+
+/**
+ * Returns the complete text image size, including its image header, for a
+ * snapshot produced by this SDK for the current architecture.
+ *
+ * The pointer must reference a complete, readable text image. This is not a
+ * validator for untrusted or truncated input. Returns 0 for NULL or an invalid
+ * size. No current isolate is required.
+ */
+DART_EXPORT intptr_t
+Dart_SnapshotInstrSize(const uint8_t* snapshot_instructions);
+
 /*
  * ==========================================
  * Message sending/receiving from native code

@@ -24,10 +24,54 @@
 #include "vm/heap/verifier.h"
 #include "vm/lockers.h"
 #include "vm/native_message_handler.h"
+#include "vm/snapshot.h"
 #include "vm/timeline.h"
 #include "vm/unit_test.h"
 
 namespace dart {
+
+// These native APIs must be callable before VM initialization: embedders use
+// them to serve their base snapshot to the updater during startup.
+UNIT_TEST_CASE(DartAPI_SnapshotRegionSizes) {
+  alignas(kObjectStartAlignment) uint8_t data[3 * kObjectStartAlignment] = {};
+  auto* snapshot = reinterpret_cast<Snapshot*>(data);
+  snapshot->set_magic();
+  snapshot->set_kind(Snapshot::kFullAOT);
+  snapshot->set_length(Snapshot::kHeaderSize + 1);
+  const uword image_size = 2 * kObjectStartAlignment;
+  StoreUnaligned(reinterpret_cast<uword*>(data + kObjectStartAlignment),
+                 image_size);
+  EXPECT_EQ(static_cast<intptr_t>(sizeof(data)), Dart_SnapshotDataSize(data));
+
+  // The image length includes its header; it must not be added a second time.
+  EXPECT_EQ(static_cast<intptr_t>(image_size),
+            Dart_SnapshotInstrSize(data + kObjectStartAlignment));
+
+  snapshot->set_kind(Snapshot::kFull);
+  EXPECT_EQ(Snapshot::kHeaderSize + 1, Dart_SnapshotDataSize(data));
+}
+
+UNIT_TEST_CASE(DartAPI_SnapshotRegionSizesRejectInvalidHeaders) {
+  EXPECT_EQ(0, Dart_SnapshotDataSize(nullptr));
+  EXPECT_EQ(0, Dart_SnapshotInstrSize(nullptr));
+  alignas(kObjectStartAlignment) uint8_t data[2 * kObjectStartAlignment] = {};
+  EXPECT_EQ(0, Dart_SnapshotDataSize(data));
+  EXPECT_EQ(0, Dart_SnapshotInstrSize(data));
+
+  auto* snapshot = reinterpret_cast<Snapshot*>(data);
+  snapshot->set_magic();
+  snapshot->set_kind(Snapshot::kFullAOT);
+  snapshot->set_length(Snapshot::kHeaderSize - 1);
+  EXPECT_EQ(0, Dart_SnapshotDataSize(data));
+  snapshot->set_length(Snapshot::kHeaderSize);
+  // A zero-sized object image cannot contain its required image header.
+  EXPECT_EQ(0, Dart_SnapshotDataSize(data));
+  snapshot->set_kind(Snapshot::kInvalid);
+  EXPECT_EQ(0, Dart_SnapshotDataSize(data));
+  snapshot->set_kind(Snapshot::kFullAOT);
+  snapshot->set_length(kIntptrMax - 1);
+  EXPECT_EQ(0, Dart_SnapshotDataSize(data));
+}
 
 DECLARE_FLAG(bool, verify_acquired_data);
 DECLARE_FLAG(bool, complete_timeline);

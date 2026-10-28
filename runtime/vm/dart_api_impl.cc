@@ -77,6 +77,49 @@
 
 namespace dart {
 
+// ImageWriter writes the complete image length as its first target word.
+// Reading only that field also works before the VM has been initialized, and
+// does not resolve the instructions image's relocated metadata.
+static intptr_t SnapshotImageSize(const uint8_t* image) {
+  if (image == nullptr) {
+    return 0;
+  }
+  const uword size = LoadUnaligned(reinterpret_cast<const uword*>(image));
+  if (size < kObjectStartAlignment || size > static_cast<uword>(kIntptrMax)) {
+    return 0;
+  }
+  return static_cast<intptr_t>(size);
+}
+
+DART_EXPORT intptr_t Dart_SnapshotDataSize(const uint8_t* snapshot_data) {
+  if (snapshot_data == nullptr) {
+    return 0;
+  }
+  const Snapshot* snapshot = Snapshot::SetupFromBuffer(snapshot_data);
+  if (snapshot == nullptr || snapshot->length() < Snapshot::kHeaderSize ||
+      !Snapshot::IsFull(snapshot->kind())) {
+    return 0;
+  }
+  if (!Snapshot::IncludesCode(snapshot->kind())) {
+    return snapshot->length();
+  }
+  if (snapshot->length() > kIntptrMax - (kObjectStartAlignment - 1)) {
+    return 0;
+  }
+  const intptr_t image_offset =
+      Utils::RoundUp(snapshot->length(), kObjectStartAlignment);
+  const intptr_t image_size = SnapshotImageSize(snapshot_data + image_offset);
+  if (image_size == 0 || image_size > kIntptrMax - image_offset) {
+    return 0;
+  }
+  return image_offset + image_size;
+}
+
+DART_EXPORT intptr_t
+Dart_SnapshotInstrSize(const uint8_t* snapshot_instructions) {
+  return SnapshotImageSize(snapshot_instructions);
+}
+
 // Facilitate quick access to the current zone once we have the current thread.
 #define Z (T->zone())
 
