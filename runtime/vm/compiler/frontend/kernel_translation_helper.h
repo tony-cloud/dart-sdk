@@ -1115,6 +1115,7 @@ struct ProcedureAttributesMetadata {
   bool has_this_uses = true;
   bool has_non_this_uses = true;
   bool has_tearoff_uses = true;
+  bool is_without_type_flow_analysis = false;
   int32_t method_or_setter_selector_id = kInvalidSelectorId;
   int32_t getter_selector_id = kInvalidSelectorId;
 

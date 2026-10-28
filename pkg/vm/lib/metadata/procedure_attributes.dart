@@ -15,6 +15,9 @@ class ProcedureAttributesMetadata {
   final bool hasThisUses;
   final bool hasNonThisUses;
   final bool hasTearOffUses;
+  // All implementations retain conservative dynamic-call metadata when TFA
+  // is disabled. Consumers must not infer this from one method's uses.
+  final bool isWithoutTypeFlowAnalysis;
   final int methodOrSetterSelectorId;
   final int getterSelectorId;
 
@@ -24,6 +27,7 @@ class ProcedureAttributesMetadata {
     this.hasThisUses = true,
     this.hasNonThisUses = true,
     this.hasTearOffUses = true,
+    this.isWithoutTypeFlowAnalysis = false,
     this.methodOrSetterSelectorId = kInvalidSelectorId,
     this.getterSelectorId = kInvalidSelectorId,
   });
@@ -62,6 +66,7 @@ class ProcedureAttributesMetadataRepository
   static const int kTearOffUsesBit = 1 << 2;
   static const int kThisUsesBit = 1 << 3;
   static const int kGetterCalledDynamicallyBit = 1 << 4;
+  static const int kWithoutTypeFlowAnalysisBit = 1 << 5;
 
   static const repositoryTag = 'vm.procedure-attributes.metadata';
 
@@ -88,6 +93,9 @@ class ProcedureAttributesMetadataRepository
     }
     if (metadata.hasTearOffUses) {
       flags |= kTearOffUsesBit;
+    }
+    if (metadata.isWithoutTypeFlowAnalysis) {
+      flags |= kWithoutTypeFlowAnalysisBit;
     }
     return flags;
   }
@@ -124,6 +132,7 @@ class ProcedureAttributesMetadataRepository
       hasThisUses: hasThisUses,
       hasNonThisUses: hasNonThisUses,
       hasTearOffUses: hasTearOffUses,
+      isWithoutTypeFlowAnalysis: (flags & kWithoutTypeFlowAnalysisBit) != 0,
       methodOrSetterSelectorId: methodOrSetterSelectorId,
       getterSelectorId: getterSelectorId,
     );

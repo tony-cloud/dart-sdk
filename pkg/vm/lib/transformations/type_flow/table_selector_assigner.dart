@@ -27,6 +27,7 @@ void annotateWithoutTypeFlow(Component component) {
         unboxing.mapping[member] = UnboxingInfoMetadata(0)..setFullyBoxed();
         if (member.isInstanceMember) {
           attributes.mapping[member] = ProcedureAttributesMetadata(
+            isWithoutTypeFlowAnalysis: true,
             methodOrSetterSelectorId: assigner.methodOrSetterSelectorId(member),
             getterSelectorId: assigner.getterSelectorId(member),
           );

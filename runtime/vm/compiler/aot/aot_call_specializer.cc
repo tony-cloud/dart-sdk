@@ -1194,9 +1194,14 @@ void AotCallSpecializer::TryReplaceWithDispatchTableCall(
   }
 #if defined(DART_SHOREBIRD_INTERPRETER)
   // An SDK interface such as Object.toString may dispatch to an app override.
-  // Table entries retain native code addresses, so all interface calls must
-  // stay on the Function-based path in an interpreter-enabled base snapshot.
-  return;
+  // A no-TFA patchable base retains all dynamic-call implementations, so use
+  // Function entries instead of native addresses cached in dispatch tables.
+  // TFA-built SDK tools can have those dynamic forwarders removed; preserve
+  // their ordinary table dispatch even when the VM supports interpretation.
+  if (kernel::ProcedureAttributesOf(interface_target, Z)
+          .is_without_type_flow_analysis) {
+    return;
+  }
 #endif
 
   Value* receiver = call->ArgumentValueAt(call->FirstArgIndex());
