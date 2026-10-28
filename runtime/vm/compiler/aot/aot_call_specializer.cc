@@ -1192,6 +1192,12 @@ void AotCallSpecializer::TryReplaceWithDispatchTableCall(
     // Dynamic call.
     return;
   }
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  // An SDK interface such as Object.toString may dispatch to an app override.
+  // Table entries retain native code addresses, so all interface calls must
+  // stay on the Function-based path in an interpreter-enabled base snapshot.
+  return;
+#endif
 
   Value* receiver = call->ArgumentValueAt(call->FirstArgIndex());
   const compiler::TableSelector* selector =

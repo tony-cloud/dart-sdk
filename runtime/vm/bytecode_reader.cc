@@ -21,10 +21,11 @@
 #include "vm/hash.h"
 #include "vm/hash_map.h"
 #include "vm/hash_table.h"
+#include "vm/heap/safepoint.h"
 #include "vm/longjump.h"
 #include "vm/object.h"
-#include "vm/os.h"
 #include "vm/object_store.h"
+#include "vm/os.h"
 #include "vm/resolver.h"
 #include "vm/reusable_handles.h"
 #include "vm/scopes.h"
@@ -44,6 +45,25 @@ DEFINE_FLAG(charp,
             "Dump only kernel bytecode of functions with matching names");
 
 namespace bytecode {
+
+static void RejectBytecodePatch(const char* message) {
+  Thread* thread = Thread::Current();
+  const auto& error = Error::Handle(
+      thread->zone(),
+      ApiError::New(String::Handle(thread->zone(), String::New(message))));
+  thread->long_jump_base()->Jump(1, error);
+}
+
+void CheckBytecodeRange(intptr_t offset, intptr_t length, intptr_t size) {
+  if (offset >= 0 && length >= 0 && offset <= size && length <= size - offset) {
+    return;
+  }
+  auto* loader = Thread::Current()->bytecode_loader();
+  if (loader != nullptr && loader->is_loading_patch()) {
+    RejectBytecodePatch("Truncated or invalid Dart bytecode patch.");
+  }
+  FATAL("Invalid Dart bytecode range.");
+}
 
 static bool ShouldPrint(const Function& function) {
   return function.NamePassesFilter(FLAG_dump_kernel_bytecode_filter);
@@ -120,8 +140,15 @@ FunctionPtr BytecodeLoader::LoadBytecode(bool load_code) {
   return Function::RawCast(bytecode_reader.ReadObject());
 }
 
-intptr_t BytecodeLoader::LoadBytecodePatch() {
+ErrorPtr BytecodeLoader::LoadBytecodePatch() {
   ASSERT(IsolateGroup::Current()->program_lock()->IsCurrentThreadWriter());
+
+  is_loading_patch_ = true;
+  LongJumpScope jump(thread_);
+  if (DART_SETJMP(*jump.Set()) != 0) {
+    is_loading_patch_ = false;
+    return thread_->StealStickyError();
+  }
 
   if (bytecode_component_array_.IsNull()) {
     BytecodeReaderHelper component_reader(thread_, binary_);
@@ -132,8 +159,10 @@ intptr_t BytecodeLoader::LoadBytecodePatch() {
   BytecodeReaderHelper bytecode_reader(thread_, &bytecode_component);
   AlternativeReadingScope alt(&bytecode_reader.reader(),
                               bytecode_component.GetLibraryIndexOffset());
-  return bytecode_reader.ReadLoadedLibraryBytecodePatch(
+  bytecode_reader.ReadLoadedLibraryBytecodePatch(
       bytecode_component.GetNumLibraries());
+  is_loading_patch_ = false;
+  return Error::null();
 }
 
 void BytecodeLoader::LoadPendingCode() {
@@ -217,12 +246,16 @@ BytecodeReaderHelper::BytecodeReaderHelper(
       scoped_function_name_(String::Handle(thread->zone())),
       scoped_function_class_(Class::Handle(thread->zone())) {}
 
-void BytecodeReaderHelper::ReadCode(const Function& function,
-                                    intptr_t code_offset) {
+BytecodePtr BytecodeReaderHelper::ReadCode(const Function& function,
+                                           intptr_t code_offset,
+                                           bool attach) {
   ASSERT(IsolateGroup::Current()->program_lock()->IsCurrentThreadWriter());
   ASSERT(!function.IsImplicitGetterFunction() &&
          !function.IsImplicitSetterFunction());
   if (code_offset == 0) {
+    if (thread_->bytecode_loader()->is_loading_patch()) {
+      RejectBytecodePatch("Bytecode patch function has no body.");
+    }
     FATAL("Function %s (kind %s) doesn't have bytecode",
           function.ToFullyQualifiedCString(),
           Function::KindToCString(function.kind()));
@@ -278,7 +311,7 @@ void BytecodeReaderHelper::ReadCode(const Function& function,
   // Read bytecode and attach to function.
   const Bytecode& bytecode = Bytecode::Handle(Z, ReadBytecode(pool));
   bytecode.set_code_offset(code_offset);
-  function.AttachBytecode(bytecode);
+  if (attach) function.AttachBytecode(bytecode);
 
   ReadExceptionsTable(function, bytecode, has_exceptions_table);
 
@@ -288,7 +321,7 @@ void BytecodeReaderHelper::ReadCode(const Function& function,
 
   ReadRecordedCoverage(bytecode, has_recorded_coverage);
 
-  if (FLAG_dump_kernel_bytecode) {
+  if (attach && FLAG_dump_kernel_bytecode) {
     if (ShouldPrint(function)) {
       KernelBytecodeDisassembler::Disassemble(function);
     }
@@ -299,7 +332,7 @@ void BytecodeReaderHelper::ReadCode(const Function& function,
   if (has_nullable_fields) {
     ASSERT(function.IsGenerativeConstructor());
     const intptr_t num_fields = reader_.ReadListLength();
-    if (IG->use_field_guards()) {
+    if (attach && IG->use_field_guards()) {
       Field& field = Field::Handle(Z);
       for (intptr_t i = 0; i < num_fields; i++) {
         field ^= ReadObject();
@@ -358,10 +391,13 @@ void BytecodeReaderHelper::ReadCode(const Function& function,
         }
       }
 
-      ClosureFunctionsCache::AddClosureFunctionLocked(closure,
-                                                      local_function_id);
+      if (attach) {
+        ClosureFunctionsCache::AddClosureFunctionLocked(closure,
+                                                        local_function_id);
+      }
     }
   }
+  return bytecode.ptr();
 }
 
 void BytecodeReaderHelper::ReadCoveredConstConstructors(const Script& script,
@@ -962,11 +998,17 @@ ArrayPtr BytecodeReaderHelper::ReadBytecodeComponent() {
 
   intptr_t magic = reader_.ReadUInt32();
   if (magic != KernelBytecode::kMagicValue) {
+    if (thread_->bytecode_loader()->is_loading_patch()) {
+      RejectBytecodePatch("Invalid Dart bytecode patch magic.");
+    }
     FATAL("Unexpected Dart bytecode magic %" Px, magic);
   }
 
   const intptr_t version = reader_.ReadUInt32();
   if (version != KernelBytecode::kBytecodeFormatVersion) {
+    if (thread_->bytecode_loader()->is_loading_patch()) {
+      RejectBytecodePatch("Unsupported Dart bytecode patch format version.");
+    }
     FATAL("Unsupported Dart bytecode format version %" Pd
           ". "
           "This version of Dart VM supports bytecode format version %" Pd ".",
@@ -1074,6 +1116,7 @@ ObjectPtr BytecodeReaderHelper::ReadObject() {
     if (index == 0) {
       return Object::null();
     }
+    CheckBytecodeRange(index, 1, bytecode_component_->GetNumObjects());
     ObjectPtr obj = bytecode_component_->GetObject(index);
     if (obj->IsHeapObject()) {
       return obj;
@@ -1155,6 +1198,9 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
       String& uri = String::CheckedHandle(Z, ReadObject());
       if (uri.ptr() == Symbols::DartConcurrent().ptr() &&
           !FLAG_experimental_shared_data) {
+        if (thread_->bytecode_loader()->is_loading_patch()) {
+          RejectBytecodePatch("Bytecode patch requires disabled shared data.");
+        }
         // Keep in sync with KernelLoader::LoadLibraryImportsAndExports.
         FATAL(
             "Encountered dart:concurrent when functionality is disabled. "
@@ -1168,6 +1214,10 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
         if (uri.ptr() == Symbols::EvalSourceUri().ptr()) {
           return thread_->bytecode_loader()->GetExpressionEvaluationLibrary();
         }
+        if (thread_->bytecode_loader()->is_loading_patch()) {
+          RejectBytecodePatch(
+              "Bytecode patch references an unavailable library.");
+        }
         FATAL("Unable to find library %s", uri.ToCString());
       }
       return library;
@@ -1176,9 +1226,12 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
       const Library& library = Library::CheckedHandle(Z, ReadObject());
       const String& class_name = String::CheckedHandle(Z, ReadObject());
       if (class_name.ptr() == Symbols::Empty().ptr()) {
-        NoSafepointScope no_safepoint_scope(thread_);
         ClassPtr cls = library.toplevel_class();
         if (cls == Class::null()) {
+          if (thread_->bytecode_loader()->is_loading_patch()) {
+            RejectBytecodePatch(
+                "Bytecode patch references an unavailable class.");
+          }
           FATAL("Unable to find toplevel class %s", library.ToCString());
         }
         return cls;
@@ -1193,6 +1246,10 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
                  library.ptr());
           return thread_->bytecode_loader()->GetExpressionEvaluationRealClass();
         }
+        if (thread_->bytecode_loader()->is_loading_patch()) {
+          RejectBytecodePatch(
+              "Bytecode patch references an unavailable class.");
+        }
         FATAL("Unable to find class %s in %s", class_name.ToCString(),
               library.ToCString());
       }
@@ -1204,6 +1261,10 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
       if ((flags & kFlagIsField) != 0) {
         FieldPtr field = cls.LookupField(name);
         if (field == Field::null()) {
+          if (thread_->bytecode_loader()->is_loading_patch()) {
+            RejectBytecodePatch(
+                "Bytecode patch references an unavailable field.");
+          }
           FATAL("Unable to find field %s in %s", name.ToCString(),
                 cls.ToCString());
         }
@@ -1230,6 +1291,9 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
                                     ? cls.EnsureIsAllocateFinalized(thread_)
                                     : cls.EnsureIsFinalized(thread_);
         if (finalize_err != Error::null()) {
+          if (thread_->bytecode_loader()->is_loading_patch()) {
+            thread_->long_jump_base()->Jump(1, Error::Handle(Z, finalize_err));
+          }
           FATAL("Unable to finalize class %s%s: %s", cls.ToCString(),
                 is_constructor ? "" : " for allocation",
                 Error::Handle(Z, finalize_err).ToErrorCString());
@@ -1248,6 +1312,10 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
               }
             }
           }
+          if (thread_->bytecode_loader()->is_loading_patch()) {
+            RejectBytecodePatch(
+                "Bytecode patch references an unavailable function.");
+          }
           FATAL("Unable to find function %s in %s", name.ToCString(),
                 cls.ToCString());
         }
@@ -1257,6 +1325,10 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
     case kClosure: {
       ReadObject();  // Skip enclosing member.
       const intptr_t closure_index = reader_.ReadUInt();
+      if (closures_ == nullptr) {
+        RejectBytecodePatch("Bytecode patch has an invalid closure reference.");
+      }
+      CheckBytecodeRange(closure_index, 1, closures_->Length());
       return closures_->At(closure_index);
     }
     case kName: {
@@ -2622,6 +2694,7 @@ void BytecodeReaderHelper::ReadLibraryDeclarations(
 
 intptr_t BytecodeReaderHelper::ReadLoadedLibraryBytecodePatch(
     intptr_t num_libraries) {
+  staged_patches_ = &GrowableObjectArray::Handle(Z, GrowableObjectArray::New());
   intptr_t installed_functions = 0;
   auto& library = Library::Handle(Z);
   auto& uri = String::Handle(Z);
@@ -2633,13 +2706,34 @@ intptr_t BytecodeReaderHelper::ReadLoadedLibraryBytecodePatch(
 
     library = Library::LookupLibrary(thread_, uri);
     if (library.IsNull()) {
-      continue;
+      RejectBytecodePatch(
+          "Bytecode patch introduces a library absent from the "
+          "base snapshot.");
+    }
+    if (library.is_dart_scheme()) {
+      RejectBytecodePatch(
+          "Bytecode patches cannot replace Dart SDK libraries.");
     }
 
     AlternativeReadingScope alt(&reader_, library_offset);
     ReadLoadedLibraryPatchDeclaration(library, &installed_functions);
   }
 
+  if (installed_functions == 0) {
+    RejectBytecodePatch(
+        "Dart bytecode patch did not match any loaded app "
+        "functions.");
+  }
+  // Decode every body and validate every declaration before changing a live
+  // function. Park other mutators for the entire commit, not once per body.
+  GcSafepointOperationScope safepoint(thread_);
+  auto& function = Function::Handle(Z);
+  auto& bytecode = Bytecode::Handle(Z);
+  for (intptr_t i = 0; i < staged_patches_->Length(); i += 2) {
+    function ^= staged_patches_->At(i);
+    bytecode ^= staged_patches_->At(i + 1);
+    function.AttachBytecode(bytecode);
+  }
   return installed_functions;
 }
 
@@ -2666,7 +2760,9 @@ void BytecodeReaderHelper::ReadLoadedLibraryPatchDeclaration(
       cls = library.LookupClass(name);
     }
     if (cls.IsNull()) {
-      continue;
+      RejectBytecodePatch(
+          "Bytecode patch introduces a class absent from the "
+          "base snapshot.");
     }
 
     AlternativeReadingScope alt(&reader_, class_offset);
@@ -2692,18 +2788,37 @@ void BytecodeReaderHelper::ReadLoadedClassPatchDeclaration(
   }
 
   if ((flags & kHasTypeArgumentsFlag) != 0) {
-    reader_.ReadUInt();
+    if (reader_.ReadUInt() != cls.NumTypeArguments()) {
+      RejectBytecodePatch("Bytecode patch changes class type arguments.");
+    }
   }
 
   if ((flags & kHasTypeParamsFlag) != 0) {
-    SkipTypeParametersDeclaration();
+    SkipTypeParametersDeclaration(cls.NumTypeParameters());
+  } else if (cls.NumTypeParameters() != 0) {
+    RejectBytecodePatch("Bytecode patch changes class type parameters.");
   }
 
-  ReadObject();  // Super type.
+  const auto& super_type = AbstractType::CheckedHandle(Z, ReadObject());
+  const auto& base_super_type = AbstractType::Handle(Z, cls.super_type());
+  if (super_type.ptr() != base_super_type.ptr() &&
+      (super_type.IsNull() || base_super_type.IsNull() ||
+       !super_type.Equals(base_super_type))) {
+    RejectBytecodePatch("Bytecode patch changes a class's superclass.");
+  }
 
   const intptr_t num_interfaces = reader_.ReadUInt();
+  const auto& interfaces = Array::Handle(Z, cls.interfaces());
+  if (num_interfaces != interfaces.Length()) {
+    RejectBytecodePatch("Bytecode patch changes a class's interfaces.");
+  }
   for (intptr_t i = 0; i < num_interfaces; ++i) {
-    ReadObject();
+    const auto& type = AbstractType::CheckedHandle(Z, ReadObject());
+    auto& base_type = AbstractType::Handle(Z);
+    base_type ^= interfaces.At(i);
+    if (!type.Equals(base_type)) {
+      RejectBytecodePatch("Bytecode patch changes a class's interfaces.");
+    }
   }
 
   if ((flags & kHasAnnotationsFlag) != 0) {
@@ -2750,8 +2865,19 @@ void BytecodeReaderHelper::ReadLoadedFieldPatchDeclarations(
     const bool is_late = (flags & kIsLateFlag) != 0;
 
     name ^= ReadObject();
-    ReadObject();  // Field type.
+    const auto& field_type = AbstractType::CheckedHandle(Z, ReadObject());
     field = cls.LookupField(name);
+    if (field.IsNull()) {
+      RejectBytecodePatch(
+          "Bytecode patch introduces a field absent from the "
+          "base snapshot.");
+    }
+    if (field.is_static() != is_static || field.is_late() != is_late) {
+      RejectBytecodePatch("Bytecode patch changes a field's storage layout.");
+    }
+    if (!field_type.Equals(AbstractType::Handle(Z, field.type()))) {
+      RejectBytecodePatch("Bytecode patch changes a field's type.");
+    }
 
     if ((flags & kHasCustomScriptFlag) != 0) {
       ReadObject();
@@ -2849,16 +2975,23 @@ void BytecodeReaderHelper::ReadLoadedFunctionPatchDeclarations(
       }
     }
 
-    FunctionType& signature = FunctionType::Handle(Z);
     if (function.IsNull()) {
-      signature = FunctionType::null();
-    } else {
-      signature = function.signature();
+      RejectBytecodePatch(
+          "Bytecode patch introduces a function absent from the "
+          "base snapshot.");
+    }
+    FunctionType& signature = FunctionType::Handle(Z, function.signature());
+    if (signature.IsNull() || function.is_static() != is_static) {
+      RejectBytecodePatch(
+          "Bytecode patch function signature is incompatible "
+          "with the base snapshot.");
     }
     FunctionTypeScope function_type_scope(this, signature);
 
     if ((flags & kHasTypeParamsFlag) != 0) {
-      SkipTypeParametersDeclaration();
+      SkipTypeParametersDeclaration(signature.NumTypeParameters());
+    } else if (signature.NumTypeParameters() != 0) {
+      RejectBytecodePatch("Bytecode patch changes function type parameters.");
     }
 
     const intptr_t num_implicit_params = is_static ? 0 : 1;
@@ -2868,12 +3001,23 @@ void BytecodeReaderHelper::ReadLoadedFunctionPatchDeclarations(
                   kHasOptionalNamedParamsFlag)) != 0) {
       num_required_params = num_implicit_params + reader_.ReadUInt();
     }
+    if (num_params != signature.NumParameters() ||
+        num_required_params != signature.num_fixed_parameters() ||
+        has_optional_named_params != signature.HasOptionalNamedParameters()) {
+      RejectBytecodePatch("Bytecode patch changes a function's parameters.");
+    }
 
     for (intptr_t param_index = num_implicit_params; param_index < num_params;
          ++param_index) {
       name ^= ReadObject();
-      USE(name);
-      ReadObject();
+      const auto& type = AbstractType::CheckedHandle(Z, ReadObject());
+      if (!type.Equals(AbstractType::Handle(
+              Z, signature.ParameterTypeAt(param_index))) ||
+          (has_optional_named_params && param_index >= num_required_params &&
+           !name.Equals(
+               String::Handle(Z, signature.ParameterNameAt(param_index))))) {
+        RejectBytecodePatch("Bytecode patch changes a function's parameters.");
+      }
     }
 
     if ((flags & kHasParameterFlagsFlag) != 0) {
@@ -2884,7 +3028,10 @@ void BytecodeReaderHelper::ReadLoadedFunctionPatchDeclarations(
       }
     }
 
-    ReadObject();  // Result type.
+    const auto& result_type = AbstractType::CheckedHandle(Z, ReadObject());
+    if (!result_type.Equals(AbstractType::Handle(Z, signature.result_type()))) {
+      RejectBytecodePatch("Bytecode patch changes a function's result type.");
+    }
 
     if ((flags & kIsNativeFlag) != 0) {
       ReadObject();
@@ -2907,17 +3054,24 @@ void BytecodeReaderHelper::InstallLoadedFunctionPatch(
     intptr_t code_offset,
     intptr_t* installed_functions) {
   if (function.IsNull() || function.is_abstract()) {
-    return;
+    RejectBytecodePatch(
+        "Bytecode patch introduces a function absent from the "
+        "base snapshot.");
   }
 
-  OS::PrintErr("Dart bytecode patch: installing %s\n",
-               function.ToFullyQualifiedCString());
-  ReadCode(function, code_offset);
+  const auto& bytecode = Bytecode::Handle(Z, ReadCode(function, code_offset,
+                                                      /*attach=*/false));
+  staged_patches_->Add(function);
+  staged_patches_->Add(bytecode);
   *installed_functions += 1;
 }
 
-void BytecodeReaderHelper::SkipTypeParametersDeclaration() {
+void BytecodeReaderHelper::SkipTypeParametersDeclaration(
+    intptr_t expected_count) {
   const intptr_t num_type_params = reader_.ReadUInt();
+  if (num_type_params != expected_count) {
+    RejectBytecodePatch("Bytecode patch changes declaration type parameters.");
+  }
   ASSERT(num_type_params > 0);
   for (intptr_t i = 0; i < num_type_params; ++i) {
     ReadObject();

@@ -3955,6 +3955,9 @@ static void SetupUnboxingInfoOfReturnValue(
 
 void TypeTranslator::SetupUnboxingInfoMetadata(const Function& function,
                                                intptr_t library_kernel_offset) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (FLAG_precompiled_mode && function.IsShorebirdPatchable()) return;
+#endif
   const intptr_t kernel_offset =
       function.kernel_offset() + library_kernel_offset;
   const auto unboxing_info =
@@ -3971,6 +3974,9 @@ void TypeTranslator::SetupUnboxingInfoMetadata(const Function& function,
 void TypeTranslator::SetupUnboxingInfoMetadataForFieldAccessors(
     const Function& field_accessor,
     intptr_t library_kernel_offset) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (FLAG_precompiled_mode && field_accessor.IsShorebirdPatchable()) return;
+#endif
   const intptr_t kernel_offset =
       field_accessor.kernel_offset() + library_kernel_offset;
   const auto unboxing_info =

@@ -1357,6 +1357,9 @@ void Precompiler::AddField(const Field& field) {
 }
 
 const char* Precompiler::MustRetainFunction(const Function& function) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (function.IsShorebirdPatchable()) return "interpreter patch target";
+#endif
   // There are some cases where we must retain, even if there are no directly
   // observable need for function objects at runtime. Here, we check for cases
   // where the function is not marked with the vm:entry-point pragma, which also
@@ -2216,6 +2219,11 @@ void Precompiler::DropFunctions() {
       // Dynamic resolution of entry points also checks for valid arguments.
       return AddRetainReason(sig, RetainReasons::kEntryPointPragmaSignature);
     }
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (function.IsShorebirdPatchable()) {
+      return AddRetainReason(sig, "interpreter patch target signature");
+    }
+#endif
     if (StackTraceUtils::IsNeededForAsyncAwareUnwinding(function)) {
       return AddRetainReason(sig, RetainReasons::kAsyncStackUnwinding);
     }
@@ -2963,8 +2971,7 @@ void Precompiler::DiscardCodeObjects() {
         auto const kind = Code::KindField::decode(kind_and_offset_.Value());
         if (kind == Code::kCallViaCode) {
 #if defined(DART_SHOREBIRD_INTERPRETER)
-          function_target_ =
-              view.Get<Code::kSCallTableFunctionTarget>();
+          function_target_ = view.Get<Code::kSCallTableFunctionTarget>();
           if (!function_target_.IsNull()) {
             ASSERT(function_target_.HasCode());
             call_target_ = function_target_.CurrentCode();

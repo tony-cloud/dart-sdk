@@ -1160,6 +1160,11 @@ class CallSiteInliner : public ValueObject {
                        const Array& argument_names,
                        InlinedCallData* call_data,
                        bool stricter_heuristic) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (CompilerState::Current().is_aot() && function.IsShorebirdPatchable()) {
+      return false;
+    }
+#endif
     if (trace_inlining()) {
       String& name = String::Handle(function.QualifiedUserVisibleName());
       THR_Print("  => %s (deopt count %d)\n", name.ToCString(),

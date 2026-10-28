@@ -36,6 +36,7 @@ import 'package:vm/transformations/prefix_library_uris.dart'
 import 'bytecode_serialization.dart' show BytecodeSizeStatistics;
 import 'bytecode_generator.dart' show generateBytecode;
 import 'options.dart' show BytecodeOptions;
+import 'patch.dart' show createBytecodePatch;
 
 final ArgParser _argParser = ArgParser(allowTrailingOptions: true)
   ..addOption(
@@ -55,6 +56,10 @@ final ArgParser _argParser = ArgParser(allowTrailingOptions: true)
     defaultsTo: null,
   )
   ..addOption('depfile', help: 'Path to output Ninja depfile')
+  ..addOption(
+    'patch-base',
+    help: 'Full release bytecode baseline; emit only compatible changed bodies',
+  )
   ..addOption(
     'depfile-target',
     help: 'Override the target in the generated depfile',
@@ -237,6 +242,7 @@ Future<int> runCompilerWithCommandLineArguments(List<String> arguments) async {
     libraryUrisPrefix: libraryUrisPrefix,
     allowDynamicCallsInDynamicModules: allowDynamicCallsInDynamicModules,
     dynamicCallsSelectorAllowList: dynamicCallsSelectorAllowList,
+    patchBase: options['patch-base'],
   );
 }
 
@@ -265,6 +271,7 @@ Future<int> runCompilerWithOptions({
   required String libraryUrisPrefix,
   bool allowDynamicCallsInDynamicModules = false,
   List<String> dynamicCallsSelectorAllowList = const [],
+  String? patchBase,
 }) async {
   final fileSystem = createFrontEndFileSystem(
     fileSystemScheme,
@@ -368,6 +375,25 @@ Future<int> runCompilerWithOptions({
     extraLoadedLibraries: results.loadedLibraries,
   );
   await sink.close();
+  if (patchBase != null) {
+    final output = io.File(outputFileName);
+    try {
+      final delta = createBytecodePatch(
+        await io.File(patchBase).readAsBytes(),
+        await output.readAsBytes(),
+      );
+      await output.writeAsBytes(delta);
+    } on FormatException catch (error) {
+      await output.delete();
+      printMessage(error.message);
+      return compileTimeErrorExitCode;
+    } catch (_) {
+      // Never leave a full component at the requested delta output path when
+      // reading the baseline or constructing the delta failed.
+      await output.delete();
+      rethrow;
+    }
+  }
   if (bytecodeOptions.showBytecodeSizeStatistics) {
     BytecodeSizeStatistics.dump();
   }

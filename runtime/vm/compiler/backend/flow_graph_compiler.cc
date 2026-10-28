@@ -3516,13 +3516,13 @@ void FlowGraphCompiler::EmitMoveConst(const compiler::ffi::NativeLocation& dst,
 }
 
 bool FlowGraphCompiler::CanPcRelativeCall(const Function& target) const {
-  const bool can_pc_relative =
-      FLAG_precompiled_mode && !FLAG_force_indirect_calls &&
-      (LoadingUnit::LoadingUnitOf(function()) ==
-       LoadingUnit::LoadingUnitOf(target));
+  const bool can_pc_relative = FLAG_precompiled_mode &&
+                               !FLAG_force_indirect_calls &&
+                               (LoadingUnit::LoadingUnitOf(function()) ==
+                                LoadingUnit::LoadingUnitOf(target));
 #if defined(DART_SHOREBIRD_INTERPRETER)
   // Shorebird's interpreter patching updates Function::entry_point at runtime.
-  // Keep only explicitly patchable entry points indirect so patched functions
+  // Keep app and package calls indirect so patched functions
   // are observed without rewriting executable AOT instructions.
   return can_pc_relative && !target.IsShorebirdPatchable();
 #else

@@ -18,13 +18,16 @@ namespace bytecode {
 
 class BytecodeComponentData;
 
+void CheckBytecodeRange(intptr_t offset, intptr_t length, intptr_t size);
+
 class BytecodeLoader {
  public:
   BytecodeLoader(Thread* thread, const TypedDataBase& binary);
   ~BytecodeLoader();
 
   FunctionPtr LoadBytecode(bool load_code = true);
-  intptr_t LoadBytecodePatch();
+  ErrorPtr LoadBytecodePatch();
+  bool is_loading_patch() const { return is_loading_patch_; }
   void LoadPendingCode();
 
   TypedDataBasePtr binary() const { return binary_.ptr(); }
@@ -83,6 +86,7 @@ class BytecodeLoader {
   Library* expression_evaluation_library_ = nullptr;
   Class* expression_evaluation_real_classs_ = nullptr;
   Function* expression_evaluation_function_ = nullptr;
+  bool is_loading_patch_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(BytecodeLoader);
 };
@@ -94,6 +98,7 @@ class Reader : public ValueObject {
   }
 
   uint32_t ReadUInt32At(intptr_t offset) const {
+    CheckBytecodeRange(offset, 4, size_);
     ASSERT((size_ >= 4) && (offset >= 0) && (offset <= size_ - 4));
     uint32_t value =
         LoadUnaligned(reinterpret_cast<const uint32_t*>(raw_buffer_ + offset));
@@ -109,6 +114,7 @@ class Reader : public ValueObject {
   }
 
   uint32_t ReadUInt() {
+    CheckBytecodeRange(offset_, 1, size_);
     ASSERT((size_ >= 1) && (offset_ >= 0) && (offset_ <= size_ - 1));
 
     const uint8_t* buffer = raw_buffer_;
@@ -118,6 +124,7 @@ class Reader : public ValueObject {
       offset_++;
       return byte0;
     } else if ((byte0 & 0xc0) == 0x80) {
+      CheckBytecodeRange(offset_, 2, size_);
       // 10...
       ASSERT((size_ >= 2) && (offset_ >= 0) && (offset_ <= size_ - 2));
       uint32_t value =
@@ -125,6 +132,7 @@ class Reader : public ValueObject {
       offset_ += 2;
       return value;
     } else {
+      CheckBytecodeRange(offset_, 4, size_);
       // 11...
       ASSERT((size_ >= 4) && (offset_ >= 0) && (offset_ <= size_ - 4));
       uint32_t value = ((byte0 & ~static_cast<uword>(0xc0)) << 24) |
@@ -136,6 +144,7 @@ class Reader : public ValueObject {
   }
 
   intptr_t ReadSLEB128() {
+    CheckSLEB128();
     ReadStream stream(raw_buffer_, size_, offset_);
     const intptr_t result = stream.ReadSLEB128();
     offset_ = stream.Position();
@@ -143,6 +152,7 @@ class Reader : public ValueObject {
   }
 
   int64_t ReadSLEB128AsInt64() {
+    CheckSLEB128();
     ReadStream stream(raw_buffer_, size_, offset_);
     const int64_t result = stream.ReadSLEB128<int64_t>();
     offset_ = stream.Position();
@@ -162,9 +172,15 @@ class Reader : public ValueObject {
 
   intptr_t ReadListLength() { return ReadUInt(); }
 
-  uint8_t ReadByte() { return raw_buffer_[offset_++]; }
+  uint8_t ReadByte() {
+    CheckBytecodeRange(offset_, 1, size_);
+    return raw_buffer_[offset_++];
+  }
 
-  uint8_t PeekByte() { return raw_buffer_[offset_]; }
+  uint8_t PeekByte() {
+    CheckBytecodeRange(offset_, 1, size_);
+    return raw_buffer_[offset_];
+  }
 
   void ReadBytes(uint8_t* buffer, uint8_t size) {
     for (int i = 0; i < size; i++) {
@@ -176,22 +192,33 @@ class Reader : public ValueObject {
 
   intptr_t offset() const { return offset_; }
   void set_offset(intptr_t offset) {
+    CheckBytecodeRange(offset, 0, size_);
     ASSERT(offset <= size_);
     offset_ = offset;
   }
   intptr_t size() const { return size_; }
 
   TypedDataViewPtr ViewFromTo(intptr_t start, intptr_t end) {
+    CheckBytecodeRange(start, end - start, size_);
     return typed_data_->ViewFromTo(start, end, Heap::kOld);
   }
 
   const uint8_t* BufferAt(intptr_t offset) {
+    CheckBytecodeRange(offset, 1, size_);
     ASSERT((offset >= 0) && (offset < size_));
     return &raw_buffer_[offset];
   }
 
  private:
   friend class AlternativeReadingScope;
+
+  void CheckSLEB128() const {
+    for (intptr_t i = 0; i < 10; ++i) {
+      CheckBytecodeRange(offset_ + i, 1, size_);
+      if ((raw_buffer_[offset_ + i] & 0x80) == 0) return;
+    }
+    CheckBytecodeRange(-1, 0, size_);
+  }
 
   void Init() {
     ASSERT(typed_data_->IsExternalOrExternalView());
@@ -216,7 +243,7 @@ class AlternativeReadingScope {
  public:
   AlternativeReadingScope(Reader* reader, intptr_t new_position)
       : reader_(reader), saved_offset_(reader_->offset_) {
-    reader_->offset_ = new_position;
+    reader_->set_offset(new_position);
   }
 
   ~AlternativeReadingScope() { reader_->offset_ = saved_offset_; }
@@ -239,7 +266,9 @@ class BytecodeReaderHelper : public ValueObject {
 
   Reader& reader() { return reader_; }
 
-  void ReadCode(const Function& function, intptr_t code_offset);
+  BytecodePtr ReadCode(const Function& function,
+                       intptr_t code_offset,
+                       bool attach = true);
   void ReadCoveredConstConstructors(const Script& script, intptr_t offset);
 
   void ReadMembers(const Class& cls, bool discard_fields);
@@ -382,7 +411,8 @@ class BytecodeReaderHelper : public ValueObject {
   void InstallLoadedFunctionPatch(const Function& function,
                                   intptr_t code_offset,
                                   intptr_t* installed_functions);
-  void SkipTypeParametersDeclaration();
+  GrowableObjectArray* staged_patches_ = nullptr;
+  void SkipTypeParametersDeclaration(intptr_t expected_count);
   void SkipAnnotations();
   FunctionTypePtr ReadFunctionSignature(const FunctionType& signature,
                                         const Function& closure_function,

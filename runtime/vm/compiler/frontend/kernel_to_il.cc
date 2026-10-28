@@ -378,6 +378,13 @@ Fragment FlowGraphBuilder::InstanceCall(
     const CallSiteAttributesMetadata* call_site_attrs,
     bool receiver_is_not_smi,
     bool is_call_on_this) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (FLAG_precompiled_mode &&
+      (interface_target.IsNull() || interface_target.IsShorebirdPatchable())) {
+    result_type = nullptr;
+    use_unchecked_entry = false;
+  }
+#endif
   Fragment instructions = RecordCoverage(position);
   const intptr_t total_count = argument_count + (type_args_len > 0 ? 1 : 0);
   InputsArray arguments = GetArguments(total_count);
@@ -650,6 +657,15 @@ Fragment FlowGraphBuilder::StaticCall(TokenPosition position,
                                       const InferredTypeMetadata* result_type,
                                       intptr_t type_args_count,
                                       bool use_unchecked_entry) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (FLAG_precompiled_mode && target.IsShorebirdPatchable()) {
+    // A patched body can return a different value with the same signature.
+    // Retaining its call while replacing its result with a base-build constant
+    // would silently discard the interpreted result.
+    result_type = nullptr;
+    use_unchecked_entry = false;
+  }
+#endif
   Fragment instructions = RecordCoverage(position);
   const intptr_t total_count = argument_count + (type_args_count > 0 ? 1 : 0);
   InputsArray arguments = GetArguments(total_count);

@@ -4,6 +4,7 @@
 
 #include "vm/dart_api_impl.h"
 
+#include <string>
 #include <thread>  // NOLINT(build/c++11)
 
 #include "bin/builtin.h"
@@ -342,8 +343,7 @@ TEST_CASE(DartAPI_IsolateOwnership) {
     EXPECT_EQ(false, Dart_GetCurrentThreadOwnsIsolate(ILLEGAL_PORT));
 
     Dart_ShutdownIsolate();
-  })
-      .join();
+  }).join();
 
   EXPECT_EQ(true, Dart_GetCurrentThreadOwnsIsolate(port));
   EXPECT_EQ(false, Dart_GetCurrentThreadOwnsIsolate(other_port));
@@ -398,8 +398,7 @@ TEST_CASE_WITH_EXPECTATION(
     // Causes an assertion failure, because the isolate is already owned by
     // another thread.
     Dart_EnterIsolate(isolate);
-  })
-      .join();
+  }).join();
 
   Dart_EnterIsolate(isolate);
 }
@@ -11135,6 +11134,104 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
   EXPECT_EQ(13, patch_payload_length);
   EXPECT_EQ(0, memcmp("patch-payload", patch_payload, patch_payload_length));
   Dart_FreeAotPatchPayload(patch_payload);
+
+  // Fixed AES-GCM vectors generated with the same authenticated metadata as
+  // above, adding offline_expires_at. Both acceptance and rejection therefore
+  // exercise decryption, rather than rejecting unauthenticated JSON first.
+  const struct {
+    const char* expiry;
+    const char* tag;
+    const char* aad_hash;
+    const char* error;
+  } expiry_cases[] = {
+      {"2000-01-01T00:00:00Z", "gr27oWD9S7wcp7u1w5GWug==",
+       "ccca90f8aca3aa4737f5d6f9f4290ae0d25ea2c97dcf7d9b112608b219ca0603",
+       "offline license has expired"},
+      {"9999-12-31T23:59:59.999999Z", "+5ysICNlfSYU/BBWeDYfng==",
+       "69732ed032b4aff7aa2ff7a66f43739a6dfd7fefbfa845f753ac41c4d4a278f7",
+       nullptr},
+      {"2400-02-29T12:34:56.123Z", "HAz/1RairYwug+0zmntifg==",
+       "92e678880f9e6e89752730c5591f9cbe8465c1ba1268790f4b2f63adcd08825c",
+       nullptr},
+      {"2100-02-29T00:00:00Z", "1Y+5f1ycKyQcWSY89uDu6w==",
+       "1b27fc54af55dab2e13648d1469785d58f1063543b33330699e5bd6e0df14400",
+       "must be an ISO-8601 UTC timestamp"},
+      {"9999-13-01T00:00:00Z", "iCsSi9PLhT4Wk/DDtrV8Tg==",
+       "c383badca0a85291430491e403f8fd738efe767de5e4e7837b5dd5d283c4fdcd",
+       "must be an ISO-8601 UTC timestamp"},
+      {"9999-01-01T24:00:00Z", "xJQnggks2rYbrt4xym+35g==",
+       "9a004bd41f22362e5a1156411dba740c0dc281c22e8d7094ce820b135cbe225f",
+       "must be an ISO-8601 UTC timestamp"},
+      {"9999-01-01T00:00:00+00:00", "1kPv97WPDX6eU1TohRZbiA==",
+       "9863ac873e3f46714fcf6892013d64491a1ad5021a192ed99ac95583acd48e1b",
+       "must be an ISO-8601 UTC timestamp"},
+      {"9999-01-01T00:00:00.1234567Z", "iAzPH9jW4JZlhtwmaG03kA==",
+       "2adc8e1888ce631751886d3a82ce407ad8661c9455a1389773b4bd6f99ef0e3c",
+       "must be an ISO-8601 UTC timestamp"},
+  };
+  for (const auto& test : expiry_cases) {
+    std::string artifact(patch);
+    const auto replace = [&](const char* from, const std::string& to) {
+      const auto offset = artifact.find(from);
+      RELEASE_ASSERT(offset != std::string::npos);
+      artifact.replace(offset, strlen(from), to);
+    };
+    replace("\"metadata\": {", std::string("\"metadata\": {") +
+                                   "\"offline_expires_at\": \"" + test.expiry +
+                                   "\",");
+    replace("W8uOg/f+g2SS3Ahxfaeuyg==", test.tag);
+    replace("1a0c6003fec49bbc26fbaaf0a6dfcd557061b4ae5f22e4b1114afe3b1a8d9796",
+            test.aad_hash);
+    result = Dart_InstallAotPatch(
+        reinterpret_cast<const uint8_t*>(artifact.data()), artifact.size(),
+        &options, &patch_payload, &patch_payload_length);
+    if (test.error != nullptr) {
+      EXPECT_ERROR(result, test.error);
+      EXPECT(patch_payload == nullptr);
+      EXPECT_EQ(0, patch_payload_length);
+    } else {
+      EXPECT_VALID(result);
+      EXPECT_EQ(13, patch_payload_length);
+      Dart_FreeAotPatchPayload(patch_payload);
+    }
+  }
+
+  for (const char* invalid_field :
+       {"\"offline_expires_at\": 1,", "\"offline_expires_at\": null,",
+        "\"app_id\": \"app.test\","}) {
+    std::string artifact(patch);
+    artifact.insert(artifact.find("\"app_id\""), invalid_field);
+    result = Dart_InstallAotPatch(
+        reinterpret_cast<const uint8_t*>(artifact.data()), artifact.size(),
+        &options, &patch_payload, &patch_payload_length);
+    EXPECT_ERROR(result, "Malformed AOT patch JSON envelope");
+    EXPECT(patch_payload == nullptr);
+    EXPECT_EQ(0, patch_payload_length);
+  }
+
+  // Authentication alone is insufficient if a producer signs inconsistent
+  // snapshot metadata. Verify the delivered component against that hash too.
+  {
+    std::string artifact(patch);
+    const auto replace = [&](const char* from, const char* to) {
+      const auto offset = artifact.find(from);
+      RELEASE_ASSERT(offset != std::string::npos);
+      artifact.replace(offset, strlen(from), to);
+    };
+    Dart_AotPatchInstallOptions inconsistent = options;
+    inconsistent.patch_snapshot_hash =
+        "0000000000000000000000000000000000000000000000000000000000000000";
+    replace(options.patch_snapshot_hash, inconsistent.patch_snapshot_hash);
+    replace("W8uOg/f+g2SS3Ahxfaeuyg==", "sfAxMdYYQ0UhJH4DKuIgFA==");
+    replace("1a0c6003fec49bbc26fbaaf0a6dfcd557061b4ae5f22e4b1114afe3b1a8d9796",
+            "bba4190d6451b9033d846f87f61c19cb44832fcbabb475b9ba1051fd10a52459");
+    result = Dart_InstallAotPatch(
+        reinterpret_cast<const uint8_t*>(artifact.data()), artifact.size(),
+        &inconsistent, &patch_payload, &patch_payload_length);
+    EXPECT_ERROR(result, "snapshot hash");
+    EXPECT(patch_payload == nullptr);
+    EXPECT_EQ(0, patch_payload_length);
+  }
 
   Dart_AotPatchInstallOptions ios_options = options;
   ios_options.target_os = "ios";

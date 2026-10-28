@@ -13959,7 +13959,11 @@ static constexpr dart::compiler::target::word
     AOT_Closure_elements_start_offset = 0x28;
 static constexpr dart::compiler::target::word AOT_Closure_element_size = 0x8;
 static constexpr dart::compiler::target::word AOT_Code_elements_start_offset =
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    0xa0;
+#else
     0x98;
+#endif
 static constexpr dart::compiler::target::word AOT_Code_element_size = 0x4;
 static constexpr dart::compiler::target::word
     AOT_Context_elements_start_offset = 0x18;
@@ -14874,7 +14878,11 @@ static constexpr dart::compiler::target::word
     AOT_Closure_elements_start_offset = 0x28;
 static constexpr dart::compiler::target::word AOT_Closure_element_size = 0x8;
 static constexpr dart::compiler::target::word AOT_Code_elements_start_offset =
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    0xa0;
+#else
     0x98;
+#endif
 static constexpr dart::compiler::target::word AOT_Code_element_size = 0x4;
 static constexpr dart::compiler::target::word
     AOT_Context_elements_start_offset = 0x18;
@@ -15785,7 +15793,11 @@ static constexpr dart::compiler::target::word
     AOT_Closure_elements_start_offset = 0x20;
 static constexpr dart::compiler::target::word AOT_Closure_element_size = 0x4;
 static constexpr dart::compiler::target::word AOT_Code_elements_start_offset =
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    0xa0;
+#else
     0x98;
+#endif
 static constexpr dart::compiler::target::word AOT_Code_element_size = 0x4;
 static constexpr dart::compiler::target::word
     AOT_Context_elements_start_offset = 0x10;
@@ -16696,7 +16708,11 @@ static constexpr dart::compiler::target::word
     AOT_Closure_elements_start_offset = 0x20;
 static constexpr dart::compiler::target::word AOT_Closure_element_size = 0x4;
 static constexpr dart::compiler::target::word AOT_Code_elements_start_offset =
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    0xa0;
+#else
     0x98;
+#endif
 static constexpr dart::compiler::target::word AOT_Code_element_size = 0x4;
 static constexpr dart::compiler::target::word
     AOT_Context_elements_start_offset = 0x10;
@@ -18514,7 +18530,11 @@ static constexpr dart::compiler::target::word
     AOT_Closure_elements_start_offset = 0x28;
 static constexpr dart::compiler::target::word AOT_Closure_element_size = 0x8;
 static constexpr dart::compiler::target::word AOT_Code_elements_start_offset =
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    0xa0;
+#else
     0x98;
+#endif
 static constexpr dart::compiler::target::word AOT_Code_element_size = 0x4;
 static constexpr dart::compiler::target::word
     AOT_Context_elements_start_offset = 0x18;
@@ -22132,7 +22152,11 @@ static constexpr dart::compiler::target::word
     AOT_Closure_elements_start_offset = 0x20;
 static constexpr dart::compiler::target::word AOT_Closure_element_size = 0x4;
 static constexpr dart::compiler::target::word AOT_Code_elements_start_offset =
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    0x80;
+#else
     0x78;
+#endif
 static constexpr dart::compiler::target::word AOT_Code_element_size = 0x4;
 static constexpr dart::compiler::target::word
     AOT_Context_elements_start_offset = 0x10;
@@ -23034,7 +23058,11 @@ static constexpr dart::compiler::target::word
     AOT_Closure_elements_start_offset = 0x20;
 static constexpr dart::compiler::target::word AOT_Closure_element_size = 0x4;
 static constexpr dart::compiler::target::word AOT_Code_elements_start_offset =
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    0x80;
+#else
     0x78;
+#endif
 static constexpr dart::compiler::target::word AOT_Code_element_size = 0x4;
 static constexpr dart::compiler::target::word
     AOT_Context_elements_start_offset = 0x10;
@@ -24834,7 +24862,11 @@ static constexpr dart::compiler::target::word
     AOT_Closure_elements_start_offset = 0x28;
 static constexpr dart::compiler::target::word AOT_Closure_element_size = 0x8;
 static constexpr dart::compiler::target::word AOT_Code_elements_start_offset =
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    0x80;
+#else
     0x78;
+#endif
 static constexpr dart::compiler::target::word AOT_Code_element_size = 0x4;
 static constexpr dart::compiler::target::word
     AOT_Context_elements_start_offset = 0x18;

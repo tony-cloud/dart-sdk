@@ -71,6 +71,8 @@ import 'transformations/to_string_transformer.dart' as to_string_transformer;
 import 'transformations/type_flow/transformer.dart'
     as globalTypeFlow
     show transformComponent;
+import 'transformations/type_flow/table_selector_assigner.dart'
+    show annotateWithoutTypeFlow;
 import 'transformations/unreachable_code_elimination.dart'
     as unreachable_code_elimination;
 import 'transformations/vm_constant_evaluator.dart' as vm_constant_evaluator;
@@ -837,6 +839,7 @@ Future runGlobalTransformations(
   } else {
     devirtualization.transformComponent(coreTypes, component);
     no_dynamic_invocations_annotator.transformComponent(component);
+    annotateWithoutTypeFlow(component);
   }
 
   // TODO(35069): avoid recomputing CSA by reading it from the platform files.

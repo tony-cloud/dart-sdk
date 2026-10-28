@@ -7,6 +7,49 @@ import 'package:kernel/ast.dart';
 import 'utils.dart' show UnionFind;
 import '../../metadata/procedure_attributes.dart';
 import '../../metadata/table_selector.dart';
+import '../../metadata/unboxing_info.dart';
+
+/// Supplies the dispatch metadata required by AOT when TFA is disabled.
+/// Without a closed-world analysis every selector must conservatively remain
+/// callable, including on null and through a tear-off.
+void annotateWithoutTypeFlow(Component component) {
+  final assigner = TableSelectorAssigner(component);
+  final attributes = ProcedureAttributesMetadataRepository();
+  final unboxing = UnboxingInfoMetadataRepository();
+  for (final library in component.libraries) {
+    for (final member in library.members) {
+      unboxing.mapping[member] = UnboxingInfoMetadata(0)..setFullyBoxed();
+    }
+    for (final cls in library.classes) {
+      for (final member in cls.members) {
+        // TFA normally reconciles calling conventions across overrides and
+        // recognized intrinsics. Without that analysis use the stack ABI.
+        unboxing.mapping[member] = UnboxingInfoMetadata(0)..setFullyBoxed();
+        if (member.isInstanceMember) {
+          attributes.mapping[member] = ProcedureAttributesMetadata(
+            methodOrSetterSelectorId: assigner.methodOrSetterSelectorId(member),
+            getterSelectorId: assigner.getterSelectorId(member),
+          );
+          if (member is Procedure && member.kind == ProcedureKind.Method) {
+            final selector = assigner
+                .metadata
+                .selectors[assigner.methodOrSetterSelectorId(member)];
+            selector.tornOff = true;
+          }
+        }
+      }
+    }
+  }
+  for (final selector in assigner.metadata.selectors.skip(1)) {
+    selector.callCount = 1;
+    selector.calledOnNull = true;
+  }
+  component.addMetadataRepository(attributes);
+  component.addMetadataRepository(unboxing);
+  component.addMetadataRepository(
+    TableSelectorMetadataRepository()..mapping[component] = assigner.metadata,
+  );
+}
 
 // Assigns dispatch table selector IDs to interface targets.
 class TableSelectorAssigner {

@@ -8135,20 +8135,12 @@ bool Function::HasCode() const {
 
 #if defined(DART_SHOREBIRD_INTERPRETER)
 bool Function::IsShorebirdPatchable() const {
-  if (IsNull() || !has_pragma()) {
-    return false;
-  }
-
-  Thread* thread = dart::Thread::Current();
-  Object& options = Object::Handle(thread->zone());
-  if (!Library::FindPragma(thread, /*only_core=*/false, *this,
-                           Symbols::vm_entry_point(), /*multiple=*/false,
-                           &options)) {
-    return false;
-  }
-
-  return options.ptr() == Bool::null() || options.ptr() == Bool::True().ptr() ||
-         options.ptr() == Symbols::call().ptr();
+  if (IsNull()) return false;
+  const auto& owner = Class::Handle(Owner());
+  const auto& library = Library::Handle(owner.library());
+  // SDK code belongs to the signed runtime. App and package bodies must remain
+  // replaceable without requiring source annotations or executable writes.
+  return !library.is_dart_scheme();
 }
 #endif
 
@@ -8170,7 +8162,8 @@ void Function::AttachBytecode(const Bytecode& value) const {
     const Function& closure_function =
         Function::Handle(ImplicitClosureFunction());
     if (closure_function.IsImplicitStaticClosureFunction()) {
-      closure_function.AttachBytecode(Object::implicit_static_closure_bytecode());
+      closure_function.AttachBytecode(
+          Object::implicit_static_closure_bytecode());
 #if defined(DART_PRECOMPILED_RUNTIME)
       const Closure& closure =
           Closure::Handle(closure_function.implicit_static_closure());
@@ -11827,6 +11820,11 @@ bool Function::HasDynamicCallers(Zone* zone) const {
 }
 
 bool Function::PrologueNeedsArgumentsDescriptor() const {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  // A native body can later enter InterpretCall, which needs the descriptor
+  // even for a fixed-arity function. Every AOT call must supply it in advance.
+  if (FLAG_precompiled_mode && IsShorebirdPatchable()) return true;
+#endif
 #if defined(DART_BYTECODE_INTERPRETER)
   // Entering interpreter needs arguments descriptor.
   if (is_declared_in_bytecode()) {
@@ -27850,6 +27848,9 @@ EntryPointPragma FindEntryPointPragma(IsolateGroup* IG,
 // never land in a function which expects parameters in registers from a
 // dynamic call site.
 intptr_t Function::MaxNumberOfParametersInRegisters(Zone* zone) const {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (FLAG_precompiled_mode && IsShorebirdPatchable()) return 0;
+#endif
 #if defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_ARM64) ||                  \
     defined(TARGET_ARCH_ARM) || defined(TARGET_ARCH_RISCV32) ||                \
     defined(TARGET_ARCH_RISCV64)

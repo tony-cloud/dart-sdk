@@ -2004,6 +2004,9 @@ class ObjectTable implements ObjectWriter, ObjectReader {
   }
 
   void allocateIndexTable() {
+    // A deserialized component already owns stable references. Reuse them
+    // when emitting a filtered patch component or round-tripping bytecode.
+    if (_indexTable != null) return;
     int tableSize = 1; // Reserve invalid entry.
     for (var obj in _objects.reversed) {
       assert(obj._reference == null);
@@ -2056,7 +2059,8 @@ class ObjectTable implements ObjectWriter, ObjectReader {
   BytecodeObject? readObject(BufferedReader reader) {
     final int header = reader.readPackedUInt30();
     if ((header & ObjectHandle.referenceBit) == 0) {
-      return new ObjectHandle._read(reader, header);
+      return new ObjectHandle._read(reader, header)
+        .._reference = ObjectHandle.inlineObject;
     } else {
       final int index = ObjectHandle._getIndexFromReference(header);
       return (index == 0) ? null : _indexTable![index];

@@ -11,6 +11,7 @@
 
 #if defined(DART_ENABLE_AOT_PATCHING)
 #include <openssl/aead.h>
+#include <openssl/mem.h>
 #include <openssl/sha.h>
 #endif
 
@@ -6064,8 +6065,8 @@ Dart_LoadLibraryFromBytecode(Dart_Handle bytecode_buffer) {
 DART_EXPORT Dart_Handle
 Dart_ReloadBytecodePatch(const uint8_t* bytecode_buffer,
                          intptr_t bytecode_buffer_size) {
-#if defined(DART_SHOREBIRD_INTERPRETER) && defined(DART_BYTECODE_INTERPRETER) && \
-    defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SHOREBIRD_INTERPRETER) &&                                     \
+    defined(DART_BYTECODE_INTERPRETER) && defined(DART_PRECOMPILED_RUNTIME)
   Thread* thread = Thread::Current();
   DARTSCOPE(thread);
   API_TIMELINE_DURATION(thread);
@@ -6089,21 +6090,25 @@ Dart_ReloadBytecodePatch(const uint8_t* bytecode_buffer,
   memmove(owned_buffer, bytecode_buffer, bytecode_buffer_size);
 
   const ExternalTypedData& typed_data = ExternalTypedData::Handle(
-      thread->zone(), ExternalTypedData::New(kExternalTypedDataUint8ArrayCid,
-                                             owned_buffer,
-                                             bytecode_buffer_size));
-  intptr_t installed_functions = 0;
+      thread->zone(),
+      ExternalTypedData::New(kExternalTypedDataUint8ArrayCid, owned_buffer,
+                             bytecode_buffer_size));
+  // The bytecode objects retain views of this allocation until group teardown.
+  // Attach ownership before decoding so failed staging is collectible too.
+  if (AllocateFinalizableHandle(
+          thread, typed_data, owned_buffer, bytecode_buffer_size,
+          [](void*, void* peer) { free(peer); }) == nullptr) {
+    free(owned_buffer);
+    return Api::NewError("Failed to retain Dart bytecode patch buffer.");
+  }
+  auto& error = Error::Handle(thread->zone());
   {
     SafepointWriteRwLocker ml(thread, thread->isolate_group()->program_lock());
     bytecode::BytecodeLoader loader(thread, typed_data);
-    installed_functions = loader.LoadBytecodePatch();
+    error = loader.LoadBytecodePatch();
   }
 
-  if (installed_functions == 0) {
-    free(owned_buffer);
-    return Api::NewError(
-        "Dart bytecode patch did not match any loaded app functions.");
-  }
+  if (!error.IsNull()) return Api::NewHandle(thread, error.ptr());
   return Api::Success();
 #elif defined(DART_SUPPORT_RELOAD) && defined(DART_BYTECODE_INTERPRETER)
   Thread* thread = Thread::Current();
@@ -6864,10 +6869,9 @@ static void CreateAppAOTSnapshotHelper(
   };
 
   Dwarf* const dwarf =
-      (format == Dart_AotBinaryFormat_Assembly || strip)
-          ? nullptr
-          : generate_debug ? debug_dwarf
-                           : new (Z) Dwarf(Z, deobfuscation_trie, identifier);
+      (format == Dart_AotBinaryFormat_Assembly || strip) ? nullptr
+      : generate_debug ? debug_dwarf
+                       : new (Z) Dwarf(Z, deobfuscation_trie, identifier);
   SharedObjectWriter* so = nullptr;
   if (format == Dart_AotBinaryFormat_Elf) {
     so = new (Z)
@@ -7449,8 +7453,7 @@ static constexpr const char* kAotPatchRuntimeModeDynamicModules =
 static constexpr const char* kAotPatchRuntimeModeDynamicModulesLegacy =
     "dynamic-modules";
 static constexpr const char* kAotPatchPayloadKindEmpty = "empty";
-static constexpr const char* kAotPatchPayloadKindFullSnapshot =
-    "full-snapshot";
+static constexpr const char* kAotPatchPayloadKindFullSnapshot = "full-snapshot";
 static constexpr const char* kAotPatchPayloadKindBinaryDiff = "binary-diff-v1";
 
 struct AotPatchJsonString {
@@ -7533,6 +7536,78 @@ static bool FindAotPatchJsonString(const char* json,
       continue;
     }
     return ParseAotPatchJsonString(json, json_length, &cursor, out);
+  }
+  return false;
+}
+
+// Validate the versioned envelope's structure before the field lookups below.
+// This makes duplicate keys, misplaced fields, and non-string optional fields
+// errors rather than allowing different JSON consumers to disagree.
+static bool ValidateAotPatchJsonObject(const char* json,
+                                       intptr_t length,
+                                       intptr_t* cursor,
+                                       int object_kind) {
+  const char* root_fields[] = {"format",         "metadata",
+                               "payload_kind",   "reconstructed_size",
+                               "payload_sha256", "encrypted_payload_base64",
+                               "encryption"};
+  const char* metadata_fields[] = {"app_build_id",       "app_id",
+                                   "base_flavor_id",     "base_license_type",
+                                   "base_snapshot_hash", "flavor_id",
+                                   "license_type",       "obfuscation_map_hash",
+                                   "offline_expires_at", "patch_snapshot_hash",
+                                   "runtime_mode",       "sdk_hash",
+                                   "target_arch",        "target_os"};
+  const char* encryption_fields[] = {"algorithm", "key_id", "nonce_base64",
+                                     "tag_base64", "aad_sha256"};
+  const char** fields = object_kind == 0   ? root_fields
+                        : object_kind == 1 ? metadata_fields
+                                           : encryption_fields;
+  const intptr_t count = object_kind == 0   ? ARRAY_SIZE(root_fields)
+                         : object_kind == 1 ? ARRAY_SIZE(metadata_fields)
+                                            : ARRAY_SIZE(encryption_fields);
+  SkipAotPatchJsonWhitespace(json, length, cursor);
+  if (*cursor >= length || json[(*cursor)++] != '{') return false;
+  uint32_t seen = 0;
+  SkipAotPatchJsonWhitespace(json, length, cursor);
+  if (*cursor < length && json[*cursor] == '}') {
+    ++*cursor;
+    return true;
+  }
+  while (*cursor < length) {
+    AotPatchJsonString key;
+    if (!ParseAotPatchJsonString(json, length, cursor, &key)) return false;
+    intptr_t field = 0;
+    while (field < count && !AotPatchJsonStringEquals(key, fields[field]))
+      ++field;
+    if (field == count || (seen & (1u << field)) != 0) return false;
+    seen |= 1u << field;
+    SkipAotPatchJsonWhitespace(json, length, cursor);
+    if (*cursor >= length || json[(*cursor)++] != ':') return false;
+    SkipAotPatchJsonWhitespace(json, length, cursor);
+    if (object_kind == 0 && (field == 1 || field == 6)) {
+      if (!ValidateAotPatchJsonObject(json, length, cursor,
+                                      field == 1 ? 1 : 2)) {
+        return false;
+      }
+    } else if (object_kind == 0 && field == 3) {
+      const intptr_t start = *cursor;
+      while (*cursor < length && json[*cursor] >= '0' && json[*cursor] <= '9') {
+        ++*cursor;
+      }
+      if (*cursor == start || (*cursor > start + 1 && json[start] == '0')) {
+        return false;
+      }
+    } else {
+      AotPatchJsonString value;
+      if (!ParseAotPatchJsonString(json, length, cursor, &value)) return false;
+    }
+    SkipAotPatchJsonWhitespace(json, length, cursor);
+    if (*cursor >= length) return false;
+    const char separator = json[(*cursor)++];
+    if (separator == '}') return true;
+    if (separator != ',') return false;
+    SkipAotPatchJsonWhitespace(json, length, cursor);
   }
   return false;
 }
@@ -7661,8 +7736,7 @@ static bool IsAotPatchPayloadKindSupported(
   return AotPatchJsonStringEquals(payload_kind, kAotPatchPayloadKindEmpty) ||
          AotPatchJsonStringEquals(payload_kind,
                                   kAotPatchPayloadKindFullSnapshot) ||
-         AotPatchJsonStringEquals(payload_kind,
-                                  kAotPatchPayloadKindBinaryDiff);
+         AotPatchJsonStringEquals(payload_kind, kAotPatchPayloadKindBinaryDiff);
 }
 
 static bool AotPatchEffectiveRuntimeModeIsInterpreter(
@@ -7698,9 +7772,8 @@ static Dart_Handle ValidateAotPatchPayloadKind(
   if (!IsAotPatchPayloadKindSupported(payload_kind)) {
     return Api::NewError("Unsupported AOT patch payload kind.");
   }
-  if (is_interpreter &&
-      !AotPatchJsonStringEquals(payload_kind,
-                                kAotPatchPayloadKindFullSnapshot)) {
+  if (is_interpreter && !AotPatchJsonStringEquals(
+                            payload_kind, kAotPatchPayloadKindFullSnapshot)) {
     return Api::NewError(
         "Dart bytecode interpreter AOT patches must use payload_kind "
         "\"full-snapshot\" until runtime reconstruction is available.");
@@ -7770,6 +7843,69 @@ static bool AotPatchDigestEqualsHex(const uint8_t* digest,
     }
   }
   return true;
+}
+
+// Accept the UTC forms emitted by DateTime.toIso8601String, as well as whole
+// seconds. Do not normalize invalid dates or depend on the device time zone.
+static Dart_Handle ValidateAotPatchExpiry(const char* json,
+                                          intptr_t json_length) {
+  AotPatchJsonString value;
+  if (!FindAotPatchJsonString(json, json_length, "offline_expires_at",
+                              &value)) {
+    return Api::Success();
+  }
+  const char* s = value.chars;
+  const intptr_t n = value.length;
+  const char* error =
+      "AOT patch offline_expires_at must be an ISO-8601 UTC "
+      "timestamp (YYYY-MM-DDTHH:MM:SS[.ffffff]Z).";
+  if (n < 20 || n > 27 || s[4] != '-' || s[7] != '-' || s[10] != 'T' ||
+      s[13] != ':' || s[16] != ':' || s[n - 1] != 'Z' ||
+      (n != 20 && (n < 22 || s[19] != '.'))) {
+    return Api::NewError("%s", error);
+  }
+  auto digits = [&](intptr_t offset, intptr_t length) -> int64_t {
+    int64_t result = 0;
+    for (intptr_t i = offset; i < offset + length; ++i) {
+      if (s[i] < '0' || s[i] > '9') return -1;
+      result = result * 10 + s[i] - '0';
+    }
+    return result;
+  };
+  const int64_t year = digits(0, 4);
+  const int64_t month = digits(5, 2);
+  const int64_t day = digits(8, 2);
+  const int64_t hour = digits(11, 2);
+  const int64_t minute = digits(14, 2);
+  const int64_t second = digits(17, 2);
+  const bool leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+  const int days_in_month[] = {
+      31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (year < 1 || month < 1 || month > 12 || day < 1 ||
+      day > days_in_month[month - 1] || hour < 0 || hour > 23 || minute < 0 ||
+      minute > 59 || second < 0 || second > 59) {
+    return Api::NewError("%s", error);
+  }
+  int64_t micros = 0;
+  if (n != 20) {
+    micros = digits(20, n - 21);
+    if (micros < 0) return Api::NewError("%s", error);
+    for (intptr_t i = n - 21; i < 6; ++i)
+      micros *= 10;
+  }
+  const auto days_before_year = [](int64_t y) {
+    --y;
+    return 365 * y + y / 4 - y / 100 + y / 400;
+  };
+  int64_t days = days_before_year(year) - days_before_year(1970) + day - 1;
+  for (intptr_t i = 0; i < month - 1; ++i)
+    days += days_in_month[i];
+  const int64_t expires_at =
+      (((days * 24 + hour) * 60 + minute) * 60 + second) * 1000000 + micros;
+  if (OS::GetCurrentTimeMicros() >= expires_at) {
+    return Api::NewError("AOT patch offline license has expired.");
+  }
+  return Api::Success();
 }
 
 static void AppendAotPatchJsonString(ZoneTextBuffer* buffer,
@@ -7891,6 +8027,14 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
   }
 
   const char* json = reinterpret_cast<const char*>(patch_buffer);
+  intptr_t json_end = 0;
+  if (!ValidateAotPatchJsonObject(json, patch_buffer_length, &json_end, 0)) {
+    return Api::NewError("Malformed AOT patch JSON envelope.");
+  }
+  SkipAotPatchJsonWhitespace(json, patch_buffer_length, &json_end);
+  if (json_end != patch_buffer_length) {
+    return Api::NewError("Malformed AOT patch JSON envelope.");
+  }
   Dart_Handle result = ValidateAotPatchJsonField(
       json, patch_buffer_length, "format", "open-aot-vmcode-encrypted-v1");
   if (Api::IsError(result)) return result;
@@ -8010,7 +8154,11 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
     return Api::NewError("AOT patch artifact metadata AAD hash mismatch.");
   }
 
-  uint8_t key_buffer[32];
+  uint8_t key_buffer[32] = {};
+  struct ScopedKeyWipe {
+    uint8_t* data;
+    ~ScopedKeyWipe() { OPENSSL_cleanse(data, 32); }
+  } key_wipe{key_buffer};
   intptr_t key_length = 0;
   const bool key_ok =
       g_aot_patch_key_callback(CopyAotPatchJsonString(thread, key_id),
@@ -8069,10 +8217,26 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
     return Api::NewError("AOT patch decrypted payload hash mismatch.");
   }
 
-  // This VM API validates the open artifact envelope and key contract. The
-  // iOS-safe AOT patch model maps patched isolate data/instructions before
-  // isolate startup, so embedders should install the decrypted artifact through
-  // their snapshot mapping path rather than mutating executable code here.
+  AotPatchJsonString payload_kind;
+  if (FindAotPatchJsonString(json, patch_buffer_length, "payload_kind",
+                             &payload_kind) &&
+      AotPatchJsonStringEquals(payload_kind,
+                               kAotPatchPayloadKindFullSnapshot)) {
+    AotPatchJsonString snapshot_hash;
+    if (!FindAotPatchJsonString(json, patch_buffer_length,
+                                "patch_snapshot_hash", &snapshot_hash) ||
+        !AotPatchDigestEqualsHex(payload_digest, SHA256_DIGEST_LENGTH,
+                                 snapshot_hash)) {
+      return Api::NewError("AOT patch full-snapshot hash mismatch.");
+    }
+  }
+  // Check only after GCM authentication: expiry is publisher-supplied metadata,
+  // and an expired or malformed authenticated artifact must never expose bytes.
+  result = ValidateAotPatchExpiry(json, patch_buffer_length);
+  if (Api::IsError(result)) return result;
+
+  // The embedder passes interpreter payloads to Dart_ReloadBytecodePatch while
+  // the base isolate is entered, before running app code.
   *patch_payload_buffer = decrypted_payload_buffer.Release();
   *patch_payload_length = static_cast<intptr_t>(decrypted_length);
   return Api::Success();
