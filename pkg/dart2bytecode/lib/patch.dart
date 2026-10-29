@@ -9,43 +9,111 @@ import 'constant_pool.dart';
 import 'declarations.dart';
 import 'exceptions.dart';
 
-/// Produces a component declaring only changed bodies of existing functions.
+/// Produces a component containing changed bodies and opted-in additions.
 ///
 /// Both inputs are full bytecode components built with the same SDK, defines,
-/// package identities and source URIs. Layout or API changes need a new release.
-Uint8List createBytecodePatch(List<int> baseline, List<int> updated) {
+/// package identities and source URIs. Structural patches require both inputs
+/// to use the explicit structural profile. Existing declarations cannot be
+/// removed or change their signatures, inheritance or field definitions.
+Uint8List createBytecodePatch(
+  List<int> baseline,
+  List<int> updated, {
+  bool shorebirdStructuralPatching = false,
+}) {
   final base = Component.read(BufferedReader(LinkReader(), baseline));
   final patch = Component.read(BufferedReader(LinkReader(), updated));
   final baseLibraries = {for (final lib in base.libraries) lib.importUri: lib};
   final patchLibraries = {
     for (final lib in patch.libraries) lib.importUri: lib,
   };
-  _sameKeys(baseLibraries, patchLibraries, 'libraries');
+  _compatibleKeys(
+    baseLibraries,
+    patchLibraries,
+    'libraries',
+    allowAdditions: shorebirdStructuralPatching,
+  );
   final changedCodes = <Code>{};
   final keptClasses = <ClassDeclaration>{};
   final keptMembers = <Members>{};
   final keptLibraries = <LibraryDeclaration>{};
 
+  void keepClass(ClassDeclaration cls, LibraryDeclaration library) {
+    keptClasses.add(cls);
+    keptMembers.add(cls.members);
+    keptLibraries.add(library);
+  }
+
+  void keepCode(Code? code) {
+    if (code != null) changedCodes.add(code);
+  }
+
+  void keepNewClass(ClassDeclaration cls, LibraryDeclaration library) {
+    keepClass(cls, library);
+    for (final field in cls.members.fields) {
+      keepCode(field.initializerCode);
+    }
+    for (final function in cls.members.functions) {
+      keepCode(function.code);
+    }
+  }
+
   for (final library in patch.libraries) {
-    final oldLibrary = baseLibraries[library.importUri]!;
+    final oldLibrary = baseLibraries[library.importUri];
+    if (shorebirdStructuralPatching) {
+      _requireStructuralProfile(library);
+      if (oldLibrary != null) _requireStructuralProfile(oldLibrary);
+    } else if ((library.flags &
+            LibraryDeclaration.shorebirdStructuralPatchingFlag) !=
+        0) {
+      throw const FormatException(
+        'Structural bytecode requires --shorebird-structural-patching.',
+      );
+    }
+    if (oldLibrary == null) {
+      for (final cls in library.classes) {
+        keepNewClass(cls, library);
+      }
+      continue;
+    }
     _require(
       _same([oldLibrary.flags, oldLibrary.name], [library.flags, library.name]),
       'library ${library.importUri}',
     );
     final oldClasses = {for (final cls in oldLibrary.classes) cls.name: cls};
     final newClasses = {for (final cls in library.classes) cls.name: cls};
-    _sameKeys(oldClasses, newClasses, 'classes in ${library.importUri}');
+    _compatibleKeys(
+      oldClasses,
+      newClasses,
+      'classes in ${library.importUri}',
+      allowAdditions: shorebirdStructuralPatching,
+    );
     final topLevel = library.classes.first;
     for (final cls in library.classes) {
-      final oldClass = oldClasses[cls.name]!;
+      final oldClass = oldClasses[cls.name];
+      if (oldClass == null) {
+        keepNewClass(cls, library);
+        continue;
+      }
       final context = '${library.importUri}::${cls.name}';
       _require(_same(_classShape(oldClass), _classShape(cls)), context);
       final oldFields = {for (final f in oldClass.members.fields) f.name: f};
       final newFields = {for (final f in cls.members.fields) f.name: f};
-      _sameKeys(oldFields, newFields, 'fields in $context');
+      _compatibleKeys(
+        oldFields,
+        newFields,
+        'fields in $context',
+        allowAdditions: shorebirdStructuralPatching,
+      );
+      final addedFields = <FieldDeclaration>[];
       for (final field in cls.members.fields) {
+        final old = oldFields[field.name];
+        if (old == null) {
+          addedFields.add(field);
+          keepCode(field.initializerCode);
+          continue;
+        }
         _require(
-          _same(_field(oldFields[field.name]!), _field(field)),
+          _same(_field(old), _field(field)),
           '$context field ${field.name}',
         );
       }
@@ -53,10 +121,20 @@ Uint8List createBytecodePatch(List<int> baseline, List<int> updated) {
         for (final f in oldClass.members.functions) f.name: f,
       };
       final newFunctions = {for (final f in cls.members.functions) f.name: f};
-      _sameKeys(oldFunctions, newFunctions, 'functions in $context');
+      _compatibleKeys(
+        oldFunctions,
+        newFunctions,
+        'functions in $context',
+        allowAdditions: shorebirdStructuralPatching,
+      );
       final changedFunctions = <FunctionDeclaration>[];
       for (final function in cls.members.functions) {
-        final old = oldFunctions[function.name]!;
+        final old = oldFunctions[function.name];
+        if (old == null) {
+          changedFunctions.add(function);
+          keepCode(function.code);
+          continue;
+        }
         _require(
           _same(_functionShape(old), _functionShape(function)),
           '$context function ${function.name}',
@@ -72,14 +150,14 @@ Uint8List createBytecodePatch(List<int> baseline, List<int> updated) {
           changedCodes.add(function.code!);
         }
       }
-      cls.members.fields.clear();
+      cls.members.fields
+        ..clear()
+        ..addAll(addedFields);
       cls.members.functions
         ..clear()
         ..addAll(changedFunctions);
-      if (changedFunctions.isNotEmpty) {
-        keptClasses.add(cls);
-        keptMembers.add(cls.members);
-        keptLibraries.add(library);
+      if (changedFunctions.isNotEmpty || addedFields.isNotEmpty) {
+        keepClass(cls, library);
       }
     }
     if (keptLibraries.contains(library)) {
@@ -90,8 +168,8 @@ Uint8List createBytecodePatch(List<int> baseline, List<int> updated) {
       library.classes.removeWhere((cls) => !keptClasses.contains(cls));
     }
   }
-  if (changedCodes.isEmpty) {
-    throw const FormatException('No supported function-body changes.');
+  if (keptLibraries.isEmpty) {
+    throw const FormatException('No supported bytecode changes.');
   }
   patch.libraries.removeWhere((lib) => !keptLibraries.contains(lib));
   patch.classes.removeWhere((cls) => !keptClasses.contains(cls));
@@ -107,22 +185,35 @@ Uint8List createBytecodePatch(List<int> baseline, List<int> updated) {
   return writer.getContents();
 }
 
-void _require(bool supported, String context) {
-  if (!supported) {
+void _requireStructuralProfile(LibraryDeclaration library) {
+  if ((library.flags & LibraryDeclaration.shorebirdStructuralPatchingFlag) ==
+      0) {
     throw FormatException(
-      'Unsupported bytecode patch structure: $context. '
-      'Publish a new release for declaration, field, or signature changes.',
+      'Structural bytecode patch requires a baseline and update compiled '
+      'with --shorebird-structural-patching: ${library.importUri}.',
     );
   }
 }
 
-void _sameKeys(
+void _require(bool supported, String context) {
+  if (!supported) {
+    throw FormatException(
+      'Unsupported bytecode patch structure: $context. '
+      'Publish a new release for incompatible declaration, field, or '
+      'signature changes.',
+    );
+  }
+}
+
+void _compatibleKeys(
   Map<Object?, Object> old,
   Map<Object?, Object> updated,
-  String context,
-) {
+  String context, {
+  required bool allowAdditions,
+}) {
   _require(
-    old.length == updated.length && old.keys.every(updated.containsKey),
+    (allowAdditions || old.length == updated.length) &&
+        old.keys.every(updated.containsKey),
     context,
   );
 }

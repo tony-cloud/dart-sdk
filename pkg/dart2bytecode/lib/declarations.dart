@@ -31,6 +31,8 @@ import 'source_positions.dart'
 class LibraryDeclaration extends BytecodeDeclaration {
   static const usesDartMirrorsFlag = 1 << 0;
   static const usesDartFfiFlag = 1 << 1;
+  // Producer capability marker, independently checked against the native base.
+  static const shorebirdStructuralPatchingFlag = 1 << 2;
 
   ObjectHandle? importUri;
   final int flags;

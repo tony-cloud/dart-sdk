@@ -23,6 +23,7 @@ class BytecodeOptions {
   bool emitLocalVarInfo;
   bool emitAnnotations;
   bool emitInstanceFieldInitializers;
+  final bool shorebirdStructuralPatching;
   bool omitAssertSourcePositions;
   bool keepUnreachableCode;
   bool showBytecodeSizeStatistics;
@@ -36,13 +37,16 @@ class BytecodeOptions {
     this.emitLocalVarInfo = false,
     this.emitAnnotations = false,
     this.emitInstanceFieldInitializers = false,
+    this.shorebirdStructuralPatching = false,
     this.omitAssertSourcePositions = false,
     this.keepUnreachableCode = false,
     this.showBytecodeSizeStatistics = false,
     this.isClosureContextLoweringEnabled = false,
     this.embedSourceText = false,
     this.recordCoverage = false,
-  }) {}
+  }) {
+    if (shorebirdStructuralPatching) emitInstanceFieldInitializers = true;
+  }
 
   void parseCommandLineFlags(List<String>? flags) {
     if (flags == null) {

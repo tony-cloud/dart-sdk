@@ -58,7 +58,14 @@ final ArgParser _argParser = ArgParser(allowTrailingOptions: true)
   ..addOption('depfile', help: 'Path to output Ninja depfile')
   ..addOption(
     'patch-base',
-    help: 'Full release bytecode baseline; emit only compatible changed bodies',
+    help: 'Full release bytecode baseline; emit a compatible bytecode delta',
+  )
+  ..addFlag(
+    'shorebird-structural-patching',
+    help:
+        'Enable the explicit structural patch profile for a full baseline or '
+        'delta. Requires a matching native structural baseline.',
+    defaultsTo: false,
   )
   ..addOption(
     'depfile-target',
@@ -243,6 +250,7 @@ Future<int> runCompilerWithCommandLineArguments(List<String> arguments) async {
     allowDynamicCallsInDynamicModules: allowDynamicCallsInDynamicModules,
     dynamicCallsSelectorAllowList: dynamicCallsSelectorAllowList,
     patchBase: options['patch-base'],
+    shorebirdStructuralPatching: options['shorebird-structural-patching'],
   );
 }
 
@@ -272,6 +280,7 @@ Future<int> runCompilerWithOptions({
   bool allowDynamicCallsInDynamicModules = false,
   List<String> dynamicCallsSelectorAllowList = const [],
   String? patchBase,
+  bool shorebirdStructuralPatching = false,
 }) async {
   final fileSystem = createFrontEndFileSystem(
     fileSystemScheme,
@@ -303,6 +312,7 @@ Future<int> runCompilerWithOptions({
 
   final BytecodeOptions bytecodeOptions = BytecodeOptions(
     enableAsserts: enableAsserts,
+    shorebirdStructuralPatching: shorebirdStructuralPatching,
   )..parseCommandLineFlags(bytecodeGeneratorOptions);
 
   final CompilerOptions compilerOptions = CompilerOptions()
@@ -381,6 +391,7 @@ Future<int> runCompilerWithOptions({
       final delta = createBytecodePatch(
         await io.File(patchBase).readAsBytes(),
         await output.readAsBytes(),
+        shorebirdStructuralPatching: shorebirdStructuralPatching,
       );
       await output.writeAsBytes(delta);
     } on FormatException catch (error) {

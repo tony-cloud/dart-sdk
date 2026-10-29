@@ -297,6 +297,9 @@ class BytecodeGenerator extends RecursiveVisitor {
       library.importUri.toString(),
     );
     int flags = 0;
+    if (options.shorebirdStructuralPatching) {
+      flags |= LibraryDeclaration.shorebirdStructuralPatchingFlag;
+    }
     for (var dependency in library.dependencies) {
       final targetLibrary = dependency.targetLibrary;
       if (targetLibrary == coreTypes.mirrorsLibrary) {
