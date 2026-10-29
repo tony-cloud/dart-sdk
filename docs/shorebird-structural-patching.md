@@ -101,6 +101,15 @@ Build matching `dart`, `gen_snapshot`, and `dart_engine_aot_shared` with
   structural harness through the actual encrypted C API, including wrong-key,
   tampered-envelope and expiry rejection.
 
+For shipping-mode coverage, additionally build `gen_snapshot_product`,
+`vm_platform_product`, and `dart_engine_aot_shared_product` in the same Release
+output directory. Run both structural commands above with `--product`; the
+workspace encrypted command also needs `--structural`. This selects the PRODUCT
+snapshot compiler, platform kernel and shared AOT runtime together and defines
+`dart.vm.product=true` during kernel and bytecode compilation. Ordinary Release
+shared-runtime tests are non-PRODUCT and cannot replace these checks: PRODUCT
+snapshot dictionary pruning changes the runtime-resolved callable surface.
+
 Host tests do not establish Flutter framework compatibility on iOS by themselves.
 A matching Flutter engine and release snapshot must additionally be built and
 exercised on a physical device with JIT disabled.

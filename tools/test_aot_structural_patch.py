@@ -10,6 +10,8 @@ dart_dynamic_modules=false, including dart, gen_snapshot and
 dart_engine_aot_shared. Tests native AOT callers of added declarations and fields,
 GC, message serialization, explicit baseline/boot guards, and failed-group
 teardown followed by a clean base in the same VM process. No JIT code is used.
+Use --product with gen_snapshot_product, vm_platform_product, and
+dart_engine_aot_shared_product to exercise matching shipping-mode artifacts.
 """
 
 import argparse
@@ -622,6 +624,8 @@ def main():
     parser.add_argument('--build-dir', required=True, type=Path)
     parser.add_argument('--cxx', default='c++')
     parser.add_argument('--work-dir', type=Path)
+    parser.add_argument('--product', action='store_true',
+                        help='Use matching PRODUCT compiler, platform, and shared runtime')
     parser.add_argument('--prepare-only', action='store_true',
                         help='Write fixtures/harness only; do not build or run')
     parser.add_argument('--envelope-producer', type=Path,
@@ -667,24 +671,38 @@ def main():
             return
 
         dart = build / 'dart'
-        platform = build / 'vm_platform.dill'
+        platform = build / ('vm_platform_product.dill' if args.product
+                            else 'vm_platform.dill')
         if not dart.is_file():
             dart = build / 'dart-sdk/bin/dart'
-            platform = build / 'dart-sdk/lib/_internal/vm_platform.dill'
+            if not args.product:
+                platform = build / 'dart-sdk/lib/_internal/vm_platform.dill'
+        snapshot_compiler = build / ('gen_snapshot_product' if args.product
+                                      else 'gen_snapshot')
+        runtime_name = 'dart_engine_aot_shared' + ('_product' if args.product else '')
+        runtime_path = build / ('lib' + runtime_name +
+                                ('.dylib' if sys.platform == 'darwin' else '.so'))
+        for artifact in (dart, platform, snapshot_compiler, runtime_path):
+            if not artifact.is_file():
+                parser.error(f'Required artifact is missing: {artifact}')
+        defines = ['-Ddart.vm.product=true'] if args.product else []
+        print(f'Runtime mode: {"PRODUCT" if args.product else "non-PRODUCT"}; '
+              f'compiler={snapshot_compiler}; runtime={runtime_path}; '
+              f'platform={platform}', flush=True)
         bytecode = [dart, root / 'pkg/dart2bytecode/bin/dart2bytecode.dart',
-                    f'--platform={platform}', '--shorebird-structural-patching']
+                    *defines, f'--platform={platform}', '--shorebird-structural-patching']
 
         def snapshot(path, output, *, structural):
             kernel = output.with_suffix('.dill')
             profile = ['--shorebird-structural-patching'] if structural else []
             run(dart, root / 'pkg/vm/bin/gen_kernel.dart', '--aot', '--no-tfa',
-                *profile, f'--platform={platform}', f'--output={kernel}', path)
+                *defines, *profile, f'--platform={platform}', f'--output={kernel}', path)
             if sys.platform == 'darwin':
-                run(build / 'gen_snapshot', '--snapshot-kind=app-aot-macho-dylib',
+                run(snapshot_compiler, '--snapshot-kind=app-aot-macho-dylib',
                     *profile, f'--macho={output}', kernel)
                 run('codesign', '--force', '--sign', '-', output)
             else:
-                run(build / 'gen_snapshot', '--snapshot-kind=app-aot-elf',
+                run(snapshot_compiler, '--snapshot-kind=app-aot-elf',
                     *profile, f'--elf={output}', kernel)
 
         base_snapshot = work / 'base.snapshot'
@@ -707,7 +725,7 @@ def main():
         executable = work / 'harness'
         run(args.cxx, '-std=c++17', f'-I{root / "runtime"}',
             f'-I{root / "runtime/engine"}', harness, f'-L{build}',
-            '-ldart_engine_aot_shared', f'-Wl,-rpath,{build}', '-o', executable)
+            f'-l{runtime_name}', f'-Wl,-rpath,{build}', '-o', executable)
         run(executable, plain_snapshot, patch, source.as_uri(), 'reject-profile')
         run(executable, base_snapshot, patch, source.as_uri(), 'late')
         run(executable, base_snapshot, malformed, source.as_uri(), 'reject-malformed')

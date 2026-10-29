@@ -33,35 +33,47 @@ source_set("engine_jit_set") {
   ]
 }
 
-source_set("engine_aot_set") {
-  include_dirs = [
-    ".",
-    "..",
-    "//third_party/boringssl/src/include",
-    "//third_party",
-  ]
+# Keep a PRODUCT shared embedder available in ordinary Release builds so host
+# acceptance can exercise shipping dictionary pruning and runtime behavior.
+foreach(product_suffix,
+        [
+          "",
+          "_product",
+        ]) {
+  source_set("engine_aot${product_suffix}_set") {
+    include_dirs = [
+      ".",
+      "..",
+      "//third_party/boringssl/src/include",
+      "//third_party",
+    ]
 
-  sources = [
-    "../bin/dart_embedder_api_impl.cc",
-    "../bin/vmservice_impl.cc",
-    "../bin/vmservice_impl.h",
-    "dart_engine_impl.cc",
-    "engine.cc",
-    "engine.h",
-  ]
+    sources = [
+      "../bin/dart_embedder_api_impl.cc",
+      "../bin/vmservice_impl.cc",
+      "../bin/vmservice_impl.h",
+      "dart_engine_impl.cc",
+      "engine.cc",
+      "engine.h",
+    ]
 
-  configs += [
-    "..:dart_aotruntime_config",
-    "..:dart_arch_config",
-    "..:dart_config",
-    "..:dart_os_config",
-  ]
+    configs += [
+      "..:dart_aotruntime_config",
+      "..:dart_arch_config",
+      "..:dart_config",
+      "..:dart_os_config",
+    ]
 
-  deps = [
-    "..:libdart_aotruntime",
-    "../bin:common_embedder_dart_io",
-    "../bin:libdart_builtin",
-  ]
+    if (product_suffix != "") {
+      configs += [ "..:dart_product_config" ]
+    }
+
+    deps = [
+      "..:libdart_aotruntime${product_suffix}",
+      "../bin:common_embedder_dart_io${product_suffix}",
+      "../bin:libdart_builtin${product_suffix}",
+    ]
+  }
 }
 
 shared_library("dart_engine_jit_shared") {
@@ -86,25 +98,31 @@ shared_library("dart_engine_jit_shared") {
   }
 }
 
-shared_library("dart_engine_aot_shared") {
-  deps = [ ":engine_aot_set" ]
+foreach(product_suffix,
+        [
+          "",
+          "_product",
+        ]) {
+  shared_library("dart_engine_aot_shared${product_suffix}") {
+    deps = [ ":engine_aot${product_suffix}_set" ]
 
-  if (is_mac) {
-    ldflags = [ "-Wl,-install_name,@rpath/libdart_engine_aot_shared.dylib" ]
-  }
+    if (is_mac) {
+      ldflags = [ "-Wl,-install_name,@rpath/libdart_engine_aot_shared${product_suffix}.dylib" ]
+    }
 
-  if (is_win) {
-    ldflags = [ "/EXPORT:Dart_True" ]
+    if (is_win) {
+      ldflags = [ "/EXPORT:Dart_True" ]
 
-    libs = [
-      "ole32.lib",
-      "iphlpapi.lib",
-      "psapi.lib",
-      "ws2_32.lib",
-      "Rpcrt4.lib",
-      "shlwapi.lib",
-      "winmm.lib",
-    ]
+      libs = [
+        "ole32.lib",
+        "iphlpapi.lib",
+        "psapi.lib",
+        "ws2_32.lib",
+        "Rpcrt4.lib",
+        "shlwapi.lib",
+        "winmm.lib",
+      ]
+    }
   }
 }
 
