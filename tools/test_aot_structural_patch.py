@@ -14,6 +14,7 @@ teardown followed by a clean base in the same VM process. No JIT code is used.
 
 import argparse
 import contextlib
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -104,7 +105,8 @@ int existingValue(Existing value) {
   if (!rejected || value.uninitialized != 46 || value.finalLate != 47) return -3;
   value.added = 50;
   value.lazy = 51;
-  value.nullable = 'present';
+  // Sidecar -> receiver cycle must not keep an otherwise unreachable key alive.
+  value.nullable = value;
   return value.old + value.added + value.lazy + value.fixed;
 }
 int newInstanceFields() {
@@ -221,6 +223,51 @@ import 'body.dart';
 @pragma('vm:entry-point') int probeMessageResult() => readMessage();
 @pragma('vm:entry-point') void releaseHeld() => clearHeld();
 void main() {}
+'''
+
+
+CONST_MALFORMED_PRODUCER = r'''
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:dart2bytecode/bytecode_serialization.dart';
+import 'package:dart2bytecode/declarations.dart';
+import 'package:dart2bytecode/patch.dart';
+
+Uint8List clearClassCapabilities(List<int> bytes) {
+  final component = Component.read(BufferedReader(LinkReader(), bytes));
+  final replacements = {
+    for (final cls in component.classes)
+      cls: ClassDeclaration(
+        cls.name,
+        cls.flags & ~(ClassDeclaration.hasConstConstructorFlag |
+            ClassDeclaration.isDeeplyImmutableFlag),
+        cls.script, cls.position, cls.endPosition, cls.typeParameters,
+        cls.numTypeArguments, cls.superType, cls.interfaces, cls.members,
+        cls.annotations,
+      ),
+  };
+  for (var i = 0; i < component.classes.length; ++i) {
+    component.classes[i] = replacements[component.classes[i]]!;
+  }
+  for (final library in component.libraries) {
+    for (var i = 0; i < library.classes.length; ++i) {
+      library.classes[i] = replacements[library.classes[i]]!;
+    }
+  }
+  final writer = BufferedWriter(component.stringTable, component.objectTable,
+      LinkWriter());
+  component.write(writer);
+  return writer.getContents();
+}
+
+void main(List<String> args) {
+  // Explicit malformed-data fixture only. The production compiler rejects this
+  // change; the actual native baseline retains its const class capability.
+  final baseline = clearClassCapabilities(File(args[0]).readAsBytesSync());
+  final updated = clearClassCapabilities(File(args[1]).readAsBytesSync());
+  File(args[2]).writeAsBytesSync(createBytecodePatch(baseline, updated,
+      shorebirdStructuralPatching: true));
+}
 '''
 
 HARNESS = r'''
@@ -347,9 +394,57 @@ void CheckCleanFallback(DartEngine_SnapshotData snapshot) {
             << std::endl;
 }
 
+
+bool wrong_key = false;
+int key_requests = 0;
+
+bool ResolveKey(const char* id, uint8_t* buffer, intptr_t capacity,
+                intptr_t* length) {
+  ++key_requests;
+  if (id == nullptr || std::strcmp(id, "encrypted-aot-host-key") != 0 ||
+      capacity < 32) return false;
+  // Public TEST-ONLY key shared with the real Dart fixture producer.
+  std::memset(buffer, wrong_key ? 0x43 : 0x42, 32);
+  *length = 32;
+  return true;
+}
+
+std::vector<uint8_t> Read(const std::string& path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) { std::cerr << "Cannot read " << path << std::endl; std::exit(1); }
+  return std::vector<uint8_t>((std::istreambuf_iterator<char>(input)), {});
+}
+
+struct Payload {
+  uint8_t* bytes = nullptr;
+  intptr_t length = 0;
+  ~Payload() { Dart_FreeAotPatchPayload(bytes); }
+};
+
+void RejectEncrypted(const std::string& path,
+                     const Dart_AotPatchInstallOptions& options,
+                     const char* expected_error) {
+  const auto envelope = Read(path);
+  Payload payload;
+  const int previous = key_requests;
+  auto result = Dart_InstallAotPatch(envelope.data(), envelope.size(), &options,
+                                   &payload.bytes, &payload.length);
+  if (!Dart_IsError(result) || payload.bytes != nullptr || payload.length != 0 ||
+      key_requests != previous + 1 ||
+      std::strstr(Dart_GetError(result), expected_error) == nullptr) {
+    std::cerr << "Unexpected encrypted rejection for " << path << std::endl;
+    if (Dart_IsError(result)) std::cerr << Dart_GetError(result) << std::endl;
+    std::exit(10);
+  }
+  std::cout << "Expected encrypted rejection: " << expected_error << std::endl;
+}
+
 int main(int argc, char** argv) {
-  if (argc != 5 || !Dart_IsPrecompiledRuntime()) return 2;
+  if ((argc != 5 && argc != 8) || !Dart_IsPrecompiledRuntime()) return 2;
   const std::string mode(argv[4]);
+  const bool encrypted = mode == "encrypted";
+  const bool valid = mode == "valid" || encrypted;
+  if (encrypted && (argc != 8 || !Dart_AotPatchingEnabled())) return 2;
   char* error = nullptr;
   if (!DartEngine_Init(&error)) {
     std::cerr << (error == nullptr ? "Embedder initialization failed" : error)
@@ -370,7 +465,7 @@ int main(int argc, char** argv) {
   Dart_PersistentHandle existing = nullptr;
   std::atomic<bool> collected(false);
   Dart_WeakPersistentHandle weak = nullptr;
-  if (mode == "valid") {
+  if (valid) {
     // Allocate a base-sized object without running its constructor/main.
     auto library = Dart_LookupLibrary(Dart_NewStringFromCString(argv[3]));
     Check(library);
@@ -389,10 +484,50 @@ int main(int argc, char** argv) {
     if (weak == nullptr) return 4;
   }
   if (mode == "late") MakeRunnable(isolate);
-  std::ifstream input(argv[2], std::ios::binary);
-  std::vector<uint8_t> patch((std::istreambuf_iterator<char>(input)), {});
-  auto result = Dart_ReloadBytecodePatch(patch.data(), patch.size());
-  if (mode != "valid") {
+  const auto patch = Read(argv[2]);
+  Dart_AotPatchInstallOptions options = {};
+  Dart_Handle result = Dart_Null();
+  if (encrypted) {
+    Dart_SetAotPatchKeyCallback(ResolveKey);
+    options.app_id = "encrypted-aot-host-app";
+    options.app_build_id = "1.0.0+1";
+    options.base_flavor_id = "free";
+    options.base_license_type = "free";
+    options.flavor_id = "pro";
+    options.license_type = "pro";
+    options.sdk_hash = "encrypted-aot-host-sdk";
+    options.base_snapshot_hash = argv[6];
+    options.patch_snapshot_hash = argv[7];
+    options.target_os = "ios";
+    options.target_arch = "arm64";
+    options.runtime_mode = "dart-bytecode-interpreter";
+    const std::string envelopes(argv[5]);
+    // Authentication failures do not enter the structural loader or consume
+    // the single boot installation attempt. Do not run app code before install.
+    wrong_key = true;
+    RejectEncrypted(envelopes + "/valid.json", options, "AES-GCM decryption failed");
+    wrong_key = false;
+    RejectEncrypted(envelopes + "/tampered.json", options, "AES-GCM decryption failed");
+    RejectEncrypted(envelopes + "/expired.json", options, "offline license has expired");
+    const auto envelope = Read(envelopes + "/valid.json");
+    {
+      Payload payload;
+      const int previous = key_requests;
+      Check(Dart_InstallAotPatch(envelope.data(), envelope.size(), &options,
+                                &payload.bytes, &payload.length));
+      if (key_requests != previous + 1 ||
+          payload.length != static_cast<intptr_t>(patch.size()) ||
+          std::memcmp(patch.data(), payload.bytes, patch.size()) != 0) {
+        std::cerr << "Decrypted structural delta differs from compiler output" << std::endl;
+        return 11;
+      }
+      result = Dart_ReloadBytecodePatch(payload.bytes, payload.length);
+      // Free decrypted input before executing any new function or class.
+    }
+  } else {
+    result = Dart_ReloadBytecodePatch(patch.data(), patch.size());
+  }
+  if (!valid) {
     if (!Dart_IsError(result)) {
       std::cerr << "Unsupported structural install accepted: " << mode << std::endl;
       return 5;
@@ -406,6 +541,30 @@ int main(int argc, char** argv) {
       return 6;
     }
     std::cout << "Expected " << mode << " rejection: " << message << std::endl;
+    if (mode == "reject-malformed") {
+      auto denied = Dart_Invoke(Dart_RootLibrary(),
+          Dart_NewStringFromCString("probe"), 0, nullptr);
+      const char* poison_error = "A failed structural patch requires a fresh isolate group.";
+      if (!Dart_IsError(denied) ||
+          std::strstr(Dart_GetError(denied), poison_error) == nullptr) {
+        std::cerr << "Poisoned group allowed application invocation" << std::endl;
+        return 12;
+      }
+      Dart_ExitScope();
+      Dart_ExitIsolate();
+      char* runnable_error = Dart_IsolateMakeRunnable(isolate);
+      const bool rejected = runnable_error != nullptr &&
+          std::strstr(runnable_error, poison_error) != nullptr;
+      std::free(runnable_error);
+      Dart_EnterIsolate(isolate);
+      Dart_EnterScope();
+      if (!rejected) {
+        std::cerr << "Poisoned group became runnable" << std::endl;
+        return 13;
+      }
+      std::cout << "Poisoned structural group blocked invocation and runnable transition."
+                << std::endl;
+    }
     CheckCleanFallback(snapshot);
     return 0;
   }
@@ -429,6 +588,15 @@ int main(int argc, char** argv) {
   Invoke("probeMessage");
   Check(Dart_RunLoop());
   Expect("probeMessageResult", 256);
+  if (encrypted) {
+    RejectEncrypted(std::string(argv[5]) + "/tampered.json", options,
+                    "AES-GCM decryption failed");
+    Expect("probe", 12);
+    Expect("probeDispatch", 58);
+    Dart_SetAotPatchKeyCallback(nullptr);
+    std::cout << "Real Dart AES producer -> install -> structural reload -> free passed."
+              << std::endl;
+  }
   Invoke("releaseHeld");
   Dart_DeletePersistentHandle(existing);
   // Release local handles too: weak-key extension storage must not retain its
@@ -456,7 +624,20 @@ def main():
     parser.add_argument('--work-dir', type=Path)
     parser.add_argument('--prepare-only', action='store_true',
                         help='Write fixtures/harness only; do not build or run')
+    parser.add_argument('--envelope-producer', type=Path,
+                        help='Optional real Dart envelope fixture producer')
+    parser.add_argument('--envelope-packages', type=Path,
+                        help='Package configuration for the envelope producer')
+    parser.add_argument('--envelope-dart', type=Path,
+                        help='Dart SDK executable for the envelope producer')
     args = parser.parse_args()
+    producer_options = (args.envelope_producer, args.envelope_packages,
+                        args.envelope_dart)
+    if any(producer_options) and not all(producer_options):
+        parser.error('Envelope producer, packages, and Dart must be provided together')
+    for path in producer_options:
+        if path is not None and not path.resolve().is_file():
+            parser.error(f'Envelope producer artifact is missing: {path}')
     root = Path(__file__).resolve().parents[1]
     build = args.build_dir.resolve()
     if sys.platform not in ('darwin', 'linux'):
@@ -531,6 +712,15 @@ def main():
         run(executable, base_snapshot, patch, source.as_uri(), 'late')
         run(executable, base_snapshot, malformed, source.as_uri(), 'reject-malformed')
         run(executable, base_snapshot, patch, source.as_uri(), 'valid')
+        if args.envelope_producer:
+            envelopes = work / 'envelopes'
+            run(args.envelope_dart.resolve(),
+                f'--packages={args.envelope_packages.resolve()}',
+                args.envelope_producer.resolve(), baseline, patch, envelopes)
+            baseline_hash = hashlib.sha256(baseline.read_bytes()).hexdigest()
+            patch_hash = hashlib.sha256(patch.read_bytes()).hexdigest()
+            run(executable, base_snapshot, patch, source.as_uri(), 'encrypted',
+                envelopes, baseline_hash, patch_hash)
 
         const_source = work / 'const.dart'
         const_source.write_text('''
@@ -553,8 +743,13 @@ class Existing {
 @pragma('vm:entry-point') int probe() => 1;
 void main() {}
 ''')
+        const_updated = work / 'const-updated.bytecode'
+        run(*bytecode, '-o', const_updated, const_source)
+        malformed_producer = work / 'make_malformed_const.dart'
+        malformed_producer.write_text(CONST_MALFORMED_PRODUCER)
         const_patch = work / 'const.bytecode'
-        run(*bytecode, f'--patch-base={const_baseline}', '-o', const_patch, const_source)
+        run(dart, f'--packages={root / ".dart_tool/package_config.json"}',
+            malformed_producer, const_baseline, const_updated, const_patch)
         run(executable, const_snapshot, const_patch, const_source.as_uri(), 'reject-const')
 
 

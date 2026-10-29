@@ -109,6 +109,16 @@ Uint8List createBytecodePatch(
         final old = oldFields[field.name];
         if (old == null) {
           final flags = field.flags;
+          if ((flags & FieldDeclaration.isStaticFlag) == 0 &&
+              (oldClass.flags &
+                      (ClassDeclaration.hasConstConstructorFlag |
+                          ClassDeclaration.isDeeplyImmutableFlag)) !=
+                  0) {
+            throw FormatException(
+              'Added instance field $context::${field.name} changes an '
+              'existing const or deeply immutable class. Publish a new release.',
+            );
+          }
           if ((flags &
                       (FieldDeclaration.isStaticFlag |
                           FieldDeclaration.isLateFlag |

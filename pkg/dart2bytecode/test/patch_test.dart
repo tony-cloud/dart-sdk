@@ -336,6 +336,62 @@ void main() { print(helper()); }
   });
 
   test(
+    'existing const and deeply immutable classes reject added instance fields',
+    () async {
+      for (final declarations in [
+        (
+          'class Existing { final int old = 10; const Existing(); }',
+          'class Existing { final int old = 10; final int added = 42; const Existing(); }',
+        ),
+        (
+          "@pragma('vm:deeply-immutable') final class Existing { final int old = 10; Existing(); }",
+          "@pragma('vm:deeply-immutable') final class Existing { final int old = 10; final int added = 42; Existing(); }",
+        ),
+      ]) {
+        final baseline = await compile(
+          '${declarations.$1}\nvoid main() {}',
+          structural: true,
+        );
+        final updated = await compile(
+          '${declarations.$2}\nvoid main() {}',
+          structural: true,
+        );
+        expect(
+          () => createBytecodePatch(
+            baseline,
+            updated,
+            shorebirdStructuralPatching: true,
+          ),
+          throwsA(
+            isA<FormatException>().having(
+              (error) => error.message,
+              'message',
+              contains('const or deeply immutable'),
+            ),
+          ),
+        );
+      }
+      final baseline = await compile('void main() {}', structural: true);
+      final updated = await compile('''
+class Added { final int value; const Added(this.value); }
+void main() {}
+''', structural: true);
+      final delta = readComponent(
+        createBytecodePatch(
+          baseline,
+          updated,
+          shorebirdStructuralPatching: true,
+        ),
+      );
+      expect(
+        delta.libraries.single.classes.last.flags &
+            dbc.ClassDeclaration.hasConstConstructorFlag,
+        isNot(0),
+      );
+    },
+  );
+
+  test(
     'existing declarations retain their compatibility constraints',
     () async {
       const original = '''
