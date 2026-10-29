@@ -32,7 +32,9 @@ BASE = r'''
 import 'dart:isolate';
 import 'host.dart';
 
+@pragma('vm:entry-point')
 class Existing {
+  @pragma('vm:entry-point')
   int old = 10;
   Existing();
 }
@@ -58,7 +60,9 @@ import 'dart:isolate';
 import 'host.dart';
 import 'helper.dart';
 
+@pragma('vm:entry-point')
 class Existing {
+  @pragma('vm:entry-point')
   int old = 10;
   int added = 42;
   final int fixed = 44;
@@ -413,6 +417,7 @@ def main():
 
         const_source = work / 'const.dart'
         const_source.write_text('''
+@pragma('vm:entry-point')
 class Existing { final int old; const Existing(this.old); }
 @pragma('vm:entry-point') int probe() => 1;
 void main() {}
@@ -422,6 +427,7 @@ void main() {}
         const_baseline = work / 'const-baseline.bytecode'
         run(*bytecode, '-o', const_baseline, const_source)
         const_source.write_text('''
+@pragma('vm:entry-point')
 class Existing {
   final int old;
   final int added = 42;

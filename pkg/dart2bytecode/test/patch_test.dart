@@ -7,7 +7,8 @@ import 'dart:typed_data';
 
 import 'package:dart2bytecode/bytecode_generator.dart' show generateBytecode;
 import 'package:dart2bytecode/bytecode_serialization.dart';
-import 'package:dart2bytecode/dart2bytecode.dart' show runCompilerWithOptions;
+import 'package:dart2bytecode/dart2bytecode.dart'
+    show runCompilerWithCommandLineArguments;
 import 'package:dart2bytecode/declarations.dart' as dbc;
 import 'package:dart2bytecode/options.dart';
 import 'package:dart2bytecode/patch.dart';
@@ -329,22 +330,22 @@ void main() {}
     },
   );
 
-  test('command option emits profile marker and initializer code', () async {
+  test('command profile creates a baseline and an additive delta', () async {
     source.writeAsStringSync('''
 class Existing { int value = 42; }
 void main() {}
 ''');
     final output = File('${directory.path}/baseline.bytecode');
-    final exitCode = await runCompilerWithOptions(
-      input: source.path,
-      platformKernel: computePlatformBinariesLocation()
-          .resolve('vm_platform.dill')
-          .toFilePath(),
-      outputFileName: output.path,
-      targetName: 'vm',
-      libraryUrisPrefix: '',
-      shorebirdStructuralPatching: true,
-    );
+    final platform = computePlatformBinariesLocation()
+        .resolve('vm_platform.dill')
+        .toFilePath();
+    final exitCode = await runCompilerWithCommandLineArguments([
+      '--platform=$platform',
+      '--shorebird-structural-patching',
+      '-o',
+      output.path,
+      source.path,
+    ]);
     expect(exitCode, 0);
     final component = readComponent(output.readAsBytesSync());
     expect(
@@ -363,6 +364,29 @@ void main() {}
           .single
           .initializerCode,
       isNotNull,
+    );
+    source.writeAsStringSync('''
+class Existing { int value = 42; int added = 43; }
+void main() {}
+''');
+    final patch = File('${directory.path}/patch.bytecode');
+    expect(
+      await runCompilerWithCommandLineArguments([
+        '--platform=$platform',
+        '--shorebird-structural-patching',
+        '--patch-base=${output.path}',
+        '-o',
+        patch.path,
+        source.path,
+      ]),
+      0,
+    );
+    final delta = readComponent(patch.readAsBytesSync());
+    expect(
+      delta.libraries.single.classes.last.members.fields.map(
+        (field) => name(field.name),
+      ),
+      ['added'],
     );
   });
 }
