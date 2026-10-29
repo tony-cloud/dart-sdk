@@ -4611,6 +4611,10 @@ class Field : public Object {
                         intptr_t target_offset_in_bytes) const;
 
   inline intptr_t HostOffset() const;
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  inline bool is_shorebird_sidecar() const;
+  void RegisterShorebirdSidecar(const Object& initial_value) const;
+#endif
   static intptr_t host_offset_or_field_id_offset() {
     return OFFSET_OF(UntaggedField, host_offset_or_field_id_);
   }
@@ -5422,6 +5426,15 @@ class Library : public Object {
   void set_is_shorebird_patchable(bool value) const {
     set_flags(
         UntaggedLibrary::ShorebirdPatchableBit::update(value, untag()->flags_));
+  }
+
+  bool is_shorebird_structural_patchable() const {
+    return UntaggedLibrary::ShorebirdStructuralPatchableBit::decode(
+        untag()->flags_);
+  }
+  void set_is_shorebird_structural_patchable(bool value) const {
+    set_flags(UntaggedLibrary::ShorebirdStructuralPatchableBit::update(
+        value, untag()->flags_));
   }
 
   // Includes 'dart:async', 'dart:typed_data', etc.
@@ -8709,6 +8722,10 @@ class Instance : public Object {
 
   // Equivalent to invoking identityHashCode with this instance.
   IntegerPtr IdentityHashCode(Thread* thread) const;
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  ArrayPtr ShorebirdSidecarValues() const;
+  void SetShorebirdSidecarValues(const Array& values) const;
+#endif
 
   static intptr_t UnroundedSize() { return sizeof(UntaggedInstance); }
   static intptr_t InstanceSize() {
@@ -13684,6 +13701,11 @@ intptr_t Field::HostOffset() const {
   ASSERT(is_instance());  // Valid only for dart instance fields.
   return (Smi::Value(untag()->host_offset_or_field_id()) * kCompressedWordSize);
 }
+#if defined(DART_SHOREBIRD_INTERPRETER)
+bool Field::is_shorebird_sidecar() const {
+  return is_instance() && Smi::Value(untag()->host_offset_or_field_id()) < 0;
+}
+#endif
 
 intptr_t Field::TargetOffset() const {
   ASSERT(is_instance());  // Valid only for dart instance fields.

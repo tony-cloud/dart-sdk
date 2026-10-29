@@ -18,6 +18,7 @@ class ProcedureAttributesMetadata {
   // All implementations retain conservative dynamic-call metadata when TFA
   // is disabled. Consumers must not infer this from one method's uses.
   final bool isWithoutTypeFlowAnalysis;
+  final bool isShorebirdStructuralPatching;
   final int methodOrSetterSelectorId;
   final int getterSelectorId;
 
@@ -28,6 +29,7 @@ class ProcedureAttributesMetadata {
     this.hasNonThisUses = true,
     this.hasTearOffUses = true,
     this.isWithoutTypeFlowAnalysis = false,
+    this.isShorebirdStructuralPatching = false,
     this.methodOrSetterSelectorId = kInvalidSelectorId,
     this.getterSelectorId = kInvalidSelectorId,
   });
@@ -67,6 +69,7 @@ class ProcedureAttributesMetadataRepository
   static const int kThisUsesBit = 1 << 3;
   static const int kGetterCalledDynamicallyBit = 1 << 4;
   static const int kWithoutTypeFlowAnalysisBit = 1 << 5;
+  static const int kShorebirdStructuralPatchingBit = 1 << 6;
 
   static const repositoryTag = 'vm.procedure-attributes.metadata';
 
@@ -96,6 +99,9 @@ class ProcedureAttributesMetadataRepository
     }
     if (metadata.isWithoutTypeFlowAnalysis) {
       flags |= kWithoutTypeFlowAnalysisBit;
+    }
+    if (metadata.isShorebirdStructuralPatching) {
+      flags |= kShorebirdStructuralPatchingBit;
     }
     return flags;
   }
@@ -133,6 +139,8 @@ class ProcedureAttributesMetadataRepository
       hasNonThisUses: hasNonThisUses,
       hasTearOffUses: hasTearOffUses,
       isWithoutTypeFlowAnalysis: (flags & kWithoutTypeFlowAnalysisBit) != 0,
+      isShorebirdStructuralPatching:
+          (flags & kShorebirdStructuralPatchingBit) != 0,
       methodOrSetterSelectorId: methodOrSetterSelectorId,
       getterSelectorId: getterSelectorId,
     );

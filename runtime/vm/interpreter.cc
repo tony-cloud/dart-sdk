@@ -2765,6 +2765,20 @@ SwitchDispatchNoSingleStep:
     intptr_t offset_in_words =
         Smi::Value(field->untag()->host_offset_or_field_id());
 
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (offset_in_words < 0) {
+      SP[1] = 0;
+      SP[2] = instance;
+      SP[3] = field;
+      SP[4] = Object::sentinel().ptr();
+      SP[5] = Bool::False().ptr();
+      Exit(thread, FP, SP + 6, pc);
+      INVOKE_RUNTIME(DRT_StoreShorebirdInstanceField,
+                     NativeArguments(thread, 4, SP + 2, SP + 1));
+      SP -= 1;
+      DISPATCH();
+    }
+#endif
     InterpreterHelpers::SetField(instance, offset_in_words,
                                  Object::sentinel().ptr(), thread);
 
@@ -2822,6 +2836,20 @@ SwitchDispatchNoSingleStep:
     intptr_t offset_in_words =
         Smi::Value(field->untag()->host_offset_or_field_id());
 
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (offset_in_words < 0) {
+      SP[1] = 0;
+      SP[2] = instance;
+      SP[3] = field;
+      SP[4] = value;
+      SP[5] = Bool::False().ptr();
+      Exit(thread, FP, SP + 6, pc);
+      INVOKE_RUNTIME(DRT_StoreShorebirdInstanceField,
+                     NativeArguments(thread, 4, SP + 2, SP + 1));
+      SP -= 2;
+      DISPATCH();
+    }
+#endif
     if (InterpreterHelpers::FieldNeedsGuardUpdate(thread, field, value)) {
       SP[1] = 0;  // Unused result of runtime call.
       SP[2] = field;
@@ -2911,9 +2939,21 @@ SwitchDispatchNoSingleStep:
     FieldPtr field = Field::RawCast(LOAD_CONSTANT(rD + 1));
     ASSERT(!Field::UnboxedBit::decode(field->untag()->kind_bits_));
 #endif
-    const uword offset_in_words =
-        static_cast<uword>(Smi::Value(Smi::RawCast(LOAD_CONSTANT(rD))));
+    const intptr_t offset_in_words =
+        Smi::Value(Smi::RawCast(LOAD_CONSTANT(rD)));
     InstancePtr instance = Instance::RawCast(SP[0]);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (offset_in_words < 0) {
+      SP[1] = 0;
+      SP[2] = instance;
+      SP[3] = LOAD_CONSTANT(rD + 1);
+      Exit(thread, FP, SP + 4, pc);
+      INVOKE_RUNTIME(DRT_LoadShorebirdInstanceField,
+                     NativeArguments(thread, 2, SP + 2, SP + 1));
+      SP[0] = SP[1];
+      DISPATCH();
+    }
+#endif
     SP[0] = GET_FIELD(instance, offset_in_words);
     DISPATCH();
   }
@@ -3775,7 +3815,24 @@ SwitchDispatchNoSingleStep:
     InstancePtr instance = Instance::RawCast(FrameArguments(FP, kArgc)[0]);
 
     ASSERT(!Field::UnboxedBit::decode(field->untag()->kind_bits_));
-    ObjectPtr value = GET_FIELD(instance, offset_in_words);
+    ObjectPtr value;
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (offset_in_words < 0) {
+      SP[1] = 0;
+      SP[2] = instance;
+      SP[3] = field;
+      Exit(thread, FP, SP + 4, pc);
+      INVOKE_RUNTIME(DRT_LoadShorebirdInstanceField,
+                     NativeArguments(thread, 2, SP + 2, SP + 1));
+      function = FrameFunction(FP);
+      instance = Instance::RawCast(SP[2]);
+      field = Field::RawCast(SP[3]);
+      value = SP[1];
+    } else
+#endif
+    {
+      value = GET_FIELD(instance, offset_in_words);
+    }
 
     if (value == Object::sentinel().ptr()) [[unlikely]] {
       SP[1] = 0;  // Result slot.
@@ -3790,7 +3847,7 @@ SwitchDispatchNoSingleStep:
       instance = Instance::RawCast(SP[2]);
       field = Field::RawCast(SP[3]);
       offset_in_words = Smi::Value(field->untag()->host_offset_or_field_id());
-      value = GET_FIELD(instance, offset_in_words);
+      value = SP[1];
     }
 
     *++SP = value;
@@ -3836,6 +3893,20 @@ SwitchDispatchNoSingleStep:
     instance = Instance::RawCast(FrameArguments(FP, kArgc)[0]);
     value = Instance::RawCast(FrameArguments(FP, kArgc)[1]);
 
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (offset_in_words < 0) {
+      SP[1] = 0;
+      SP[2] = instance;
+      SP[3] = field;
+      SP[4] = value;
+      SP[5] = Bool::True().ptr();
+      Exit(thread, FP, SP + 6, pc);
+      INVOKE_RUNTIME(DRT_StoreShorebirdInstanceField,
+                     NativeArguments(thread, 4, SP + 2, SP + 1));
+      *SP = null_value;
+      DISPATCH();
+    }
+#endif
     if (Field::FinalBit::decode(field->untag()->kind_bits_)) {
       // Check that final field was not initialized already.
       ObjectPtr old_value = GET_FIELD(instance, offset_in_words);

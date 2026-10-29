@@ -789,6 +789,17 @@ LibraryPtr KernelLoader::LoadLibrary(intptr_t index) {
         attributes.GetProcedureAttributes(library_kernel_offset_);
     library.set_is_shorebird_patchable(!library.is_dart_scheme() &&
                                        metadata.is_without_type_flow_analysis);
+    if (FLAG_shorebird_structural_patching && !library.is_dart_scheme() &&
+        (!metadata.is_without_type_flow_analysis ||
+         !metadata.is_shorebird_structural_patching)) {
+      FATAL(
+          "Structural patch snapshots require gen_kernel --aot --no-tfa "
+          "--shorebird-structural-patching.");
+    }
+    library.set_is_shorebird_structural_patchable(
+        FLAG_shorebird_structural_patching &&
+        metadata.is_without_type_flow_analysis &&
+        metadata.is_shorebird_structural_patching && !library.is_dart_scheme());
   }
 #endif
 
@@ -1340,6 +1351,10 @@ void KernelLoader::LoadClass(const Library& library,
       DynModuleImplicitlyExtendablePragma::decode(pragma_bits)) {
     out_class->set_has_dynamically_extendable_subtypes(true);
     IG->set_has_dynamically_extendable_classes(true);
+    if (FLAG_shorebird_structural_patching) {
+      // A future interpreted implementation may also implement Future.
+      out_class->set_can_be_future(true);
+    }
   }
   class_helper.SetJustRead(ClassHelper::kAnnotations);
   class_helper.ReadUntilExcluding(ClassHelper::kTypeParameters);

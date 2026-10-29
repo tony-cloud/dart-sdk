@@ -92,6 +92,10 @@ class RuntimeEntry : public BaseRuntimeEntry {
 RUNTIME_ENTRY_LIST(DECLARE_RUNTIME_ENTRY)
 LEAF_RUNTIME_ENTRY_LIST(DECLARE_LEAF_RUNTIME_ENTRY)
 
+// Interpreter-only calls do not occupy generated-code Thread entry slots.
+DECLARE_RUNTIME_ENTRY(LoadShorebirdInstanceField)
+DECLARE_RUNTIME_ENTRY(StoreShorebirdInstanceField)
+
 #undef DECLARE_RUNTIME_ENTRY
 #undef DECLARE_LEAF_RUNTIME_ENTRY
 

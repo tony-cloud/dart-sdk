@@ -12,13 +12,17 @@ import '../../metadata/unboxing_info.dart';
 /// Supplies the dispatch metadata required by AOT when TFA is disabled.
 /// Without a closed-world analysis every selector must conservatively remain
 /// callable, including on null and through a tear-off.
-void annotateWithoutTypeFlow(Component component) {
+void annotateWithoutTypeFlow(
+  Component component, {
+  bool shorebirdStructuralPatching = false,
+}) {
   final assigner = TableSelectorAssigner(component);
   final attributes = ProcedureAttributesMetadataRepository();
   final unboxing = UnboxingInfoMetadataRepository();
   for (final library in component.libraries) {
-    attributes.mapping[library] = const ProcedureAttributesMetadata(
+    attributes.mapping[library] = ProcedureAttributesMetadata(
       isWithoutTypeFlowAnalysis: true,
+      isShorebirdStructuralPatching: shorebirdStructuralPatching,
     );
     for (final member in library.members) {
       unboxing.mapping[member] = UnboxingInfoMetadata(0)..setFullyBoxed();

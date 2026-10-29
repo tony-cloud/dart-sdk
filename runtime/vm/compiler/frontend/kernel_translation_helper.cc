@@ -1956,6 +1956,7 @@ void ProcedureAttributesMetadata::InitializeFromFlags(uint8_t flags) {
   const int kThisUsesBit = 1 << 3;
   const int kGetterCalledDynamicallyBit = 1 << 4;
   const int kWithoutTypeFlowAnalysisBit = 1 << 5;
+  const int kShorebirdStructuralPatchingBit = 1 << 6;
 
   method_or_setter_called_dynamically =
       (flags & kMethodOrSetterCalledDynamicallyBit) != 0;
@@ -1964,6 +1965,8 @@ void ProcedureAttributesMetadata::InitializeFromFlags(uint8_t flags) {
   has_non_this_uses = (flags & kNonThisUsesBit) != 0;
   has_tearoff_uses = (flags & kTearOffUsesBit) != 0;
   is_without_type_flow_analysis = (flags & kWithoutTypeFlowAnalysisBit) != 0;
+  is_shorebird_structural_patching =
+      (flags & kShorebirdStructuralPatchingBit) != 0;
 }
 
 ProcedureAttributesMetadataHelper::ProcedureAttributesMetadataHelper(

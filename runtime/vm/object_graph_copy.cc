@@ -2413,6 +2413,19 @@ class SlowObjectCopy : public ObjectCopy<SlowObjectCopyBase, true> {
     }
     const auto bitmap = class_table_->GetUnboxedFieldsMapAt(cid);
     CopyUserdefinedInstance(from, to, bitmap);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    const auto& sidecar =
+        Array::Handle(zone_, Instance::Cast(from).ShorebirdSidecarValues());
+    if (!sidecar.IsNull()) {
+      auto& copied_sidecar = Object::Handle(
+          zone_, slow_forward_map_.ForwardedObject(sidecar.ptr()));
+      if (copied_sidecar.ptr() == Marker()) {
+        copied_sidecar =
+            Forward(TagsFromUntaggedObject(sidecar.ptr().untag()), sidecar);
+      }
+      Instance::Cast(to).SetShorebirdSidecarValues(Array::Cast(copied_sidecar));
+    }
+#endif
     if (cid == expando_cid_) {
       EnqueueExpandoToRehash(to);
     }
@@ -2516,7 +2529,12 @@ class ObjectGraphCopier : public StackResource {
 
     // All allocated but non-initialized heap objects have to be made GC-visible
     // at this point.
-    if (FLAG_enable_fast_object_copy) {
+    if (FLAG_enable_fast_object_copy
+#if defined(DART_SHOREBIRD_INTERPRETER)
+        && thread_->isolate_group()->object_store()->shorebird_added_fields() ==
+               GrowableObjectArray::null()
+#endif
+    ) {
       {
         NoSafepointScope no_safepoint_scope;
 

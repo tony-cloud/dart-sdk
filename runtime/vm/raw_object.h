@@ -1910,6 +1910,8 @@ class UntaggedLibrary : public UntaggedObject {
   // This bit survives in AOT snapshots after kernel metadata is discarded.
   using ShorebirdPatchableBit =
       BitField<decltype(flags_), bool, DebuggableBit::kNextBit>;
+  using ShorebirdStructuralPatchableBit =
+      BitField<decltype(flags_), bool, ShorebirdPatchableBit::kNextBit>;
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
   uint32_t kernel_library_index_;

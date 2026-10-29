@@ -2182,6 +2182,12 @@ void IsolateGroup::DeleteReloadContext() {
 
 const char* Isolate::MakeRunnable() {
   MutexLocker ml(&mutex_);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (group()->object_store()->shorebird_structural_installation_state() ==
+      Smi::New(1)) {
+    return "A failed structural patch requires a fresh isolate group.";
+  }
+#endif
   // Check if we are in a valid state to make the isolate runnable.
   if (is_runnable() == true) {
     return "Isolate is already runnable";

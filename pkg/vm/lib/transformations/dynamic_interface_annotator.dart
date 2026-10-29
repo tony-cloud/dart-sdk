@@ -20,6 +20,43 @@ import 'package:vm/modular/transformations/pragma.dart'
         dynModuleImplicitlyDynamicallyCallablePragmaName,
         dynModuleCanBeOverriddenImplicitlyPragmaName;
 
+/// The opt-in Shorebird baseline keeps the host API and hierarchy open while
+/// using the bytecode interpreter, without enabling Dart Dynamic Modules.
+/// Include private declarations: a patch can add code in an existing library.
+/// These annotations constrain compiler assumptions; Dart language restrictions
+/// on extending classes and overriding members still apply to patch sources.
+void annotateShorebirdStructuralComponent(
+  Component component,
+  CoreTypes coreTypes,
+) {
+  final extendable = pragmaConstant(coreTypes, dynModuleExtendablePragmaName);
+  final callable = pragmaConstant(coreTypes, dynModuleCallablePragmaName);
+  final overridable = pragmaConstant(
+    coreTypes,
+    dynModuleCanBeOverriddenPragmaName,
+  );
+  final dynamicCallable = pragmaConstant(
+    coreTypes,
+    dynModuleDynamicallyCallablePragmaName,
+  );
+  for (final library in component.libraries) {
+    for (final cls in library.classes) {
+      cls.addAnnotation(ConstantExpression(extendable));
+      cls.addAnnotation(ConstantExpression(callable));
+      for (final member in cls.members) {
+        member.addAnnotation(ConstantExpression(callable));
+        if (member.isInstanceMember) {
+          member.addAnnotation(ConstantExpression(overridable));
+          member.addAnnotation(ConstantExpression(dynamicCallable));
+        }
+      }
+    }
+    for (final member in library.members) {
+      member.addAnnotation(ConstantExpression(callable));
+    }
+  }
+}
+
 void annotateComponent(
   String dynamicInterfaceSpecification,
   Uri baseUri,

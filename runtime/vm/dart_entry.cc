@@ -142,6 +142,14 @@ ObjectPtr DartEntry::InvokeFunction(const Function& function,
   Thread* thread = Thread::Current();
   ASSERT(thread->IsDartMutatorThread());
   ASSERT(!function.IsNull());
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (thread->isolate_group()
+          ->object_store()
+          ->shorebird_structural_installation_state() == Smi::New(1)) {
+    return ApiError::New(String::Handle(String::New(
+        "A failed structural patch requires a fresh isolate group.")));
+  }
+#endif
 
 #if defined(DART_BYTECODE_INTERPRETER)
   if (function.IsInterpreted()) {

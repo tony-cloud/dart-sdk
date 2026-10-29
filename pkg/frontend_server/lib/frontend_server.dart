@@ -302,6 +302,11 @@ ArgParser argParser = new ArgParser(allowTrailingOptions: true)
     'dynamic-interface',
     help: 'Path to dynamic module interface yaml file.',
   )
+  ..addFlag(
+    'shorebird-structural-patching',
+    defaultsTo: false,
+    help: 'Prepare an AOT no-TFA baseline for additive bytecode patches.',
+  )
   ..addOption(
     'dump-detailed-dynamic-interface',
     help: 'Path to output detailed dynamic interface.',
@@ -878,6 +883,8 @@ class FrontendCompiler implements CompilerInterface {
             keepClassNamesImplementing:
                 options['keep-class-names-implementing'],
             dynamicInterface: dynamicInterfaceUri,
+            shorebirdStructuralPatching:
+                options['shorebird-structural-patching'],
             dumpDetailedDynamicInterface: dumpDetailedDynamicInterface,
             aot: options['aot'],
             targetOS: options['target-os'],

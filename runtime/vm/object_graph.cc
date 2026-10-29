@@ -101,6 +101,9 @@ class ObjectSlots {
           for (intptr_t i = 0; i < fields.Length(); ++i) {
             field ^= fields.At(i);
             if (!field.is_instance()) continue;
+#if defined(DART_SHOREBIRD_INTERPRETER)
+            if (field.is_shorebird_sidecar()) continue;
+#endif
             name = field.name();
             // If the field is unboxed, we don't know the size of it (may be
             // multiple words) - but that doesn't matter because

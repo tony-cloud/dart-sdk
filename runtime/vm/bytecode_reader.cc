@@ -11,6 +11,7 @@
 #include "vm/bootstrap.h"
 #include "vm/class_finalizer.h"
 #include "vm/class_id.h"
+#include "vm/class_table.h"
 #include "vm/closure_functions_cache.h"
 #include "vm/code_descriptors.h"
 #include "vm/compiler/api/deopt_id.h"
@@ -102,7 +103,10 @@ BytecodeLoader::BytecodeLoader(Thread* thread, const TypedDataBase& binary)
                                                    GrowableObjectArray::New())),
       bytecode_offsets_map_(
           Array::Handle(thread->zone(),
-                        HashTables::New<BytecodeOffsetsMap>(16))) {
+                        HashTables::New<BytecodeOffsetsMap>(16))),
+      structural_functions_(
+          GrowableObjectArray::Handle(thread->zone(),
+                                      GrowableObjectArray::New())) {
   ASSERT(thread_ == Thread::Current());
   ASSERT(thread_->bytecode_loader() == nullptr);
   thread_->set_bytecode_loader(this);
@@ -159,8 +163,26 @@ ErrorPtr BytecodeLoader::LoadBytecodePatch() {
   BytecodeReaderHelper bytecode_reader(thread_, &bytecode_component);
   AlternativeReadingScope alt(&bytecode_reader.reader(),
                               bytecode_component.GetLibraryIndexOffset());
-  bytecode_reader.ReadLoadedLibraryBytecodePatch(
-      bytecode_component.GetNumLibraries());
+  bool structural = false;
+  {
+    AlternativeReadingScope scan(&bytecode_reader.reader(),
+                                 bytecode_component.GetLibraryIndexOffset());
+    for (intptr_t i = 0; i < bytecode_component.GetNumLibraries(); ++i) {
+      bytecode_reader.ReadObject();
+      const intptr_t offset = bytecode_component.GetLibrariesOffset() +
+                              bytecode_reader.reader().ReadUInt();
+      AlternativeReadingScope declaration(&bytecode_reader.reader(), offset);
+      structural |= (bytecode_reader.reader().ReadUInt() & (1 << 2)) != 0;
+    }
+  }
+  if (structural) {
+    is_structural_patch_ = true;
+    bytecode_reader.ReadStructuralBytecodePatch(
+        bytecode_component.GetNumLibraries());
+  } else {
+    bytecode_reader.ReadLoadedLibraryBytecodePatch(
+        bytecode_component.GetNumLibraries());
+  }
   is_loading_patch_ = false;
   return Error::null();
 }
@@ -1914,7 +1936,9 @@ void BytecodeReaderHelper::ReadAnnotations(const Class& cls,
 void BytecodeReaderHelper::ReadMembers(const Class& cls, bool discard_fields) {
   ASSERT(IsolateGroup::Current()->program_lock()->IsCurrentThreadWriter());
   ASSERT(cls.is_type_finalized());
-  ASSERT(!cls.is_loaded());
+  const bool extending = structural_existing_class_ != nullptr &&
+                         structural_existing_class_->ptr() == cls.ptr();
+  ASSERT(extending || !cls.is_loaded());
 
   const intptr_t num_functions = reader_.ReadUInt();
   functions_ = &Array::Handle(Z, Array::New(num_functions, Heap::kOld));
@@ -1923,8 +1947,10 @@ void BytecodeReaderHelper::ReadMembers(const Class& cls, bool discard_fields) {
   ReadFieldDeclarations(cls, discard_fields);
   ReadFunctionDeclarations(cls);
 
-  ASSERT(!cls.is_loaded());
-  cls.set_is_loaded(true);
+  if (!extending) {
+    ASSERT(!cls.is_loaded());
+    cls.set_is_loaded(true);
+  }
 }
 
 void BytecodeReaderHelper::ReadFieldDeclarations(const Class& cls,
@@ -1952,11 +1978,20 @@ void BytecodeReaderHelper::ReadFieldDeclarations(const Class& cls,
   const int kIsSharedFlag = 1 << 18;
 
   const int num_fields = reader_.ReadListLength();
+  const bool extending = structural_existing_class_ != nullptr &&
+                         structural_existing_class_->ptr() == cls.ptr();
   if ((num_fields == 0) && !cls.is_enum_class()) {
     return;
   }
+  const auto& old_fields = Array::Handle(Z, cls.fields());
+  const intptr_t old_count = extending ? old_fields.Length() : 0;
   const Array& fields = Array::Handle(
-      Z, Array::New(num_fields + (cls.is_enum_class() ? 1 : 0), Heap::kOld));
+      Z, Array::New(old_count + num_fields +
+                        (!extending && cls.is_enum_class() ? 1 : 0),
+                    Heap::kOld));
+  for (intptr_t i = 0; i < old_count; ++i) {
+    fields.SetAt(i, Object::Handle(Z, old_fields.At(i)));
+  }
   String& name = String::Handle(Z);
   Object& script_class = Object::Handle(Z);
   AbstractType& type = AbstractType::Handle(Z);
@@ -1982,6 +2017,48 @@ void BytecodeReaderHelper::ReadFieldDeclarations(const Class& cls,
 
     name ^= ReadObject();
     type ^= ReadObject();
+
+    if (extending && cls.LookupField(name) != Field::null()) {
+      RejectBytecodePatch("Structural patch redeclares an existing field.");
+    }
+    if (extending && !is_static &&
+        (cls.is_const() || cls.is_deeply_immutable() ||
+         cls.num_native_fields() != 0)) {
+      RejectBytecodePatch(
+          "Structural patch cannot add instance fields to const, deeply "
+          "immutable, or native-wrapper classes.");
+    }
+
+    if (extending && !is_static) {
+      if (!is_late && !has_initializer && !type.IsNullable() &&
+          !type.IsDynamicType()) {
+        RejectBytecodePatch(
+            "Added nonnullable instance fields require a declaration "
+            "initializer.");
+      }
+      // Canonical and deeply immutable instances can be shared between
+      // isolates. Mutable sidecar state must never be inherited by them.
+      auto* table = IG->class_table();
+      auto& candidate = Class::Handle(Z);
+      auto& ancestor = Class::Handle(Z);
+      for (intptr_t cid = kNumPredefinedCids; cid < table->NumCids(); ++cid) {
+        if (!table->HasValidClassAt(cid)) continue;
+        candidate = table->At(cid);
+        if (!candidate.is_declaration_loaded() ||
+            !(candidate.is_const() || candidate.is_deeply_immutable() ||
+              candidate.num_native_fields() != 0))
+          continue;
+        ancestor = candidate.ptr();
+        while (!ancestor.IsNull()) {
+          if (ancestor.ptr() == cls.ptr()) {
+            RejectBytecodePatch(
+                "Added instance fields cannot be inherited by immutable or "
+                "native-wrapper classes.");
+          }
+          ancestor = ancestor.SuperClass();
+        }
+      }
+    }
 
     if ((flags & kHasCustomScriptFlag) != 0) {
       Script& script = Script::CheckedHandle(Z, ReadObject());
@@ -2019,6 +2096,14 @@ void BytecodeReaderHelper::ReadFieldDeclarations(const Class& cls,
     field.set_has_initializer(has_initializer);
     field.set_is_shared(is_shared);
 
+    intptr_t initializer_offset = 0;
+    if ((flags & kHasInitializerCodeFlag) != 0) {
+      initializer_offset =
+          reader_.ReadUInt() + bytecode_component_->GetCodesOffset();
+      thread_->bytecode_loader()->SetOffset(field, initializer_offset);
+    }
+
+    value = Object::null();
     if (!has_nontrivial_initializer) {
       value = ReadObject();
       if (is_static) {
@@ -2034,16 +2119,22 @@ void BytecodeReaderHelper::ReadFieldDeclarations(const Class& cls,
       }
     }
 
-    if ((flags & kHasInitializerCodeFlag) != 0) {
-      const intptr_t code_offset = reader_.ReadUInt();
-      BytecodeLoader* loader = thread_->bytecode_loader();
-      ASSERT(loader != nullptr);
-      loader->SetOffset(field,
-                        code_offset + bytecode_component_->GetCodesOffset());
+    if (initializer_offset != 0) {
       if (is_static) {
         value = Object::sentinel().ptr();
       }
     }
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (extending && !is_static) {
+      if (has_nontrivial_initializer && initializer_offset == 0) {
+        RejectBytecodePatch(
+            "Added instance field requires initializer bytecode.");
+      }
+      if (has_nontrivial_initializer || is_late)
+        value = Object::sentinel().ptr();
+      field.RegisterShorebirdSidecar(value);
+    }
+#endif
 
     if ((flags & kHasGetterFlag) != 0) {
       name ^= ReadObject();
@@ -2117,10 +2208,10 @@ void BytecodeReaderHelper::ReadFieldDeclarations(const Class& cls,
       IG->RegisterStaticField(field, value);
     }
 
-    fields.SetAt(i, field);
+    fields.SetAt(old_count + i, field);
   }
 
-  if (cls.is_enum_class()) {
+  if (!extending && cls.is_enum_class()) {
     // Add static field 'const _deleted_enum_sentinel'.
     field = Field::New(Symbols::_DeletedEnumSentinel(),
                        /* is_static = */ true,
@@ -2139,7 +2230,7 @@ void BytecodeReaderHelper::ReadFieldDeclarations(const Class& cls,
 
   if (cls.IsTopLevel()) {
     const Library& library = Library::Handle(Z, cls.library());
-    for (intptr_t i = 0, n = fields.Length(); i < n; ++i) {
+    for (intptr_t i = old_count, n = fields.Length(); i < n; ++i) {
       field ^= fields.At(i);
       name = field.name();
       library.AddObject(field, name);
@@ -2199,6 +2290,9 @@ InstancePtr BytecodeReaderHelper::Canonicalize(const Instance& instance) {
 }
 
 void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
+  const bool extending = structural_existing_class_ != nullptr &&
+                         structural_existing_class_->ptr() == cls.ptr();
+  const auto& old_functions = Array::Handle(Z, cls.functions());
   // Function flags, must be in sync with FunctionDeclaration constants in
   // pkg/dart2bytecode/lib/declarations.dart.
   const int kIsStaticFlag = 1 << 0;
@@ -2398,12 +2492,12 @@ void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
       }
     }
 
+    intptr_t code_offset = 0;
     if ((flags & kIsAbstractFlag) == 0) {
-      const intptr_t code_offset = reader_.ReadUInt();
+      code_offset = reader_.ReadUInt() + bytecode_component_->GetCodesOffset();
       BytecodeLoader* loader = thread_->bytecode_loader();
       ASSERT(loader != nullptr);
-      loader->SetOffset(function,
-                        code_offset + bytecode_component_->GetCodesOffset());
+      loader->SetOffset(function, code_offset);
     }
 
     if ((flags & kHasAnnotationsFlag) != 0) {
@@ -2415,13 +2509,59 @@ void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
       ReadCode(function, thread_->bytecode_loader()->GetOffset(function));
     }
 
+    if (thread_->bytecode_loader()->is_structural_patch()) {
+      if (is_native || function.is_external()) {
+        RejectBytecodePatch(
+            "Structural patch cannot introduce native functions.");
+      }
+      signature ^= ClassFinalizer::FinalizeType(signature);
+      function.SetSignature(signature);
+      if (extending) {
+        const auto& existing = Function::Handle(
+            Z, cls.LookupFunction(String::Handle(Z, function.name())));
+        if (!existing.IsNull()) {
+          const auto& old_signature =
+              FunctionType::Handle(Z, existing.signature());
+          if (existing.kind() != function.kind() ||
+              existing.is_static() != function.is_static() ||
+              existing.is_abstract() != function.is_abstract() ||
+              old_signature.IsNull() || !signature.Equals(old_signature)) {
+            RejectBytecodePatch(
+                "Structural patch changes an existing function signature.");
+          }
+          function = existing.ptr();
+        } else {
+          function.set_is_dynamically_callable(true);
+        }
+      }
+      if (code_offset != 0) {
+        thread_->bytecode_loader()->AddStructuralFunction(function,
+                                                          code_offset);
+      }
+    }
+
     functions_->SetAt(function_index_++, function);
   }
 
   {
     Thread* thread = Thread::Current();
     SafepointWriteRwLocker ml(thread, thread->isolate_group()->program_lock());
-    cls.SetFunctions(*functions_);
+    if (extending) {
+      const auto& merged =
+          GrowableObjectArray::Handle(Z, GrowableObjectArray::New());
+      for (intptr_t i = 0; i < old_functions.Length(); ++i) {
+        merged.Add(Object::Handle(Z, old_functions.At(i)));
+      }
+      for (intptr_t i = 0; i < functions_->Length(); ++i) {
+        function ^= functions_->At(i);
+        const auto& existing = Function::Handle(
+            Z, cls.LookupFunction(String::Handle(Z, function.name())));
+        if (existing.IsNull()) merged.Add(function);
+      }
+      cls.SetFunctions(Array::Handle(Z, Array::MakeFixedLength(merged)));
+    } else {
+      cls.SetFunctions(*functions_);
+    }
   }
 
   if (cls.IsTopLevel()) {
@@ -2429,7 +2569,10 @@ void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
     for (intptr_t i = 0, n = functions_->Length(); i < n; ++i) {
       function ^= functions_->At(i);
       name = function.name();
-      library.AddObject(function, name);
+      if (!extending ||
+          library.LookupLocalOrReExportObject(name) == Object::null()) {
+        library.AddObject(function, name);
+      }
     }
   }
 
@@ -2692,6 +2835,177 @@ void BytecodeReaderHelper::ReadLibraryDeclarations(
   }
 }
 
+void BytecodeReaderHelper::ReadStructuralBytecodePatch(intptr_t num_libraries) {
+#if !defined(DART_SHOREBIRD_INTERPRETER) || !defined(DART_PRECOMPILED_RUNTIME)
+  RejectBytecodePatch(
+      "Structural bytecode patches require the AOT interpreter.");
+#else
+  const auto& root = Library::Handle(Z, IG->object_store()->root_library());
+  if (root.IsNull() || !root.is_shorebird_structural_patchable()) {
+    RejectBytecodePatch(
+        "Structural bytecode patch requires a structural AOT baseline.");
+  }
+  if (thread_->isolate()->is_runnable()) {
+    RejectBytecodePatch(
+        "Structural bytecode patches must be installed before the isolate is "
+        "runnable.");
+  }
+  intptr_t isolate_count = 0;
+  IG->ForEachIsolate([&](Isolate*) { ++isolate_count; });
+  if (isolate_count != 1) {
+    RejectBytecodePatch(
+        "Structural patches require a fresh single-isolate group.");
+  }
+  if (IG->object_store()->shorebird_structural_installation_state() !=
+      Smi::null()) {
+    RejectBytecodePatch(
+        "A structural bytecode patch installation was already attempted.");
+  }
+  // Structural registration mutates class tables. Any failure from this point
+  // poisons the transient group: the embedder must destroy it, never run it.
+  IG->object_store()->set_shorebird_structural_installation_state(
+      Smi::Handle(Z, Smi::New(1)));
+  const auto& libraries =
+      GrowableObjectArray::Handle(Z, GrowableObjectArray::New());
+  const auto& classes =
+      GrowableObjectArray::Handle(Z, GrowableObjectArray::New());
+  auto& uri = String::Handle(Z);
+  auto& library = Library::Handle(Z);
+  auto& cls = Class::Handle(Z);
+  auto& name = String::Handle(Z);
+  auto& offset = Smi::Handle(Z);
+
+  // Register all library identities before resolving private names or types.
+  for (intptr_t i = 0; i < num_libraries; ++i) {
+    uri ^= ReadObject();
+    offset = Smi::New(bytecode_component_->GetLibrariesOffset() +
+                      reader_.ReadUInt());
+    library = Library::LookupLibrary(thread_, uri);
+    if (uri.StartsWith(String::Handle(Z, String::New("dart:")))) {
+      RejectBytecodePatch(
+          "Structural patches cannot replace Dart SDK libraries.");
+    }
+    if (library.IsNull()) {
+      library = Library::New(uri);
+      library.set_is_shorebird_patchable(true);
+      library.set_is_shorebird_structural_patchable(true);
+      library.Register(thread_);
+    } else if (!library.is_shorebird_structural_patchable()) {
+      RejectBytecodePatch(
+          "Structural patch references an incompatible host library.");
+    }
+    libraries.Add(library);
+    libraries.Add(offset);
+  }
+
+  // Establish every class identity and declaration offset first, including
+  // classes whose types are used by declarations in preceding libraries.
+  for (intptr_t i = 0; i < libraries.Length(); i += 2) {
+    library ^= libraries.At(i);
+    offset ^= libraries.At(i + 1);
+    AlternativeReadingScope declaration(&reader_, offset.Value());
+    if ((reader_.ReadUInt() & (1 << 2)) == 0) {
+      RejectBytecodePatch(
+          "Structural patch mixes incompatible library profiles.");
+    }
+    name ^= ReadObject();
+    const auto& script = Script::CheckedHandle(Z, ReadObject());
+    if (!library.Loaded()) {
+      library.SetName(name);
+      library.SetLoadInProgress();
+    }
+    const intptr_t count = reader_.ReadUInt();
+    if (count == 0)
+      RejectBytecodePatch("Structural library has no top-level class.");
+    for (intptr_t c = 0; c < count; ++c) {
+      name ^= ReadObject();
+      offset = Smi::New(bytecode_component_->GetClassesOffset() +
+                        reader_.ReadUInt());
+      cls = c == 0 ? library.toplevel_class() : library.LookupClass(name);
+      const bool added = cls.IsNull();
+      if (added) {
+        cls = Class::New(library, c == 0 ? Symbols::TopLevel() : name, script,
+                         TokenPosition::kNoSource);
+        cls.set_is_declared_in_bytecode(true);
+        if (c == 0) {
+          library.set_toplevel_class(cls);
+        } else {
+          library.AddClass(cls);
+        }
+        thread_->bytecode_loader()->SetOffset(cls, offset.Value());
+      }
+      classes.Add(cls);
+      classes.Add(offset);
+      classes.Add(Bool::Get(added));
+    }
+    if (!library.Loaded()) library.SetLoaded();
+  }
+
+  // Resolve type signatures without replacing layouts of existing classes.
+  for (intptr_t i = 0; i < classes.Length(); i += 3) {
+    cls ^= classes.At(i);
+    offset ^= classes.At(i + 1);
+    AlternativeReadingScope declaration(&reader_, offset.Value());
+    if (classes.At(i + 2) == Bool::True().ptr()) {
+      if (!cls.is_declaration_loaded()) ReadClassDeclaration(cls);
+    } else {
+      ReadLoadedClassPatchDeclaration(cls, nullptr);
+    }
+  }
+
+  // Publish declarations before reading constant pools so forward references
+  // and mutually recursive new functions use their final Function identities.
+  for (intptr_t i = 0; i < classes.Length(); i += 3) {
+    cls ^= classes.At(i);
+    if (classes.At(i + 2) == Bool::True().ptr()) {
+      const auto& error = Error::Handle(Z, cls.EnsureIsFinalized(thread_));
+      if (!error.IsNull()) thread_->long_jump_base()->Jump(1, error);
+    } else {
+      structural_existing_class_ = &Class::ZoneHandle(Z, cls.ptr());
+      AlternativeReadingScope members(
+          &reader_, thread_->bytecode_loader()->GetOffset(cls));
+      ReadMembers(cls, false);
+      structural_existing_class_ = nullptr;
+    }
+  }
+
+  auto& field = Field::Handle(Z);
+  auto& function = Function::Handle(Z);
+  for (intptr_t i = 0; i < classes.Length(); i += 3) {
+    cls ^= classes.At(i);
+    const auto& fields = Array::Handle(Z, cls.fields());
+    for (intptr_t j = 0; j < fields.Length(); ++j) {
+      field ^= fields.At(j);
+      if (field.has_nontrivial_initializer() &&
+          thread_->bytecode_loader()->HasOffset(field)) {
+        function = field.EnsureInitializerFunction();
+        thread_->bytecode_loader()->AddStructuralFunction(
+            function, thread_->bytecode_loader()->GetOffset(field));
+      }
+    }
+  }
+  staged_patches_ = &GrowableObjectArray::Handle(Z, GrowableObjectArray::New());
+  const auto& functions = thread_->bytecode_loader()->structural_functions();
+  for (intptr_t i = 0; i < functions.Length(); ++i) {
+    function ^= functions.At(i);
+    const auto& bytecode = Bytecode::Handle(
+        Z, ReadCode(function, thread_->bytecode_loader()->GetOffset(function),
+                    false));
+    staged_patches_->Add(function);
+    staged_patches_->Add(bytecode);
+  }
+  GcSafepointOperationScope safepoint(thread_);
+  auto& bytecode = Bytecode::Handle(Z);
+  for (intptr_t i = 0; i < staged_patches_->Length(); i += 2) {
+    function ^= staged_patches_->At(i);
+    bytecode ^= staged_patches_->At(i + 1);
+    function.AttachBytecode(bytecode);
+  }
+  IG->object_store()->set_shorebird_structural_installation_state(
+      Smi::Handle(Z, Smi::New(2)));
+#endif
+}
+
 intptr_t BytecodeReaderHelper::ReadLoadedLibraryBytecodePatch(
     intptr_t num_libraries) {
   staged_patches_ = &GrowableObjectArray::Handle(Z, GrowableObjectArray::New());
@@ -2827,6 +3141,10 @@ void BytecodeReaderHelper::ReadLoadedClassPatchDeclaration(
 
   const intptr_t members_offset =
       bytecode_component_->GetMembersOffset() + reader_.ReadUInt();
+  if (installed_functions == nullptr) {
+    thread_->bytecode_loader()->SetOffset(cls, members_offset);
+    return;
+  }
   AlternativeReadingScope alt(&reader_, members_offset);
   ReadLoadedMembersPatch(cls, installed_functions);
 }
@@ -2888,10 +3206,6 @@ void BytecodeReaderHelper::ReadLoadedFieldPatchDeclarations(
       reader_.ReadPosition();
     }
 
-    if (!has_nontrivial_initializer) {
-      ReadObject();
-    }
-
     if ((flags & kHasInitializerCodeFlag) != 0) {
       const intptr_t code_offset =
           bytecode_component_->GetCodesOffset() + reader_.ReadUInt();
@@ -2900,6 +3214,9 @@ void BytecodeReaderHelper::ReadLoadedFieldPatchDeclarations(
         InstallLoadedFunctionPatch(initializer, code_offset,
                                    installed_functions);
       }
+    }
+    if (!has_nontrivial_initializer) {
+      ReadObject();
     }
 
     if ((flags & kHasGetterFlag) != 0) {

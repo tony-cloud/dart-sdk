@@ -57,7 +57,7 @@ import 'transformations/devirtualization.dart'
     show transformComponent;
 import 'transformations/dynamic_interface_annotator.dart'
     as dynamic_interface_annotator
-    show annotateComponent;
+    show annotateComponent, annotateShorebirdStructuralComponent;
 import 'transformations/mixin_deduplication.dart'
     as mixin_deduplication
     show transformComponent;
@@ -228,6 +228,11 @@ void declareCompilerOptions(ArgParser args) {
   args.addOption(
     'dynamic-interface',
     help: 'Path to dynamic module interface yaml file.',
+  );
+  args.addFlag(
+    'shorebird-structural-patching',
+    defaultsTo: false,
+    help: 'Prepare an AOT no-TFA baseline for additive bytecode patches.',
   );
   args.addOption(
     'dump-detailed-dynamic-interface',
@@ -457,6 +462,7 @@ Future<int> runCompiler(ArgResults options, String usage) async {
       deleteToStringPackageUris: options['delete-tostring-package-uri'],
       keepClassNamesImplementing: options['keep-class-names-implementing'],
       dynamicInterface: dynamicInterfaceUri,
+      shorebirdStructuralPatching: options['shorebird-structural-patching'],
       dumpDetailedDynamicInterface: dumpDetailedDynamicInterface,
       aot: aot,
       useGlobalTypeFlowAnalysis: tfa,
@@ -573,6 +579,7 @@ class KernelCompilationArguments {
   final List<String> keepClassNamesImplementing;
   final bool aot;
   final Uri? dynamicInterface;
+  final bool shorebirdStructuralPatching;
   final String? dumpDetailedDynamicInterface;
   final Map<String, String> environmentDefines; // Should be mutable.
   final bool enableAsserts;
@@ -597,6 +604,7 @@ class KernelCompilationArguments {
     this.keepClassNamesImplementing = const <String>[],
     this.aot = false,
     this.dynamicInterface,
+    this.shorebirdStructuralPatching = false,
     this.dumpDetailedDynamicInterface,
     Map<String, String>? environmentDefines,
     this.enableAsserts = true,
@@ -620,6 +628,12 @@ class KernelCompilationArguments {
 Future<KernelCompilationResults> compileToKernel(
   KernelCompilationArguments args,
 ) async {
+  if (args.shorebirdStructuralPatching &&
+      (!args.aot || args.useGlobalTypeFlowAnalysis)) {
+    throw ArgumentError(
+      '--shorebird-structural-patching requires --aot --no-tfa.',
+    );
+  }
   final options = args.options!;
 
   // Replace error handler to detect if there are compilation errors.
@@ -797,6 +811,12 @@ Future runGlobalTransformations(
   if (args.dynamicInterface != null) {
     await _runDynamicInterfaceAnnotator(component, coreTypes, args);
   }
+  if (args.shorebirdStructuralPatching) {
+    dynamic_interface_annotator.annotateShorebirdStructuralComponent(
+      component,
+      coreTypes,
+    );
+  }
 
   // TODO(alexmarkov,cstefantsova): Consider doing canonicalization of
   // identical mixin applications when creating mixin applications in frontend,
@@ -837,9 +857,14 @@ Future runGlobalTransformations(
       useRapidTypeAnalysis: args.useRapidTypeAnalysis,
     );
   } else {
-    devirtualization.transformComponent(coreTypes, component);
-    no_dynamic_invocations_annotator.transformComponent(component);
-    annotateWithoutTypeFlow(component);
+    if (!args.shorebirdStructuralPatching) {
+      devirtualization.transformComponent(coreTypes, component);
+      no_dynamic_invocations_annotator.transformComponent(component);
+    }
+    annotateWithoutTypeFlow(
+      component,
+      shorebirdStructuralPatching: args.shorebirdStructuralPatching,
+    );
   }
 
   // TODO(35069): avoid recomputing CSA by reading it from the platform files.

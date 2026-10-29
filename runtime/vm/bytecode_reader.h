@@ -28,6 +28,15 @@ class BytecodeLoader {
   FunctionPtr LoadBytecode(bool load_code = true);
   ErrorPtr LoadBytecodePatch();
   bool is_loading_patch() const { return is_loading_patch_; }
+  bool is_structural_patch() const { return is_structural_patch_; }
+  void set_is_structural_patch(bool value) { is_structural_patch_ = value; }
+  void AddStructuralFunction(const Function& function, intptr_t offset) {
+    SetOffset(function, offset);
+    structural_functions_.Add(function);
+  }
+  const GrowableObjectArray& structural_functions() const {
+    return structural_functions_;
+  }
   void LoadPendingCode();
 
   TypedDataBasePtr binary() const { return binary_.ptr(); }
@@ -87,6 +96,8 @@ class BytecodeLoader {
   Class* expression_evaluation_real_classs_ = nullptr;
   Function* expression_evaluation_function_ = nullptr;
   bool is_loading_patch_ = false;
+  bool is_structural_patch_ = false;
+  GrowableObjectArray& structural_functions_;
 
   DISALLOW_COPY_AND_ASSIGN(BytecodeLoader);
 };
@@ -281,6 +292,7 @@ class BytecodeReaderHelper : public ValueObject {
                                const GrowableObjectArray& pending_objects,
                                bool load_code);
   intptr_t ReadLoadedLibraryBytecodePatch(intptr_t num_libraries);
+  void ReadStructuralBytecodePatch(intptr_t num_libraries);
   void ReadPendingCode(const GrowableObjectArray& pending_objects);
   void FindModifiedLibraries(BitVector* modified_libs, intptr_t num_libraries);
 
@@ -469,6 +481,7 @@ class BytecodeReaderHelper : public ValueObject {
   Array* closures_ = nullptr;
   PatchClass* patch_class_ = nullptr;
   Array* functions_ = nullptr;
+  const Class* structural_existing_class_ = nullptr;
   intptr_t function_index_ = 0;
   GrowableArray<const FunctionType*> enclosing_function_types_;
   Function& scoped_function_;

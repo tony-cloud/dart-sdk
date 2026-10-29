@@ -221,6 +221,9 @@ class ObjectPointerVisitor;
   RW(GrowableObjectArray, tag_table)                                           \
   RW(Array, obfuscation_map)                                                   \
   RW(Array, loading_unit_uris)                                                 \
+  RW(Smi, shorebird_structural_installation_state)                             \
+  RW(GrowableObjectArray, shorebird_added_fields)                              \
+  RW(Array, shorebird_field_sidecars)                                          \
   // Please remember the last entry must be referred in the 'to' function below.
 
 #define ISOLATE_OBJECT_STORE_FIELD_LIST(R_, RW)                                \
@@ -442,7 +445,9 @@ class ObjectStore {
 #undef DECLARE_OBJECT_STORE_FIELD
 #undef DECLARE_ATOMIC_OBJECT_STORE_FIELD
 #undef DECLARE_LAZY_OBJECT_STORE_FIELD
-  ObjectPtr* to() { return reinterpret_cast<ObjectPtr*>(&loading_unit_uris_); }
+  ObjectPtr* to() {
+    return reinterpret_cast<ObjectPtr*>(&shorebird_field_sidecars_);
+  }
   ObjectPtr* to_snapshot(Snapshot::Kind kind) {
     switch (kind) {
       case Snapshot::kFull:

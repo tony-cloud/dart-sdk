@@ -3018,6 +3018,9 @@ ArrayPtr Class::OffsetToFieldMap(
       fields = cls.fields();
       for (intptr_t i = 0; i < fields.Length(); ++i) {
         f ^= fields.At(i);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+        if (f.is_shorebird_sidecar()) continue;
+#endif
         if (f.is_instance()) {
           array.SetAt(f.HostOffset() >> kCompressedWordSizeLog2, f);
         }
@@ -12812,7 +12815,12 @@ ErrorPtr Field::InitializeInstance(const Instance& instance) const {
       UNREACHABLE();
     }
 #if defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    RELEASE_ASSERT(is_shorebird_sidecar() && has_initializer());
+    value = Object::null();
+#else
     UNREACHABLE();
+#endif
 #else
     // Our trivial initializer is `null`. Any non-`null` initializer is
     // non-trivial (see `KernelLoader::CheckForInitializer()`).
@@ -21283,7 +21291,139 @@ InstancePtr Instance::CanonicalizeLocked(Thread* thread) const {
   return cls.InsertCanonicalConstant(zone, result);
 }
 
+#if defined(DART_SHOREBIRD_INTERPRETER)
+// Sidecars keep AOT instance sizes and field offsets immutable. WeakProperty
+// supplies ephemeron semantics, including values that refer back to the key.
+// Only metadata/storage mutation holds the program lock; field initializers
+// execute outside it through the ordinary Dart initializer path.
+static intptr_t ShorebirdSidecarHash(const Instance& instance) {
+  const auto& hash =
+      Integer::Handle(instance.IdentityHashCode(Thread::Current()));
+  return Integer::Value(hash.ptr());
+}
+
+static WeakPropertyPtr FindShorebirdSidecar(const Instance& instance,
+                                            bool create) {
+  auto* thread = Thread::Current();
+  auto* store = thread->isolate_group()->object_store();
+  auto& table = Array::Handle(store->shorebird_field_sidecars());
+  auto& entry = WeakProperty::Handle();
+  if (table.IsNull()) {
+    if (!create) return WeakProperty::null();
+    table = Array::New(32, Heap::kOld);
+    store->set_shorebird_field_sidecars(table);
+  }
+  const intptr_t hash = ShorebirdSidecarHash(instance);
+  while (true) {
+    const intptr_t mask = table.Length() - 1;
+    intptr_t available = -1;
+    for (intptr_t i = 0; i < table.Length(); ++i) {
+      const intptr_t slot = (hash + i) & mask;
+      entry ^= table.At(slot);
+      if (entry.IsNull()) {
+        if (available < 0) available = slot;
+        break;
+      }
+      if (entry.key() == instance.ptr()) return entry.ptr();
+      if (entry.key() == Object::null() && available < 0) available = slot;
+    }
+    if (!create) return WeakProperty::null();
+    if (available >= 0) {
+      entry = WeakProperty::New(Heap::kOld);
+      entry.set_key(instance);
+      table.SetAt(available, entry);
+      return entry.ptr();
+    }
+    const auto& grown =
+        Array::Handle(Array::New(table.Length() * 2, Heap::kOld));
+    auto& key = Instance::Handle();
+    for (intptr_t i = 0; i < table.Length(); ++i) {
+      entry ^= table.At(i);
+      if (entry.IsNull() || entry.key() == Object::null()) continue;
+      key ^= entry.key();
+      intptr_t slot = ShorebirdSidecarHash(key) & (grown.Length() - 1);
+      while (grown.At(slot) != Object::null()) {
+        slot = (slot + 1) & (grown.Length() - 1);
+      }
+      grown.SetAt(slot, entry);
+    }
+    table = grown.ptr();
+    store->set_shorebird_field_sidecars(table);
+  }
+}
+
+void Field::RegisterShorebirdSidecar(const Object& initial_value) const {
+  ASSERT(is_instance());
+  auto* thread = Thread::Current();
+  ASSERT(thread->isolate_group()->program_lock()->IsCurrentThreadWriter());
+  auto* store = thread->isolate_group()->object_store();
+  auto& defaults = GrowableObjectArray::Handle(store->shorebird_added_fields());
+  if (defaults.IsNull()) {
+    defaults = GrowableObjectArray::New();
+    store->set_shorebird_added_fields(defaults);
+  }
+  defaults.Add(initial_value);
+  const intptr_t offset = -defaults.Length() * kCompressedWordSize;
+  SetOffset(offset, offset);
+  set_is_unboxed(false);
+  set_guarded_cid(kDynamicCid);
+}
+
+ArrayPtr Instance::ShorebirdSidecarValues() const {
+  auto* thread = Thread::Current();
+  SafepointWriteRwLocker lock(thread, thread->isolate_group()->program_lock());
+  const auto& entry = WeakProperty::Handle(FindShorebirdSidecar(*this, false));
+  return entry.IsNull() ? Array::null() : Array::RawCast(entry.value());
+}
+
+void Instance::SetShorebirdSidecarValues(const Array& values) const {
+  auto* thread = Thread::Current();
+  SafepointWriteRwLocker lock(thread, thread->isolate_group()->program_lock());
+  const auto& entry = WeakProperty::Handle(FindShorebirdSidecar(*this, true));
+  entry.set_value(values);
+}
+
+static ObjectPtr ReadShorebirdField(const Instance& instance,
+                                    const Field& field) {
+  const intptr_t index = -field.HostOffset() / kCompressedWordSize - 1;
+  const auto& values = Array::Handle(instance.ShorebirdSidecarValues());
+  if (!values.IsNull() && index < values.Length() &&
+      values.At(index) != Object::unknown_constant().ptr()) {
+    return values.At(index);
+  }
+  const auto& defaults = GrowableObjectArray::Handle(
+      IsolateGroup::Current()->object_store()->shorebird_added_fields());
+  return defaults.At(index);
+}
+
+static void WriteShorebirdField(const Instance& instance,
+                                const Field& field,
+                                const Object& value) {
+  auto* thread = Thread::Current();
+  SafepointWriteRwLocker lock(thread, thread->isolate_group()->program_lock());
+  const intptr_t index = -field.HostOffset() / kCompressedWordSize - 1;
+  const auto& entry =
+      WeakProperty::Handle(FindShorebirdSidecar(instance, true));
+  auto& values = Array::Handle();
+  values ^= entry.value();
+  const auto& defaults = GrowableObjectArray::Handle(
+      thread->isolate_group()->object_store()->shorebird_added_fields());
+  if (values.IsNull()) {
+    values = Array::New(defaults.Length());
+    for (intptr_t i = 0; i < values.Length(); ++i) {
+      values.SetAt(i, Object::unknown_constant());
+    }
+    entry.set_value(values);
+  }
+  RELEASE_ASSERT(index < values.Length());
+  values.SetAt(index, value);
+}
+#endif  // defined(DART_SHOREBIRD_INTERPRETER)
+
 ObjectPtr Instance::GetField(const Field& field) const {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (field.is_shorebird_sidecar()) return ReadShorebirdField(*this, field);
+#endif
   if (field.is_unboxed()) {
     // TODO(63699): Align unboxed fields.
     switch (field.guarded_cid()) {
@@ -21306,6 +21446,12 @@ ObjectPtr Instance::GetField(const Field& field) const {
 }
 
 void Instance::SetField(const Field& field, const Object& value) const {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (field.is_shorebird_sidecar()) {
+    WriteShorebirdField(*this, field, value);
+    return;
+  }
+#endif
   if (field.is_unboxed()) {
     // TODO(63699): Align unboxed fields.
     switch (field.guarded_cid()) {
@@ -21336,6 +21482,12 @@ void Instance::SetField(const Field& field, const Object& value) const {
 
 void Instance::SetFieldWithoutFieldGuard(const Field& field,
                                          const Object& value) const {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (field.is_shorebird_sidecar()) {
+    WriteShorebirdField(*this, field, value);
+    return;
+  }
+#endif
   if (field.is_unboxed()) {
     switch (field.guarded_cid()) {
       case kDoubleCid:

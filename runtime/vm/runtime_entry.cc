@@ -5000,6 +5000,37 @@ DEFINE_RUNTIME_ENTRY(InitInstanceField, 2) {
   arguments.SetReturn(result);
 }
 
+DEFINE_RUNTIME_ENTRY(LoadShorebirdInstanceField, 2) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  const auto& instance = Instance::CheckedHandle(zone, arguments.ArgAt(0));
+  const auto& field = Field::CheckedHandle(zone, arguments.ArgAt(1));
+  RELEASE_ASSERT(field.is_shorebird_sidecar());
+  arguments.SetReturn(Object::Handle(zone, instance.GetField(field)));
+#else
+  UNREACHABLE();
+#endif
+}
+
+DEFINE_RUNTIME_ENTRY(StoreShorebirdInstanceField, 4) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  const auto& instance = Instance::CheckedHandle(zone, arguments.ArgAt(0));
+  const auto& field = Field::CheckedHandle(zone, arguments.ArgAt(1));
+  const auto& value = Object::Handle(zone, arguments.ArgAt(2));
+  const auto& checked_setter = Bool::CheckedHandle(zone, arguments.ArgAt(3));
+  RELEASE_ASSERT(field.is_shorebird_sidecar());
+  if (checked_setter.value() && field.is_final() &&
+      instance.GetField(field) != Object::sentinel().ptr()) {
+    Exceptions::ThrowLateFieldAlreadyInitialized(
+        String::Handle(zone, field.name()));
+    UNREACHABLE();
+  }
+  instance.SetField(field, value);
+  arguments.SetReturn(Object::null_object());
+#else
+  UNREACHABLE();
+#endif
+}
+
 DEFINE_RUNTIME_ENTRY(InitStaticField, 1) {
   const Field& field = Field::CheckedHandle(zone, arguments.ArgAt(0));
   Object& result = Object::Handle(zone, field.InitializeStatic());
