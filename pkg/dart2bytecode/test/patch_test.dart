@@ -92,6 +92,61 @@ void main() { print(changed() + unchanged()); }
     expect(delta.dynModuleEntryPoint, isNull);
   });
 
+  test(
+    'FFI-native null names survive full-component and delta roundtrips',
+    () async {
+      String program(int value) =>
+          '''
+import 'dart:ffi';
+@Native<IntPtr Function(IntPtr)>(symbol: 'unused_ffi_symbol')
+external int ffiCall(int value);
+@pragma('vm:external-name', 'unused_vm_native_symbol')
+external int vmNative();
+int changed() => $value;
+void main() { print(changed()); }
+''';
+      for (final structural in [false, true]) {
+        final baseline = await compile(program(1), structural: structural);
+        final full = readComponent(baseline);
+        final functions = topLevel(full).members.functions;
+        final ffi = functions.singleWhere((f) => name(f.name) == 'ffiCall');
+        expect(ffi.flags & dbc.FunctionDeclaration.isNativeFlag, isNot(0));
+        expect(ffi.flags & dbc.FunctionDeclaration.isExternalFlag, isNot(0));
+        expect(ffi.nativeName, isNull);
+        final vmNative = functions.singleWhere(
+          (f) => name(f.name) == 'vmNative',
+        );
+        expect(vmNative.flags & dbc.FunctionDeclaration.isNativeFlag, isNot(0));
+        expect(vmNative.nativeName, isNotNull);
+
+        final writer = BufferedWriter(
+          full.stringTable,
+          full.objectTable,
+          LinkWriter(),
+        );
+        full.write(writer);
+        final roundtrip = readComponent(writer.getContents());
+        expect(
+          topLevel(roundtrip).members.functions
+              .singleWhere((f) => name(f.name) == 'ffiCall')
+              .nativeName,
+          isNull,
+        );
+
+        final updated = await compile(program(2), structural: structural);
+        final delta = readComponent(
+          createBytecodePatch(
+            baseline,
+            updated,
+            shorebirdStructuralPatching: structural,
+          ),
+        );
+        expect(names(topLevel(delta).members), ['changed']);
+        expect(delta.codes, hasLength(1));
+      }
+    },
+  );
+
   test('declaration additions require explicit profile', () async {
     final baseline = await compile('void main() {}');
     final updated = await compile('int helper() => 2; void main() {}');

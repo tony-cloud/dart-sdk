@@ -683,7 +683,9 @@ class FunctionDeclaration {
         : null;
     final ObjectHandle returnType = reader.readPackedObject();
     final nativeName = ((flags & isNativeFlag) != 0)
-        ? reader.readPackedObject<ObjectHandle>()
+        // FFI-native declarations use a null VM native name; their binding is
+        // emitted in the function's bytecode rather than a VM native resolver.
+        ? reader.readPackedObject<ObjectHandle?>()
         : null;
     final code = ((flags & isAbstractFlag) == 0)
         ? reader.readLinkOffset<Code>()
