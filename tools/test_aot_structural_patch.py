@@ -67,6 +67,9 @@ class Existing {
   int added = 42;
   final int fixed = 44;
   late int lazy = 43;
+  late int? nullableLate = null;
+  late int uninitialized;
+  late final int finalLate;
   Object? nullable;
   static int total = 45;
   Existing();
@@ -85,7 +88,20 @@ int anchor() => 7;
 int entry() => even(4) ? importedHelper(anchor()) : 0;
 int existingValue(Existing value) {
   if (value.added != 42 || value.fixed != 44 || value.lazy != 43 ||
-      value.nullable != null || Existing.total != 45) return -1;
+      value.nullable != null || value.nullableLate != null ||
+      Existing.total != 45) return -1;
+  var rejected = false;
+  try { value.uninitialized; } on Object catch (error) {
+    rejected = error.toString().contains('LateInitializationError');
+  }
+  if (!rejected) return -2;
+  value.uninitialized = 46;
+  value.finalLate = 47;
+  rejected = false;
+  try { value.finalLate = 48; } on Object catch (error) {
+    rejected = error.toString().contains('LateInitializationError');
+  }
+  if (!rejected || value.uninitialized != 46 || value.finalLate != 47) return -3;
   value.added = 50;
   value.lazy = 51;
   value.nullable = 'present';
@@ -124,22 +140,66 @@ int readCachedValue() {
   return added.value + added.read() + existing.old + existing.added +
       existing.lazy + existing.fixed;
 }
+bool graphHasBackReferences(List<Object> graph) {
+  if (graph.length != 4 || graph[0] is! Existing ||
+      graph[1] is! Added<Object>) return false;
+  final existing = graph[0] as Existing;
+  final added = graph[1] as Added<Object>;
+  return identical(graph[0], graph[3]) && identical(graph, graph[2]) &&
+      identical(existing.nullable, graph) && identical(added.value, graph);
+}
+void messageChild(List<Object> message) {
+  final reply = message[0] as SendPort;
+  final graph = message[1] as List<Object>;
+  if (!graphHasBackReferences(graph)) throw StateError('Child graph lost identity');
+  final existing = graph[0] as Existing;
+  final added = graph[1] as Added<Object>;
+  if (existing.old != 10 || existing.added != 50 || existing.lazy != 51 ||
+      existing.fixed != 44 || existing.nullableLate != null ||
+      existing.uninitialized != 46 || existing.finalLate != 47 || added.count != 41) {
+    throw StateError('Child graph lost structural field values');
+  }
+  existing.added = 70;
+  existing.lazy = 71;
+  existing.uninitialized = 72;
+  added.count = 61;
+  reply.send(<Object>[graph, Isolate.current.debugName ?? '']);
+}
 void startMessage() {
-  final added = Added<String>('message', 41);
+  final graph = <Object>[];
   final existing = Existing();
   existingValue(existing);
+  final added = Added<Object>(graph, 41);
+  graph.addAll(<Object>[existing, added, graph, existing]);
+  existing.nullable = graph;
   final port = RawReceivePort();
   port.handler = (Object? message) {
-    final values = message as List<Object>;
-    final copiedAdded = values[0] as Added<String>;
-    final copiedExisting = values[1] as Existing;
-    messageResult = copiedAdded.value == 'message' &&
-        copiedExisting.nullable == 'present' ? copiedAdded.read() +
-        copiedExisting.old + copiedExisting.added + copiedExisting.lazy +
-        copiedExisting.fixed : -1;
     port.close();
+    if (message is! List || message.length != 2 ||
+        message[0] is! List<Object> || message[1] != 'structural-copy-worker') {
+      throw StateError('Child isolate failed: $message');
+    }
+    final copiedGraph = message[0] as List<Object>;
+    if (!graphHasBackReferences(copiedGraph) || identical(graph, copiedGraph) ||
+        identical(existing, copiedGraph[0]) || existing.added != 50 ||
+        existing.lazy != 51 || added.count != 41) {
+      throw StateError('Cross-isolate graph copy changed sender or identity');
+    }
+    final copiedExisting = copiedGraph[0] as Existing;
+    final copiedAdded = copiedGraph[1] as Added<Object>;
+    if (copiedExisting.nullableLate != null || copiedExisting.uninitialized != 72 ||
+        copiedExisting.finalLate != 47) {
+      throw StateError('Cross-isolate late field state changed');
+    }
+    messageResult = copiedAdded.count + copiedExisting.old + copiedExisting.added +
+        copiedExisting.lazy + copiedExisting.fixed;
   };
-  port.sendPort.send(<Object>[added, existing]);
+  Isolate.spawn<List<Object>>(messageChild, <Object>[port.sendPort, graph],
+      debugName: 'structural-copy-worker', onExit: port.sendPort,
+      onError: port.sendPort).then<void>((_) {}, onError: (Object error) {
+        port.close();
+        throw error;
+      });
 }
 int readMessage() => messageResult;
 void clearHeld() { held = null; }
@@ -205,35 +265,84 @@ void Expect(const char* name, int64_t expected) {
 
 void MakeRunnable(Dart_Isolate isolate) {
   Dart_ExitScope();
-  DartEngine_ReleaseIsolate();
+  Dart_ExitIsolate();
   char* error = Dart_IsolateMakeRunnable(isolate);
   if (error != nullptr) { std::cerr << error << std::endl; std::exit(1); }
-  DartEngine_AcquireIsolate(isolate);
+  Dart_EnterIsolate(isolate);
   Dart_EnterScope();
 }
 
-void CheckCleanFallback(DartEngine_SnapshotData snapshot) {
-  // Tear down the poisoned group first. The engine has no per-isolate removal
-  // API, so use the public raw group API for this final fallback group and do
-  // not call Engine::Shutdown a second time with its stale isolate inventory.
-  const std::string uri(snapshot.script_uri);
+const char* configured_script_uri = nullptr;
+
+Dart_Handle SetupCoreHooks() {
+  auto isolate = Dart_LookupLibrary(Dart_NewStringFromCString("dart:isolate"));
+  if (Dart_IsError(isolate)) return isolate;
+  auto async = Dart_LookupLibrary(Dart_NewStringFromCString("dart:async"));
+  if (Dart_IsError(async)) return async;
+  auto closure = Dart_Invoke(isolate,
+      Dart_NewStringFromCString("_getIsolateScheduleImmediateClosure"), 0, nullptr);
+  if (Dart_IsError(closure)) return closure;
+  auto result = Dart_Invoke(async,
+      Dart_NewStringFromCString("_setScheduleImmediateClosure"), 1, &closure);
+  if (Dart_IsError(result)) return result;
+  result = Dart_Invoke(isolate, Dart_NewStringFromCString("_setupHooks"), 0, nullptr);
+  if (Dart_IsError(result)) return result;
+  // Isolate.spawn requires a script URI hook. Its same-group spawn path does
+  // not read that file; this is the normal retained SDK platform setter.
+  auto io = Dart_LookupLibrary(Dart_NewStringFromCString("dart:io"));
+  if (Dart_IsError(io)) return io;
+  auto platform = Dart_GetNonNullableType(io,
+      Dart_NewStringFromCString("_Platform"), 0, nullptr);
+  if (Dart_IsError(platform)) return platform;
+  return Dart_SetField(platform, Dart_NewStringFromCString("_nativeScript"),
+                       Dart_NewStringFromCString(configured_script_uri));
+}
+
+bool InitializeChild(void** child_data, char** error) {
+  *child_data = nullptr;
+  Dart_EnterScope();
+  auto result = SetupCoreHooks();
+  if (Dart_IsError(result)) {
+    *error = ::strdup(Dart_GetError(result));
+    Dart_ExitScope();
+    return false;
+  }
   Dart_ExitScope();
-  DartEngine_ReleaseIsolate();
-  DartEngine_Shutdown();
+  return true;
+}
+
+Dart_Isolate CreateRoot(DartEngine_SnapshotData snapshot, const char* name) {
   char* error = nullptr;
   Dart_IsolateFlags flags;
   Dart_IsolateFlagsInitialize(&flags);
-  auto fallback = Dart_CreateIsolateGroup(uri.c_str(), "clean-fallback",
+  auto isolate = Dart_CreateIsolateGroup(snapshot.script_uri, name,
       snapshot.snapshot_data, snapshot.snapshot_text, &flags,
       nullptr, nullptr, &error);
-  if (error != nullptr || fallback == nullptr) {
-    std::cerr << (error == nullptr ? "No fallback isolate" : error) << std::endl;
+  if (error != nullptr || isolate == nullptr) {
+    std::cerr << (error == nullptr ? "No root isolate" : error) << std::endl;
     std::exit(1);
   }
   Dart_EnterScope();
-  Expect("probe", 1);
+  Check(SetupCoreHooks());
+  return isolate;
+}
+
+void ShutdownRoot() {
   Dart_ExitScope();
   Dart_ShutdownIsolate();
+  // Only the snapshot reader/partial embedder initializer was used from the
+  // engine; roots and spawned children use the public embedding API directly.
+  DartEngine_Shutdown();
+  char* error = Dart_Cleanup();
+  if (error != nullptr) { std::cerr << error << std::endl; std::exit(1); }
+}
+
+void CheckCleanFallback(DartEngine_SnapshotData snapshot) {
+  Dart_ExitScope();
+  Dart_ShutdownIsolate();
+  CreateRoot(snapshot, "clean-fallback");
+  Expect("probe", 1);
+  ShutdownRoot();
   std::cout << "Failed structural group destroyed; fresh base remained clean."
             << std::endl;
 }
@@ -242,12 +351,21 @@ int main(int argc, char** argv) {
   if (argc != 5 || !Dart_IsPrecompiledRuntime()) return 2;
   const std::string mode(argv[4]);
   char* error = nullptr;
+  if (!DartEngine_Init(&error)) {
+    std::cerr << (error == nullptr ? "Embedder initialization failed" : error)
+              << std::endl;
+    return 1;
+  }
   const auto snapshot = DartEngine_AotSnapshotFromFile(argv[1], &error);
   if (error != nullptr) { std::cerr << error << std::endl; return 1; }
-  auto isolate = DartEngine_CreateIsolate(snapshot, &error);
+  configured_script_uri = snapshot.script_uri;
+  Dart_InitializeParams params;
+  std::memset(&params, 0, sizeof(params));
+  params.version = DART_INITIALIZE_PARAMS_CURRENT_VERSION;
+  params.initialize_isolate = InitializeChild;
+  error = Dart_Initialize(&params);
   if (error != nullptr) { std::cerr << error << std::endl; return 1; }
-  DartEngine_AcquireIsolate(isolate);
-  Dart_EnterScope();
+  auto isolate = CreateRoot(snapshot, "structural-parent");
 
   Dart_PersistentHandle existing = nullptr;
   std::atomic<bool> collected(false);
@@ -306,27 +424,25 @@ int main(int argc, char** argv) {
   Expect("probeDispatch", 58);
   Expect("probeTearOff", 36);
   Expect("probeCache", 1);
-  Dart_NotifyLowMemory();
+  Dart_NotifyDestroyed();
   Expect("probeCached", 197);
   Invoke("probeMessage");
   Check(Dart_RunLoop());
-  Expect("probeMessageResult", 196);
+  Expect("probeMessageResult", 256);
   Invoke("releaseHeld");
   Dart_DeletePersistentHandle(existing);
   // Release local handles too: weak-key extension storage must not retain its
   // receiver after the application no longer references it.
   Dart_ExitScope();
   Dart_EnterScope();
-  for (int i = 0; i < 10 && !collected.load(); ++i) Dart_NotifyLowMemory();
+  for (int i = 0; i < 10 && !collected.load(); ++i) Dart_NotifyDestroyed();
   if (!collected.load()) {
     std::cerr << "Added-field storage retained an unreachable receiver" << std::endl;
     return 9;
   }
   Dart_DeleteWeakPersistentHandle(weak);
-  Dart_ExitScope();
-  DartEngine_ReleaseIsolate();
-  DartEngine_Shutdown();
-  std::cout << "Structural AOT additions, preexisting fields, GC and messages passed."
+  ShutdownRoot();
+  std::cout << "Structural AOT additions, preexisting fields, GC and cross-isolate copies passed."
             << std::endl;
   return 0;
 }
@@ -347,7 +463,8 @@ def main():
         raise SystemExit('This native acceptance harness supports macOS/Linux hosts.')
 
     def run(*command):
-        subprocess.run([str(value) for value in command], cwd=root, check=True)
+        subprocess.run([str(value) for value in command], cwd=root, check=True,
+                       timeout=300)
 
     if args.work_dir:
         args.work_dir.mkdir(parents=True, exist_ok=True)

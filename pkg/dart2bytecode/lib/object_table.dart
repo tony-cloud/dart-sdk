@@ -129,6 +129,10 @@ abstract class ObjectHandle extends BytecodeObject {
 
   ObjectKind get kind;
 
+  /// Whether this handle is a type explicitly permitting an implicit null.
+  /// Type parameters with unknown nullability deliberately return false.
+  bool get isNullableType => false;
+
   int get flags => 0;
   set flags(int value) {}
 
@@ -428,6 +432,9 @@ abstract class _TypeHandle extends ObjectHandle {
 
   final TypeTag tag;
   Nullability nullability;
+
+  @override
+  bool get isNullableType => nullability == Nullability.nullable;
 
   _TypeHandle(this.tag, this.nullability);
 

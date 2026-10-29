@@ -268,6 +268,51 @@ void main() {}
     expect(delta.codes, isEmpty);
   });
 
+  test(
+    'existing objects require independently initialized non-nullable fields',
+    () async {
+      final baseline = await compile('''
+class Existing { Existing(); }
+void main() {}
+''', structural: true);
+      final updated = await compile('''
+class Existing { int added; Existing() : added = 42; }
+void main() {}
+''', structural: true);
+      expect(
+        () => createBytecodePatch(
+          baseline,
+          updated,
+          shorebirdStructuralPatching: true,
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('declaration initializer'),
+          ),
+        ),
+      );
+      final supported = await compile('''
+class Existing {
+  int? nullable;
+  dynamic dynamicValue;
+  late int lateValue;
+  Existing();
+}
+void main() {}
+''', structural: true);
+      final delta = readComponent(
+        createBytecodePatch(
+          baseline,
+          supported,
+          shorebirdStructuralPatching: true,
+        ),
+      );
+      expect(delta.libraries.single.classes.last.members.fields, hasLength(3));
+    },
+  );
+
   test('new libraries retain their complete declarations', () async {
     final baseline = await compile('void main() {}', structural: true);
     File('${directory.path}/helper.dart').writeAsStringSync('''

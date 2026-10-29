@@ -108,6 +108,18 @@ Uint8List createBytecodePatch(
       for (final field in cls.members.fields) {
         final old = oldFields[field.name];
         if (old == null) {
+          final flags = field.flags;
+          if ((flags &
+                      (FieldDeclaration.isStaticFlag |
+                          FieldDeclaration.isLateFlag |
+                          FieldDeclaration.hasInitializerFlag)) ==
+                  0 &&
+              !field.type.isNullableType) {
+            throw FormatException(
+              'Added non-nullable instance field $context::${field.name} '
+              'requires a declaration initializer or late modifier.',
+            );
+          }
           addedFields.add(field);
           keepCode(field.initializerCode);
           continue;
