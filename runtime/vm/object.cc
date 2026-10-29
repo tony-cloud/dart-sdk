@@ -11787,6 +11787,15 @@ bool Function::NeedsMonomorphicCheckedEntry(Zone* zone) const {
     return true;
   }
 
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  // No-TFA typed calls retain their original selectors instead of using table
+  // dispatch or dyn: forwarders. The switchable call can therefore become
+  // monomorphic even when a separate forwarder handles dynamic invocations.
+  if (kernel::ProcedureAttributesOf(*this, zone).is_without_type_flow_analysis) {
+    return true;
+  }
+#endif
+
   // Any method from the class with a dynamically loaded subtype
   // can be called via switchable call (when cid range check fails
   // during conditional table dispatch).

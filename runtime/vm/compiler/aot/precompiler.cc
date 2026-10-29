@@ -1075,7 +1075,16 @@ void Precompiler::AddTypesOf(const Function& function) {
     FATAL("no retaining reasons given");
   }
 
-  if (function.NeedsMonomorphicCheckedEntry(Z) ||
+  bool is_no_tfa_instance_target = false;
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  // Typed calls in the no-TFA profile use switchable calls too. Their original
+  // targets must survive PRODUCT dictionary pruning, even when a dyn: forwarder
+  // also exists or optional arguments prevent a monomorphic entry.
+  is_no_tfa_instance_target =
+      function.IsDynamicFunction() &&
+      kernel::ProcedureAttributesOf(function, Z).is_without_type_flow_analysis;
+#endif
+  if (is_no_tfa_instance_target || function.NeedsMonomorphicCheckedEntry(Z) ||
       Function::IsDynamicInvocationForwarderName(function.name())) {
     functions_called_dynamically_.Insert(function);
   }
