@@ -4,6 +4,9 @@
 
 import 'dart:io';
 
+import 'package:kernel/ast.dart';
+import 'package:kernel/binary/ast_from_binary.dart';
+import 'package:kernel/binary/ast_to_binary.dart';
 import 'package:kernel/core_types.dart' show CoreTypes;
 import 'package:kernel/target/targets.dart';
 import 'package:kernel/verifier.dart';
@@ -44,6 +47,57 @@ runTestCase(Uri source) async {
 
 main() {
   group('mixin-deduplication', () {
+    test('remaps constant constructor coverage before serialization', () async {
+      final target = VmTarget(new TargetFlags());
+      final source = _pkgVmDir.resolve(
+        'testcases/transformations/mixin_deduplication/'
+        'constant_coverage_helper.dart',
+      );
+      final component = await compileTestCaseToKernelProgram(
+        source,
+        target: target,
+      );
+      final before =
+          component.uriToSource[source]!.constantCoverageConstructors!;
+      final originalConstructors = before.map((r) => r.asConstructor).toSet();
+      expect(
+        originalConstructors.where((c) => c.enclosingClass.isAnonymousMixin),
+        hasLength(6),
+      );
+
+      transformComponent(component, CoreTypes(component), target);
+
+      final liveConstructors = {
+        for (final library in component.libraries)
+          for (final cls in library.classes) ...cls.constructors,
+      };
+      final after =
+          component.uriToSource[source]!.constantCoverageConstructors!;
+      expect(
+        after.every((r) => liveConstructors.contains(r.asConstructor)),
+        isTrue,
+      );
+      final canonical = after
+          .map((r) => r.asConstructor)
+          .where((c) => c.enclosingClass.isAnonymousMixin)
+          .toList();
+      expect(canonical, hasLength(3));
+      expect(canonical.map((c) => c.name.text).toSet(), {
+        '',
+        'named',
+        '_private',
+      });
+
+      final sink = BytesSink();
+      BinaryPrinter(sink).writeComponentFile(component);
+      final restored = Component();
+      BinaryBuilder(sink.builder.takeBytes()).readComponent(restored);
+      expect(
+        restored.uriToSource[source]!.constantCoverageConstructors,
+        hasLength(after.length),
+      );
+    });
+
     final testCasesDir = Directory.fromUri(
       _pkgVmDir.resolve('testcases/transformations/mixin_deduplication'),
     );

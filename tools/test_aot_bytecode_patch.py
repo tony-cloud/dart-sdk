@@ -296,6 +296,34 @@ void main() { print(probe()); }
                 f'--elf={ffi_snapshot}', ffi_kernel)
         run(executable, ffi_snapshot, '--ffi')
 
+        # ConstFinder reads source coverage that the native VM loader skips.
+        # Ensure no-TFA mixin deduplication leaves that kernel data readable.
+        coverage_source = root / (
+            'pkg/vm/testcases/transformations/mixin_deduplication/'
+            'constant_coverage_helper.dart')
+        coverage_kernel = work / 'coverage.dill'
+        run(build / 'dart', root / 'pkg/vm/bin/gen_kernel.dart', '--aot', '--no-tfa',
+            f'--platform={platform}', f'--output={coverage_kernel}', coverage_source)
+        coverage_reader = work / 'read_coverage.dart'
+        coverage_reader.write_text(r'''
+import 'package:kernel/kernel.dart';
+import 'package:kernel/const_finder.dart';
+
+void main(List<String> args) {
+  final component = loadComponentFromBinary(args.single);
+  final library = component.libraries.singleWhere(
+      (lib) => lib.importUri.path.endsWith('constant_coverage_helper.dart'));
+  final result = ConstFinder(kernelFilePath: args.single,
+      classLibraryUri: library.importUri.toString(), className: 'C').findInstances();
+  if ((result['constantInstances'] as List).isEmpty) {
+    throw StateError('Constant instances lost after no-TFA compilation');
+  }
+  print('No-TFA constructor coverage and ConstFinder roundtrip passed.');
+}
+''')
+        run(build / 'dart', f'--packages={root / ".dart_tool/package_config.json"}',
+            coverage_reader, coverage_kernel)
+
         # An otherwise valid replacement must not enter an ordinary TFA base:
         # its native callers may use different boxing and argument conventions.
         tfa_source = work / 'tfa.dart'

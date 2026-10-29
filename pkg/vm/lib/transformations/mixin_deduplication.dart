@@ -47,6 +47,8 @@ void transformLibraries(
   // (this is a shallow transformation)
   libraries.forEach((library) => deduplicateMixins.visitLibrary(library, null));
 
+  deduplicateMixins.updateConstructorCoverage(relocator.component);
+
   relocator.relocateCanonicalClasses(
     deduplicateMixins._canonicalMixins.values,
     deduplicateMixins._superRemapped,
@@ -285,6 +287,26 @@ class _DeduplicateMixinsTransformer extends RemovingTransformer {
   @override
   TreeNode defaultTreeNode(TreeNode node, TreeNode? removalSentinel) =>
       throw 'Unexpected node ${node.runtimeType}: $node';
+
+  void updateConstructorCoverage(Component component) {
+    // Coverage is stored outside the AST and is not visited by the reference
+    // updater. Redirect it before relocation changes private constructor names.
+    // Otherwise --no-tfa can serialize references to removed mixin applications.
+    for (final source in component.uriToSource.values) {
+      final coverage = source.constantCoverageConstructors;
+      if (coverage == null) continue;
+      source.constantCoverageConstructors = {
+        for (final reference in coverage)
+          if (_duplicatedMixins[reference.asConstructor.enclosingClass]
+              case final replacement?)
+            replacement.constructors
+                .singleWhere((c) => c.name == reference.asConstructor.name)
+                .reference
+          else
+            reference,
+      };
+    }
+  }
 
   /// Corrects forwarding constructors inserted by mixin resolution after
   /// replacing superclass.
