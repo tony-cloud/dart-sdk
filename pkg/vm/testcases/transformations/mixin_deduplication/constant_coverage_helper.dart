@@ -4,6 +4,10 @@
 
 mixin M {}
 
+extension type const E(int value) {
+  const E.named(int value) : this(value);
+}
+
 class B {
   const B();
   const B.named();
@@ -23,6 +27,8 @@ class D extends B with M {
 }
 
 void main() {
+  print(const E(1));
+  print(const E.named(2));
   print(const C());
   print(const C.named());
   print(const C._private());

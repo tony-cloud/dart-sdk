@@ -59,7 +59,22 @@ main() {
       );
       final before =
           component.uriToSource[source]!.constantCoverageConstructors!;
-      final originalConstructors = before.map((r) => r.asConstructor).toSet();
+      // Kernel coverage may reference lowered extension-type constructor
+      // procedures. Seed these actual lowered members explicitly because the
+      // frontend need not record coverage for every folded constant expression.
+      final loweredConstructors = {
+        for (final declaration
+            in component.mainMethod!.enclosingLibrary.extensionTypeDeclarations)
+          for (final member in declaration.memberDescriptors)
+            if (member.kind == ExtensionTypeMemberKind.Constructor)
+              member.memberReference!,
+      };
+      expect(loweredConstructors, hasLength(2));
+      before.addAll(loweredConstructors);
+      final originalConstructors = before
+          .map((r) => r.asMember)
+          .whereType<Constructor>()
+          .toSet();
       expect(
         originalConstructors.where((c) => c.enclosingClass.isAnonymousMixin),
         hasLength(6),
@@ -74,11 +89,16 @@ main() {
       final after =
           component.uriToSource[source]!.constantCoverageConstructors!;
       expect(
-        after.every((r) => liveConstructors.contains(r.asConstructor)),
+        after
+            .map((r) => r.asMember)
+            .whereType<Constructor>()
+            .every(liveConstructors.contains),
         isTrue,
       );
+      expect(after, containsAll(loweredConstructors));
       final canonical = after
-          .map((r) => r.asConstructor)
+          .map((r) => r.asMember)
+          .whereType<Constructor>()
           .where((c) => c.enclosingClass.isAnonymousMixin)
           .toList();
       expect(canonical, hasLength(3));
@@ -95,6 +115,12 @@ main() {
       expect(
         restored.uriToSource[source]!.constantCoverageConstructors,
         hasLength(after.length),
+      );
+      expect(
+        restored.uriToSource[source]!.constantCoverageConstructors!.where(
+          (r) => r.asMember is Procedure,
+        ),
+        hasLength(2),
       );
     });
 

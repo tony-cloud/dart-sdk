@@ -295,16 +295,16 @@ class _DeduplicateMixinsTransformer extends RemovingTransformer {
     for (final source in component.uriToSource.values) {
       final coverage = source.constantCoverageConstructors;
       if (coverage == null) continue;
-      source.constantCoverageConstructors = {
-        for (final reference in coverage)
-          if (_duplicatedMixins[reference.asConstructor.enclosingClass]
-              case final replacement?)
-            replacement.constructors
-                .singleWhere((c) => c.name == reference.asConstructor.name)
-                .reference
-          else
-            reference,
-      };
+      source.constantCoverageConstructors = coverage.map((reference) {
+        // Const extension-type constructors can be lowered to procedures.
+        final member = reference.asMember;
+        if (member is! Constructor) return reference;
+        final replacement = _duplicatedMixins[member.enclosingClass];
+        if (replacement == null) return reference;
+        return replacement.constructors
+            .singleWhere((c) => c.name == member.name)
+            .reference;
+      }).toSet();
     }
   }
 
