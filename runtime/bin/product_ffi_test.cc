@@ -6,6 +6,7 @@
 // Loads ordinary bytecode into a new library in a non-full baseline; it does
 // not bypass the structural/full replacement admission checks.
 #include <dlfcn.h>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -25,6 +26,8 @@
 #include "include/dart_engine.h"
 #include "include/dart_native_api.h"
 #include "lib/ffi_dynamic_library.h"
+#include "vm/dart_api_state.h"
+#include "vm/dart_entry.h"
 #include "vm/ffi/native_assets.h"
 #include "vm/heap/safepoint.h"
 #include "vm/object.h"
@@ -237,7 +240,126 @@ void CloseAsset(void* handle, char** error) {
 }
 uintptr_t resolved_add_calls = 0;
 uintptr_t missing_calls = 0;
+
+dart::ApiLocalScope* expected_scope_parent = nullptr;
+intptr_t expected_parent_handles = 0;
+intptr_t scope_probe_calls = 0;
+intptr_t scope_checkpoints = 0;
+
+void RequireCallScope(const char* probe) {
+  auto* thread = dart::Thread::Current();
+  auto* scope = thread->api_top_scope();
+  Expect(thread->execution_state() == dart::Thread::kThreadInNative,
+         "Handle scope probe requires a nonleaf native call");
+  const bool distinct = scope != nullptr && scope != expected_scope_parent &&
+                        scope->previous() == expected_scope_parent;
+  if (!distinct) {
+    std::cerr << "Scope probe " << probe << " #" << scope_probe_calls
+              << " expected parent=" << expected_scope_parent
+              << " current exit=" << thread->top_exit_frame_info() << std::endl;
+    for (auto* cursor = scope; cursor != nullptr; cursor = cursor->previous()) {
+      std::cerr << "  scope=" << cursor << " previous=" << cursor->previous()
+                << " marker=" << cursor->stack_marker() << std::endl;
+    }
+  }
+  Expect(distinct,
+         "Handle call did not create a distinct API scope");
+  // BYTECODE(FfiCall) deliberately creates the scope before establishing this
+  // exit frame, preserving an allocation boundary for Dart_PropagateError.
+  Expect(scope->stack_marker() != thread->top_exit_frame_info(),
+         "Handle call scope was not created before its interpreter exit");
+  ++scope_probe_calls;
+  // Cross multiple LocalHandles chunks, and prove a native-created scope can
+  // nest inside the automatic call scope without retaining its handles.
+  for (int i = 0; i < 130; ++i) Check(Dart_NewStringFromCString("temporary"));
+  const auto handles = thread->CountLocalHandles();
+  Dart_EnterScope();
+  Check(Dart_NewStringFromCString("nested temporary"));
+  Dart_ExitScope();
+  Expect(thread->api_top_scope() == scope &&
+             thread->CountLocalHandles() == handles,
+         "explicit nested native scope was not restored");
+}
+
+Dart_Handle ScopeEcho(Dart_Handle value) {
+  RequireCallScope("echo");
+  return value;
+}
+Dart_Handle ScopeNew() {
+  RequireCallScope("new result");
+  return Dart_NewStringFromCString("per-call scope result");
+}
+int64_t ScopeArgumentOnly(Dart_Handle value) {
+  RequireCallScope("argument only");
+  Expect(!Dart_IsNull(value), "argument-only Handle was lost");
+  return 17;
+}
+Dart_Handle ScopeVarArgs(int32_t count, ...) {
+  RequireCallScope("VarArgs");
+  Expect(count == 1, "wrong Handle VarArgs count");
+  va_list arguments;
+  va_start(arguments, count);
+  auto result = va_arg(arguments, Dart_Handle);
+  va_end(arguments);
+  return result;
+}
+Dart_Handle ScopeThrow(Dart_Handle value, int64_t propagate) {
+  RequireCallScope("throw/propagate/error result");
+  if (propagate == 2) {
+    // Exercise unwrapping/rooting an Error Handle before automatic scope exit,
+    // followed by ThrowIfError in the interpreter callout.
+    return Dart_NewUnhandledExceptionError(value);
+  }
+  // Leave this explicit nested scope for the Dart API throw path to unwind.
+  Dart_EnterScope();
+  Check(Dart_NewStringFromCString("unwound nested temporary"));
+  if (propagate != 0) {
+    Dart_PropagateError(Dart_NewUnhandledExceptionError(value));
+  } else {
+    Dart_ThrowException(value);
+  }
+  Expect(false, "native Handle throw unexpectedly returned");
+  return Dart_Null();
+}
+Dart_Handle ScopeNested(Dart_Handle closure) {
+  RequireCallScope("nested closure");
+  auto* thread = dart::Thread::Current();
+  auto* const parent = expected_scope_parent;
+  const auto parent_handles = expected_parent_handles;
+  expected_scope_parent = thread->api_top_scope();
+  expected_parent_handles = thread->CountLocalHandles();
+  auto result = Dart_InvokeClosure(closure, 0, nullptr);
+  expected_scope_parent = parent;
+  expected_parent_handles = parent_handles;
+  return result;
+}
+int64_t ScopeCheckpoint() {
+  auto* thread = dart::Thread::Current();
+  auto* scope = thread->api_top_scope();
+  // Scalar FfiCall instructions also own a transient bytecode API scope.
+  Expect(scope != nullptr && scope != expected_scope_parent &&
+             scope->previous() == expected_scope_parent &&
+             scope->local_handles()->CountHandles() == 0 &&
+             thread->CountLocalHandles() == expected_parent_handles,
+         "Handle call leaked its scope or local handles into its parent");
+  return ++scope_checkpoints;
+}
+
 void* Resolver(const char* symbol, uintptr_t num_args) {
+  if (std::strcmp(symbol, "ProductScopeEcho") == 0)
+    return reinterpret_cast<void*>(&ScopeEcho);
+  if (std::strcmp(symbol, "ProductScopeNew") == 0)
+    return reinterpret_cast<void*>(&ScopeNew);
+  if (std::strcmp(symbol, "ProductScopeArgumentOnly") == 0)
+    return reinterpret_cast<void*>(&ScopeArgumentOnly);
+  if (std::strcmp(symbol, "ProductScopeVarArgs") == 0)
+    return reinterpret_cast<void*>(&ScopeVarArgs);
+  if (std::strcmp(symbol, "ProductScopeThrow") == 0)
+    return reinterpret_cast<void*>(&ScopeThrow);
+  if (std::strcmp(symbol, "ProductScopeNested") == 0)
+    return reinterpret_cast<void*>(&ScopeNested);
+  if (std::strcmp(symbol, "ProductScopeCheckpoint") == 0)
+    return reinterpret_cast<void*>(&ScopeCheckpoint);
   if (std::strcmp(symbol, "ProductResolverAdd") == 0) {
     Expect(num_args == 2, "resolver received wrong native parameter count");
     ++resolved_add_calls;
@@ -248,6 +370,45 @@ void* Resolver(const char* symbol, uintptr_t num_args) {
     return nullptr;
   }
   return dlsym(RTLD_DEFAULT, symbol);
+}
+
+// Use VM handles and DartEntry directly so the second pass can run with no
+// embedding API scope at all. The FFI calls must provide their own scopes.
+void RunHandleScopeChecks(const char* uri, bool embedding_scope) {
+  using namespace dart;
+  auto* thread = Thread::Current();
+  TransitionNativeToVM transition(thread);
+  StackZone stack_zone(thread);
+  auto* zone = thread->zone();
+  Expect((thread->api_top_scope() != nullptr) == embedding_scope,
+         "unexpected embedding scope state before Handle checks");
+  expected_scope_parent = thread->api_top_scope();
+  expected_parent_handles = thread->CountLocalHandles();
+  scope_probe_calls = 0;
+  scope_checkpoints = 0;
+  const auto& library = Library::Handle(
+      zone,
+      Library::LookupLibrary(thread, String::Handle(zone, String::New(uri))));
+  const auto& function = Function::Handle(
+      zone, library.LookupFunctionAllowPrivate(String::Handle(
+                zone, Symbols::New(thread, "runHandleScopes"))));
+  Expect(!function.IsNull() && function.IsInterpreted(),
+         "Handle scope checks must execute newly loaded bytecode");
+  const auto& result = Object::Handle(
+      zone, DartEntry::InvokeFunction(function, Object::empty_array()));
+  Expect(!result.IsError(), result.IsError()
+                               ? Error::Cast(result).ToErrorCString()
+                               : "");
+  Expect(result.IsInteger() && Integer::Cast(result).Value() == 25 &&
+             scope_probe_calls == 300 && scope_checkpoints == 300,
+         "Handle scope checks did not execute every repeated/nested case");
+  Expect(thread->api_top_scope() == expected_scope_parent &&
+             thread->CountLocalHandles() == expected_parent_handles,
+         "Handle scope checks changed the embedding parent's scopes/handles");
+  std::cout << "PRODUCT per-call Handle scopes restored across success/throw/"
+               "returned-error/propagate/nesting/VarArgs with "
+            << (embedding_scope ? "embedding scope" : "no embedding scope")
+            << std::endl;
 }
 Dart_Handle Invoke(Dart_Handle library,
                    const char* name,
@@ -512,12 +673,14 @@ int main(int argc, char** argv) {
     std::cout
         << "Released baseline native-assets positive/cache/error route passed"
         << std::endl;
+    RunHandleScopeChecks(argv[4], true);
     CompareExecutableMappings(mappings);
     std::cout << "PRODUCT actual interpreted call-out/resolver/cache/error "
                  "checks passed"
               << std::endl;
   }
   Dart_ExitScope();
+  if (argc == 10) RunHandleScopeChecks(argv[4], false);
   Dart_ShutdownIsolate();
   DartEngine_Shutdown();
   // Keep the fixture loaded until isolate shutdown has released every pointer.

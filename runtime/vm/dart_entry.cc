@@ -172,8 +172,7 @@ ObjectPtr DartEntry::InvokeFunction(const Function& function,
 #endif
 #if defined(DART_BYTECODE_INTERPRETER)
   if (function.IsInterpreted()) {
-    // SuspendLongJumpScope suspend_long_jump_scope(thread);
-    TransitionToGenerated transition(thread);
+    DartEntryScope dart_entry_scope(thread);
     return Interpreter::Current()->Call(function, arguments_descriptor,
                                         arguments, thread);
   }

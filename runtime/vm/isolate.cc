@@ -3829,12 +3829,13 @@ FfiCallbackMetadata::Trampoline Isolate::CreateIsolateLocalFfiCallback(
     const Function& trampoline,
     const Closure& target,
     bool keep_isolate_alive) {
+  const auto callback = group()->callback_metadata()->CreateLocalFfiCallback(
+      this, /*isolate_group=*/nullptr, zone, trampoline, target,
+      &ffi_callback_list_head_);
   if (keep_isolate_alive) {
     UpdateNativeCallableKeepIsolateAliveCounter(1);
   }
-  return group()->callback_metadata()->CreateLocalFfiCallback(
-      this, /*isolate_group=*/nullptr, zone, trampoline, target,
-      &ffi_callback_list_head_);
+  return callback;
 }
 
 FfiCallbackMetadata::Trampoline

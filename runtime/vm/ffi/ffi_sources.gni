@@ -5,8 +5,12 @@
 # This file contains the sources for FFI shared between the lib and
 # (pre-)compiler.
 ffi_sources = [
+  "callback_function.cc",
+  "callback_function.h",
   "interpreter_call_plan.cc",
   "interpreter_call_plan.h",
+  "interpreter_callback.cc",
+  "interpreter_callback.h",
   "native_assets.cc",
   "native_assets.h",
 ]

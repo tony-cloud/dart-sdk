@@ -10,6 +10,7 @@
 #include "vm/bootstrap_natives.h"
 #include "vm/compiler/ffi/native_type.h"
 #include "vm/exceptions.h"
+#include "vm/ffi/callback_function.h"
 #include "vm/flags.h"
 #include "vm/heap/gc_shared.h"
 #include "vm/log.h"
@@ -59,6 +60,26 @@ static FunctionPtr CreateFfiCallback(Zone* zone,
 
   return compiler::ffi::NativeCallbackFunction(native_sig, target,
                                                exceptional_return, kind);
+#elif defined(DART_PRECOMPILED_RUNTIME) &&                                     \
+    defined(DART_BYTECODE_INTERPRETER) &&                                      \
+    defined(DART_SHOREBIRD_INTERPRETER) && defined(HOST_ARCH_ARM64) &&         \
+    defined(TARGET_ARCH_ARM64) && !defined(DART_HOST_OS_WINDOWS) &&            \
+    !defined(DART_TARGET_OS_WINDOWS)
+  {
+    DartFrameIterator iterator(Thread::Current(),
+                               StackFrameIterator::kNoCrossThreadIteration);
+    iterator.NextFrame();  // Skip the current frame for the native entry.
+    StackFrame* caller_frame = iterator.NextFrame();
+    ASSERT(caller_frame != nullptr);
+    if (!caller_frame->is_interpreted()) {
+      Exceptions::ThrowUnsupportedError(
+          "This function should be handled on call site.");
+    }
+  }
+  // Signature/kind support is checked when the callback is registered. In
+  // particular, listener registration must first close its frontend-created
+  // receive port when rejecting an unsupported runtime callback.
+  return NewFfiCallbackFunction(native_sig, target, exceptional_return, kind);
 #else
   Exceptions::ThrowUnsupportedError(
       "This function should be handled on call site.");
@@ -126,12 +147,16 @@ DEFINE_NATIVE_ENTRY(Ffi_nativeIsolateGroupBoundClosureFunction, 1, 1) {
       Object::null_function(), exceptional_return);
 }
 
-static PointerPtr WrapFunctionPointer(uword raw) {
+static uword SignFunctionPointer(uword raw) {
 #if defined(HOST_ARCH_ARM64E)
   raw = reinterpret_cast<uword>(ptrauth_sign_unauthenticated(
       reinterpret_cast<void*>(raw), ptrauth_key_function_pointer, 0));
 #endif
-  return Pointer::New(raw);
+  return raw;
+}
+
+static PointerPtr WrapFunctionPointer(uword raw) {
+  return Pointer::New(SignFunctionPointer(raw));
 }
 
 static uword UnwrapFunctionPointer(const Pointer& pointer) {
@@ -148,6 +173,11 @@ DEFINE_NATIVE_ENTRY(Ffi_createNativeCallableListener, 1, 2) {
       Function::CheckedHandle(zone, arguments->NativeArg0());
   const auto& port =
       ReceivePort::CheckedHandle(zone, arguments->NativeArgAt(1));
+  if (IsRuntimeFfiCallbackFunction(send_function)) {
+    isolate->CloseReceivePort(port);
+    Exceptions::ThrowUnsupportedError(
+        "Interpreted NativeCallable.listener callbacks are not implemented.");
+  }
   return WrapFunctionPointer(
       isolate->CreateAsyncFfiCallback(zone, send_function, port.Id()));
 }
@@ -158,6 +188,14 @@ DEFINE_NATIVE_ENTRY(Ffi_createNativeCallableIsolateLocal, 1, 3) {
   const auto& target = Closure::CheckedHandle(zone, arguments->NativeArgAt(1));
   const bool keep_isolate_alive =
       Bool::CheckedHandle(zone, arguments->NativeArgAt(2)).value();
+  if (IsRuntimeFfiCallbackFunction(trampoline)) {
+    // No managed allocation may fail after the native slot is published.
+    const auto& pointer = Pointer::Handle(zone, Pointer::New(0));
+    const uword raw = isolate->CreateIsolateLocalFfiCallback(
+        zone, trampoline, target, keep_isolate_alive);
+    pointer.SetNativeAddress(SignFunctionPointer(raw));
+    return pointer.ptr();
+  }
   return WrapFunctionPointer(isolate->CreateIsolateLocalFfiCallback(
       zone, trampoline, target, keep_isolate_alive));
 }

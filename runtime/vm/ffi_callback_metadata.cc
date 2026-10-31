@@ -16,6 +16,9 @@
 #include "vm/allocation.h"
 #include "vm/compiler/assembler/disassembler.h"
 #include "vm/dart_api_state.h"
+#include "vm/exceptions.h"
+#include "vm/ffi/callback_function.h"
+#include "vm/ffi/interpreter_callback.h"
 #include "vm/flag_list.h"
 #include "vm/object.h"
 #include "vm/runtime_entry.h"
@@ -329,11 +332,12 @@ void FfiCallbackMetadata::AddToFreeListLocked(MetadataEntry* entry) {
 
 void FfiCallbackMetadata::DeleteCallbackLocked(MetadataEntry* entry) {
   ASSERT(lock_.IsOwnedByCurrentThread());
-  if (entry->metadata()->trampoline_type_ != TrampolineType::kAsync &&
+  if ((entry->metadata()->trampoline_type_ != TrampolineType::kAsync ||
+       IsInterpreterFfiCallbackEntry(entry->metadata()->target_entry_point_)) &&
       entry->metadata()->context_ != 0) {
     ASSERT(entry->metadata()->target_isolate_ != nullptr);
     entry->metadata()->api_state()->FreePersistentHandle(
-        entry->metadata()->closure_handle());
+        entry->metadata()->context_handle());
   }
   AddToFreeListLocked(entry);
 }
@@ -385,6 +389,78 @@ PersistentHandle* FfiCallbackMetadata::CreatePersistentHandle(
   return handle;
 }
 
+namespace {
+
+// Callback page allocation can throw through a VM longjmp. Keep the persistent
+// descriptor root owned by a StackResource until metadata publication succeeds.
+class CallbackContextRollback : public StackResource {
+ public:
+  CallbackContextRollback(Thread* thread,
+                          ApiState* state,
+                          const Array& descriptor)
+      : StackResource(thread), state_(state) {
+    handle_ = state_->AllocatePersistentHandle();
+    handle_->set_ptr(descriptor);
+  }
+
+  ~CallbackContextRollback() {
+    if (handle_ != nullptr) state_->FreePersistentHandle(handle_);
+  }
+
+  PersistentHandle* handle() const { return handle_; }
+  void Release() { handle_ = nullptr; }
+
+ private:
+  ApiState* const state_;
+  PersistentHandle* handle_ = nullptr;
+};
+
+ArrayPtr NewInterpreterCallbackDescriptor(Zone* zone,
+                                          const Function& function,
+                                          const Closure& closure) {
+  const auto kind = function.GetFfiCallbackKind();
+  if ((kind == FfiCallbackKind::kIsolateLocalStaticCallback &&
+       (!closure.IsNull() ||
+        function.FfiCallbackTarget() == Function::null())) ||
+      (kind == FfiCallbackKind::kIsolateLocalClosureCallback &&
+       closure.IsNull())) {
+    Exceptions::ThrowArgumentError(String::Handle(
+        zone, String::New("Callback kind does not match its target closure.")));
+  }
+
+  InterpreterFfiCallbackFallback fallback;
+  const char* error = nullptr;
+  const auto preparation =
+      PrepareInterpreterFfiCallback(zone, function, &fallback, &error);
+  switch (preparation) {
+    case InterpreterFfiCallbackPreparation::kReady:
+      break;
+    case InterpreterFfiCallbackPreparation::kInvalidSignature:
+      Exceptions::ThrowArgumentError(String::Handle(zone, String::New(error)));
+    case InterpreterFfiCallbackPreparation::kUnsupportedKind:
+    case InterpreterFfiCallbackPreparation::kUnsupportedSignature:
+      Exceptions::ThrowUnsupportedError(error);
+  }
+
+  const auto& descriptor = Array::Handle(
+      zone, Array::New(kInterpreterFfiCallbackDescriptorLength, Heap::kOld));
+  const auto& encoded_fallback = TypedData::Handle(
+      zone,
+      TypedData::New(kTypedDataUint8ArrayCid, sizeof(fallback), Heap::kOld));
+  {
+    NoSafepointScope no_safepoint;
+    memcpy(encoded_fallback.DataAddr(0), &fallback, sizeof(fallback));
+  }
+  descriptor.SetAt(kInterpreterFfiCallbackFunction, function);
+  descriptor.SetAt(kInterpreterFfiCallbackClosure, closure);
+  descriptor.SetAt(kInterpreterFfiCallbackSendPort,
+                   Smi::Handle(zone, Smi::New(0)));
+  descriptor.SetAt(kInterpreterFfiCallbackFallback, encoded_fallback);
+  return descriptor.ptr();
+}
+
+}  // namespace
+
 FfiCallbackMetadata::Trampoline FfiCallbackMetadata::CreateLocalFfiCallback(
     Isolate* isolate,
     IsolateGroup* isolate_group,
@@ -392,6 +468,26 @@ FfiCallbackMetadata::Trampoline FfiCallbackMetadata::CreateLocalFfiCallback(
     const Function& function,
     const Closure& closure,
     MetadataEntry** list_head) {
+  if (IsRuntimeFfiCallbackFunction(function)) {
+    if (!InterpreterFfiCallbacksSupported()) {
+      Exceptions::ThrowUnsupportedError(
+          "Interpreted FFI callbacks require native ARM64 Shorebird AOT.");
+    }
+    if (isolate == nullptr || isolate_group != nullptr) {
+      Exceptions::ThrowUnsupportedError(
+          "Interpreted isolate-group-bound callbacks are not implemented.");
+    }
+    const auto& descriptor = Array::Handle(
+        zone, NewInterpreterCallbackDescriptor(zone, function, closure));
+    CallbackContextRollback context(Thread::Current(),
+                                    isolate->group()->api_state(), descriptor);
+    const auto trampoline = CreateMetadataEntry(
+        isolate, /*target_isolate_group=*/nullptr, TrampolineType::kSync,
+        InterpreterFfiCallbackEntryPoint(),
+        reinterpret_cast<uint64_t>(context.handle()), list_head);
+    context.Release();
+    return trampoline;
+  }
   PersistentHandle* handle = nullptr;
   if (closure.IsNull()) {
     // If the closure is null, it means the target is a static function, so is
@@ -458,6 +554,10 @@ FfiCallbackMetadata::Trampoline FfiCallbackMetadata::CreateAsyncFfiCallback(
     const Function& send_function,
     Dart_Port send_port,
     MetadataEntry** list_head) {
+  if (IsRuntimeFfiCallbackFunction(send_function)) {
+    Exceptions::ThrowUnsupportedError(
+        "Interpreted NativeCallable.listener callbacks are not implemented.");
+  }
   ASSERT(send_function.GetFfiCallbackKind() == FfiCallbackKind::kAsyncCallback);
   return CreateMetadataEntry(isolate, /*target_isolate_group=*/nullptr,
                              TrampolineType::kAsync,

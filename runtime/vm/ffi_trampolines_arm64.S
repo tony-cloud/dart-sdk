@@ -21,6 +21,13 @@
 #define INTERPRETER_FFI_CALLOUT 1
 #endif
 
+#if defined(DART_PRECOMPILED_RUNTIME) && defined(DART_BYTECODE_INTERPRETER) && \
+    defined(DART_SHOREBIRD_INTERPRETER) && defined(TARGET_ARCH_ARM64) &&     \
+    !defined(DART_HOST_OS_WINDOWS) && !defined(DART_TARGET_OS_WINDOWS) &&   \
+    !defined(_WIN32)
+#define INTERPRETER_FFI_CALLBACK 1
+#endif
+
 #if defined(__aarch64__) && \
     (defined(SIMULATOR_FFI) || defined(INTERPRETER_FFI_CALLOUT))
 
@@ -87,6 +94,56 @@ LOCAL_SYMBOL(copy1_done):
 #endif
 
 #endif  // defined(INTERPRETER_FFI_CALLOUT)
+
+#if defined(INTERPRETER_FFI_CALLBACK)
+
+#if defined(__APPLE__)
+.globl _InterpreterFfiCallbackEntry
+.private_extern _InterpreterFfiCallbackEntry
+_InterpreterFfiCallbackEntry:
+#else
+.globl InterpreterFfiCallbackEntry
+.type InterpreterFfiCallbackEntry, %function
+InterpreterFfiCallbackEntry:
+#endif
+  // The released shared callback stub has already preserved its six-word
+  // frame, obtained THR in x26, and transitioned the thread to VM state.
+  stp fp, lr, [sp, #-16]!
+  mov fp, sp
+  sub sp, sp, #192  // InterpreterFfiCallbackFrame, aligned to 16 bytes.
+
+  // Capture every native argument before using volatile registers for C++.
+  stp x0, x1, [sp, #0]
+  stp x2, x3, [sp, #16]
+  stp x4, x5, [sp, #32]
+  stp x6, x7, [sp, #48]
+  str x8, [sp, #64]
+  stp d0, d1, [sp, #72]
+  stp d2, d3, [sp, #88]
+  stp d4, d5, [sp, #104]
+  stp d6, d7, [sp, #120]
+  // FP is entry SP - 16; original arguments begin at entry SP + 48.
+  add x0, fp, #64
+  str x0, [sp, #136]
+
+  mov x0, x26  // Thread*, installed by the shared callback stub.
+  mov x1, sp   // InterpreterFfiCallbackFrame*.
+#if defined(__APPLE__)
+  bl _DLRT_InterpreterFfiCallback
+#else
+  bl DLRT_InterpreterFfiCallback
+#endif
+  ldp x0, x1, [sp, #144]
+  ldp d0, d1, [sp, #160]
+  ldp d2, d3, [sp, #176]
+  add sp, sp, #192
+  ldp fp, lr, [sp], #16
+  ret
+#if !defined(__APPLE__)
+.size InterpreterFfiCallbackEntry,.-InterpreterFfiCallbackEntry
+#endif
+
+#endif  // defined(INTERPRETER_FFI_CALLBACK)
 
 #if defined(SIMULATOR_FFI)
 

@@ -114,8 +114,8 @@ class FfiCallbackMetadata {
     // safe because Instructions objects are never moved by the GC.
     uword target_entry_point_;
 
-    // For async callbacks, this is the send port. For sync callbacks this
-    // is a persistent handle to the callback's closure, or null.
+    // For compiled async callbacks, this is the send port. Otherwise this is
+    // a persistent handle to a compiled closure or runtime descriptor, or null.
     uint64_t context_;
 
     Metadata(Isolate* target_isolate,
@@ -171,8 +171,15 @@ class FfiCallbackMetadata {
       return target_entry_point_;
     }
 
-    // The persistent handle to the closure that the NativeCallable.isolateLocal
-    // is wrapping.
+    // Valid only when the context represents a persistent handle. Runtime
+    // callbacks root their descriptor Array; compiled sync callbacks root a
+    // Closure, or use null for a static target.
+    PersistentHandle* context_handle() const {
+      ASSERT(IsLive());
+      return reinterpret_cast<PersistentHandle*>(context_);
+    }
+
+    // The persistent handle to a compiled capturing callback's Closure.
     PersistentHandle* closure_handle() const {
       ASSERT(IsLive());
       ASSERT(trampoline_type_ == TrampolineType::kSync ||
@@ -180,7 +187,7 @@ class FfiCallbackMetadata {
              trampoline_type_ == TrampolineType::kSyncIsolateGroupBound ||
              trampoline_type_ ==
                  TrampolineType::kSyncIsolateGroupBoundStackDelta4);
-      return reinterpret_cast<PersistentHandle*>(context_);
+      return context_handle();
     }
 
     bool is_isolate_group_bound() const {
@@ -191,8 +198,7 @@ class FfiCallbackMetadata {
     // ApiState associated with an isolate group associated with this metadata.
     ApiState* api_state() const;
 
-    // For async callbacks, this is the send port. For sync callbacks this is a
-    // persistent handle to the callback's closure, or null.
+    // Compiled async send port, or persistent closure/runtime descriptor handle.
     uint64_t context() const {
       ASSERT(IsLive());
       return context_;

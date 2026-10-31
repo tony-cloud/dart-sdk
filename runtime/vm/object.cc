@@ -8677,6 +8677,13 @@ bool Function::FfiCSignatureReturnsHandle() const {
   return type.type_class_id() == kFfiHandleCid;
 }
 
+bool Function::HasFfiCallbackId() const {
+  ASSERT(IsFfiCallbackTrampoline());
+  const auto& obj = Object::Handle(data());
+  ASSERT(!obj.IsNull());
+  return FfiTrampolineData::Cast(obj).callback_id() != -1;
+}
+
 int32_t Function::FfiCallbackId() const {
   ASSERT(IsFfiCallbackTrampoline());
 

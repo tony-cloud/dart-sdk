@@ -103,6 +103,64 @@ external int productMissing();
 external int productNativeAsset(int value);
 @Native<Int64 Function()>(symbol: 'ProductMissingAssetSymbol', assetId: 'product-release-asset')
 external int productMissingAssetSymbol();
+@Native<Handle Function(Handle)>(symbol: 'ProductScopeEcho')
+external Object? productScopeEcho(Object? value);
+@Native<Handle Function()>(symbol: 'ProductScopeNew')
+external Object productScopeNew();
+@Native<Int64 Function(Handle)>(symbol: 'ProductScopeArgumentOnly')
+external int productScopeArgumentOnly(Object value);
+@Native<Handle Function(Int32, VarArgs<(Handle,)>)>(symbol: 'ProductScopeVarArgs')
+external Object? productScopeVarArgs(int count, Object? value);
+@Native<Handle Function(Handle, Int64)>(symbol: 'ProductScopeThrow')
+external Object? productScopeThrow(Object value, int propagate);
+@Native<Handle Function(Handle)>(symbol: 'ProductScopeNested')
+external Object? productScopeNested(Object Function() closure);
+@Native<Int64 Function()>(symbol: 'ProductScopeCheckpoint')
+external int productScopeCheckpoint();
+
+void productScopeCaught(Object value, int mode) {
+  try {
+    productScopeThrow(value, mode);
+    throw StateError('native Handle throw returned');
+  } catch (error) {
+    same(value, error);
+  }
+}
+
+@pragma('vm:entry-point')
+int runHandleScopes() {
+  for (var i = 0; i < 25; ++i) {
+    final marker = Marker(i);
+    same(marker, productScopeEcho(marker));
+    productScopeCheckpoint();
+    equal('per-call scope result', productScopeNew());
+    productScopeCheckpoint();
+    equal(17, productScopeArgumentOnly(marker));
+    productScopeCheckpoint();
+    same(marker, productScopeVarArgs(1, marker));
+    productScopeCheckpoint();
+    productScopeCaught(marker, 0);
+    productScopeCheckpoint();
+    productScopeCaught(marker, 1);
+    productScopeCheckpoint();
+    productScopeCaught(marker, 2);
+    productScopeCheckpoint();
+    same(marker, productScopeNested(() {
+      same(marker, productScopeEcho(marker));
+      productScopeCheckpoint();
+      productScopeCaught(marker, 0);
+      productScopeCheckpoint();
+      productScopeCaught(marker, 1);
+      productScopeCheckpoint();
+      productScopeCaught(marker, 2);
+      productScopeCheckpoint();
+      return marker;
+    }));
+    productScopeCheckpoint();
+  }
+  return 25;
+}
+
 @pragma('vm:entry-point')
 int runNativeAsset() => productNativeAsset(9);
 @pragma('vm:entry-point')
@@ -431,6 +489,8 @@ def main():
             'PRODUCT native DRT_FfiCall frame and signed static trampoline caller verified',
             'PRODUCT actual interpreted call-out/resolver/cache/error checks passed',
             'Released baseline native-assets positive/cache/error route passed',
+            'PRODUCT per-call Handle scopes restored across success/throw/returned-error/propagate/nesting/VarArgs with embedding scope',
+            'PRODUCT per-call Handle scopes restored across success/throw/returned-error/propagate/nesting/VarArgs with no embedding scope',
         ]
         # Structural snapshots preserve the SDK call surface needed by a new
         # library. A body-only baseline may legitimately lack unrelated SDK

@@ -1201,24 +1201,34 @@ executable("abstract_socket_test") {
 
 if (dart_enable_shorebird_interpreter && (is_mac || is_linux) &&
     current_cpu == "arm64" && dart_target_arch == "arm64") {
-  executable("product_ffi_test") {
-    testonly = true
-    configs += [
-      "..:dart_aotruntime_config",
-      "..:dart_arch_config",
-      "..:dart_config",
-      "..:dart_os_config",
-      "..:dart_product_config",
-      ":export_api_symbols",
-    ]
-    include_dirs = [
-      "..",
-      "../engine",
-    ]
-    sources = [ "product_ffi_test.cc" ]
-    deps = [ "../engine:engine_aot_product_set" ]
-    if (is_mac) {
-      inputs = [ "../tools/entitlements/product_ffi_test.plist" ]
+  foreach(test_name,
+          [
+            "product_ffi_test",
+            "product_ffi_callback_test",
+          ]) {
+    executable(test_name) {
+      testonly = true
+      configs += [
+        "..:dart_aotruntime_config",
+        "..:dart_arch_config",
+        "..:dart_config",
+        "..:dart_os_config",
+        "..:dart_product_config",
+        ":export_api_symbols",
+      ]
+      include_dirs = [
+        "..",
+        "../engine",
+        "//third_party",
+      ]
+      sources = [ "${test_name}.cc" ]
+      deps = [ "../engine:engine_aot_product_set" ]
+      if (dart_support_perfetto) {
+        deps += [ "//third_party/perfetto:libprotozero" ]
+      }
+      if (is_mac) {
+        inputs = [ "../tools/entitlements/${test_name}.plist" ]
+      }
     }
   }
 }

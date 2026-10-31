@@ -1838,20 +1838,32 @@ DEFINE_RUNTIME_ENTRY(FfiCall, 2) {
 
   argv = argv - first_argument_parameter_offset - call_plan.num_args();
 
-  PRINT_IF_TRACING_INTERPRETER("calling native entry point %#" Px "\n", target);
-  if (is_leaf) {
-    NoSafepointScope no_safepoint;
-    PassFfiCallArguments(thread, call_plan, argv, &args, is_leaf);
-    FfiCallTrampoline(&args);
-  } else {
-    PassFfiCallArguments(thread, call_plan, argv, &args, is_leaf);
-    TransitionVMToNative transition(thread);
-    FfiCallTrampoline(&args);
+  auto& result = Object::Handle(zone);
+  {
+    PRINT_IF_TRACING_INTERPRETER("calling native entry point %#" Px "\n", target);
+    if (is_leaf) {
+      NoSafepointScope no_safepoint;
+      PassFfiCallArguments(thread, call_plan, argv, &args, is_leaf);
+      FfiCallTrampoline(&args);
+    } else {
+      PassFfiCallArguments(thread, call_plan, argv, &args, is_leaf);
+      TransitionVMToNative transition(thread);
+      FfiCallTrampoline(&args);
+    }
+    if (!is_leaf && thread->is_unwind_in_progress()) {
+      // A callback must finish its native epilogue before propagating isolate
+      // termination. Match DLRT_ExitSafepoint after the native-to-VM transition;
+      // TransitionVMToNative alone does not process this marker.
+      thread->SetUnwindErrorInProgress(false);
+      NoSafepointScope no_safepoint;
+      Exceptions::PropagateError(Object::unwind_error());
+    }
+    PRINT_IF_TRACING_INTERPRETER("returned from native entry point %#" Px "\n",
+                                 target);
+    // The bytecode FfiCall instruction owns the API scope across this runtime
+    // entry. Root a returned Handle before it releases that scope.
+    result = ReceiveFfiCallResult(thread, call_plan, args);
   }
-  PRINT_IF_TRACING_INTERPRETER("returned from native entry point %#" Px "\n",
-                               target);
-  const auto& result =
-      Object::Handle(zone, ReceiveFfiCallResult(thread, call_plan, args));
   ThrowIfError(result);
   arguments.SetReturn(result);
 #else
