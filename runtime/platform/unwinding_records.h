@@ -21,7 +21,21 @@ class UnwindingRecordsPlatform : public AllStatic {
                                        intptr_t size,
                                        void* records_start,
                                        void** pp_dynamic_table);
+  // Checked ELF-specific entry point. The trailing records and function table
+  // must fit in [start, start + size). No handle is published on failure.
+  static bool TryRegisterExecutableMemory(void* start,
+                                          intptr_t size,
+                                          void** pp_dynamic_table);
   static void UnregisterDynamicTable(void* p_dynamic_table);
+
+#if defined(DART_ELF_LOADER_TESTING)
+  enum class TestOperation { kRegister, kRegistered, kUnregister };
+  using TestHook = bool (*)(TestOperation, void*);
+  static TestHook& TestHookForTesting() {
+    static TestHook hook = nullptr;
+    return hook;
+  }
+#endif
 };
 
 #if defined(DART_HOST_OS_WINDOWS) && defined(ARCH_IS_64_BIT) &&                \

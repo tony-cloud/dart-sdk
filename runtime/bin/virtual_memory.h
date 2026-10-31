@@ -34,15 +34,34 @@ class VirtualMemory {
   void* address() const { return address_; }
   intptr_t size() const { return size_; }
 
+  // Changes protection without terminating on an OS policy/resource refusal.
+  static bool TryProtect(void* address, intptr_t size, Protection mode);
+
+  // Publishes copied instructions. Call after changing copied code to RX and
+  // before exposing it to callers. Returns false on a cache-publication refusal.
+  static bool FlushInstructionCache(void* address, intptr_t size);
+
+#if defined(DART_ELF_LOADER_TESTING)
+  enum class TestOperation { kAllocate, kAllocated, kProtect, kFlush, kFree };
+  using TestHook = bool (*)(TestOperation, void*, intptr_t);
+  static TestHook& TestHookForTesting() {
+    static TestHook hook = nullptr;
+    return hook;
+  }
+#endif
+
   // Changes the protection of the virtual memory area.
   static void Protect(void* address, intptr_t size, Protection mode);
   void Protect(Protection mode) { return Protect(address(), size(), mode); }
 
   // Reserves and commits a virtual memory segment with size. If a segment of
   // the requested size cannot be allocated, nullptr is returned.
+  // executable_capable permits later RX protection without an initially
+  // executable mapping on platforms which require allocation-time rights.
   static VirtualMemory* Allocate(intptr_t size,
                                  bool is_executable,
-                                 const char* name);
+                                 const char* name,
+                                 bool executable_capable = false);
 
   static void Init() { page_size_ = CalculatePageSize(); }
 

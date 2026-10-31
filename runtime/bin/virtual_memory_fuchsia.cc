@@ -28,8 +28,15 @@ intptr_t VirtualMemory::CalculatePageSize() {
 
 VirtualMemory* VirtualMemory::Allocate(intptr_t size,
                                        bool is_executable,
-                                       const char* name) {
+                                       const char* name,
+                                       bool executable_capable) {
   ASSERT(Utils::IsAligned(size, page_size_));
+#if defined(DART_ELF_LOADER_TESTING)
+  if (TestHookForTesting() != nullptr &&
+      !TestHookForTesting()(TestOperation::kAllocate, nullptr, size)) {
+    return nullptr;
+  }
+#endif
   zx_handle_t vmar = zx_vmar_root_self();
   zx_handle_t vmo = ZX_HANDLE_INVALID;
   zx_status_t status = zx_vmo_create(size, 0u, &vmo);
@@ -41,7 +48,7 @@ VirtualMemory* VirtualMemory::Allocate(intptr_t size,
     zx_object_set_property(vmo, ZX_PROP_NAME, name, strlen(name));
   }
 
-  if (is_executable) {
+  if (is_executable || executable_capable) {
     // Add ZX_RIGHT_EXECUTE permission to VMO, so it can be mapped
     // into memory as executable (now or later).
     status = zx_vmo_replace_as_executable(vmo, ZX_HANDLE_INVALID, &vmo);
@@ -61,11 +68,22 @@ VirtualMemory* VirtualMemory::Allocate(intptr_t size,
     return nullptr;
   }
 
+#if defined(DART_ELF_LOADER_TESTING)
+  if (TestHookForTesting() != nullptr) {
+    TestHookForTesting()(TestOperation::kAllocated,
+                         reinterpret_cast<void*>(base), size);
+  }
+#endif
   return new VirtualMemory(reinterpret_cast<void*>(base), size);
 }
 
 VirtualMemory::~VirtualMemory() {
   if (address_ != nullptr) {
+#if defined(DART_ELF_LOADER_TESTING)
+    if (TestHookForTesting() != nullptr) {
+      TestHookForTesting()(TestOperation::kFree, address_, size_);
+    }
+#endif
     zx_status_t status = zx_vmar_unmap(
         zx_vmar_root_self(), reinterpret_cast<uword>(address_), size_);
     if (status != ZX_OK) {
@@ -75,6 +93,23 @@ VirtualMemory::~VirtualMemory() {
 }
 
 void VirtualMemory::Protect(void* address, intptr_t size, Protection mode) {
+  if (!TryProtect(address, size, mode)) {
+    FATAL("zx_vmar_protect failed\n");
+  }
+}
+
+bool VirtualMemory::TryProtect(void* address, intptr_t size, Protection mode) {
+  const uword address_value = reinterpret_cast<uword>(address);
+  if (address == nullptr || size <= 0 ||
+      address_value > kUwordMax - static_cast<uword>(size)) {
+    return false;
+  }
+#if defined(DART_ELF_LOADER_TESTING)
+  if (TestHookForTesting() != nullptr &&
+      !TestHookForTesting()(TestOperation::kProtect, address, size)) {
+    return false;
+  }
+#endif
   const uword start_address = reinterpret_cast<uword>(address);
   const uword end_address = start_address + size;
   const uword page_address = Utils::RoundDown(start_address, PageSize());
@@ -96,12 +131,22 @@ void VirtualMemory::Protect(void* address, intptr_t size, Protection mode) {
       prot = ZX_VM_PERM_READ | ZX_VM_PERM_WRITE | ZX_VM_PERM_EXECUTE;
       break;
   }
-  zx_status_t status = zx_vmar_protect(zx_vmar_root_self(), prot, page_address,
-                                       end_address - page_address);
-  if (status != ZX_OK) {
-    FATAL("zx_vmar_protect(0x%lx, 0x%lx) failed: %s\n", page_address,
-          end_address - page_address, zx_status_get_string(status));
+  return zx_vmar_protect(zx_vmar_root_self(), prot, page_address,
+                         end_address - page_address) == ZX_OK;
+}
+
+bool VirtualMemory::FlushInstructionCache(void* address, intptr_t size) {
+  if (address == nullptr || size <= 0 ||
+      reinterpret_cast<uword>(address) > kUwordMax - static_cast<uword>(size)) {
+    return false;
   }
+#if defined(DART_ELF_LOADER_TESTING)
+  if (TestHookForTesting() != nullptr &&
+      !TestHookForTesting()(TestOperation::kFlush, address, size)) {
+    return false;
+  }
+#endif
+  return zx_cache_flush(address, size, ZX_CACHE_FLUSH_INSN) == ZX_OK;
 }
 
 }  // namespace bin

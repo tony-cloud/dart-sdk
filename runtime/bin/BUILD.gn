@@ -246,6 +246,40 @@ build_shared_object_loaders("shared_object_loaders_product") {
   deps = [ ":libdart_builtin_product" ]
 }
 
+# Small native loader test; test-only refusal hooks never enter shipping
+# targets.
+if ((is_win || is_mac || is_linux) &&
+    (dart_target_arch == "x64" || dart_target_arch == "arm64")) {
+  executable("elf_loader_memory_test") {
+    testonly = true
+    configs += [
+      "..:dart_arch_config",
+      "..:dart_config",
+      "..:dart_os_config",
+      "..:dart_product_config",
+    ]
+    defines = [ "DART_ELF_LOADER_TESTING" ]
+    if (is_win) {
+      libs = [ "ntdll.lib" ]
+    }
+    include_dirs = [ ".." ]
+    sources = [
+      "../platform/allocation.cc",
+      "../platform/assert.cc",
+      "../platform/syslog_linux.cc",
+      "../platform/syslog_macos.cc",
+      "../platform/syslog_win.cc",
+      "../platform/unwinding_records.cc",
+      "../platform/unwinding_records_win.cc",
+      "../platform/utils_linux.cc",
+      "elf_loader.cc",
+      "elf_loader_memory_test.cc",
+      "virtual_memory_posix.cc",
+      "virtual_memory_win.cc",
+    ]
+  }
+}
+
 template("build_gen_snapshot") {
   extra_configs = []
   if (defined(invoker.extra_configs)) {

@@ -31,6 +31,15 @@ void UnwindingRecordsPlatform::RegisterExecutableMemory(
     void* records_start,
     void** pp_dynamic_table) {}
 
+bool UnwindingRecordsPlatform::TryRegisterExecutableMemory(
+    void* start,
+    intptr_t size,
+    void** pp_dynamic_table) {
+  if (pp_dynamic_table == nullptr) return false;
+  *pp_dynamic_table = nullptr;
+  return true;
+}
+
 void UnwindingRecordsPlatform::UnregisterDynamicTable(void* p_dynamic_table) {}
 
 #endif  // !defined(UNWINDING_RECORDS_WINDOWS_HOST)

@@ -255,12 +255,19 @@ bool LoadedElf::LoadSegments() {
     // Only PT_LOAD segments need to be loaded.
     if (header.type != dart::elf::ProgramHeaderType::PT_LOAD) continue;
 
+    CHECK_ERROR(header.memory_offset <= static_cast<uword>(kWordMax) &&
+                    header.memory_size <=
+                        static_cast<uword>(kWordMax) - header.memory_offset,
+                "Segment memory range is too large.");
     total_memory = Utils::Maximum(
         static_cast<uword>(header.memory_offset + header.memory_size),
         total_memory);
     CHECK_ERROR(Utils::IsPowerOfTwo(header.alignment),
                 "Alignment must be a power of two.");
   }
+  CHECK_ERROR(total_memory != 0 &&
+                  total_memory <= static_cast<uword>(kWordMax) - (PageSize() - 1),
+              "Image memory range is too large.");
   total_memory = Utils::RoundUp(total_memory, PageSize());
 
   base_.reset(VirtualMemory::Allocate(total_memory,
@@ -284,6 +291,9 @@ bool LoadedElf::LoadSegments() {
 
     void* const memory_start =
         static_cast<char*>(base_->address()) + memory_offset - adjustment;
+    CHECK_ERROR(file_offset >= static_cast<uword>(adjustment) &&
+                    elf_data_offset_ <= kUwordMax - file_offset,
+                "Segment file range is too large.");
     const uword file_start = elf_data_offset_ + file_offset - adjustment;
     const uword length = header.memory_size + adjustment;
 
@@ -329,8 +339,9 @@ bool LoadedElf::LoadSegments() {
     // present on the page.
     if (map_type == File::kReadExecute) {
       void* ptable = nullptr;
-      UnwindingRecordsPlatform::RegisterExecutableMemory(memory->address(),
-                                                         length, &ptable);
+      CHECK_ERROR(UnwindingRecordsPlatform::TryRegisterExecutableMemory(
+                      memory->address(), length, &ptable),
+                  "Could not register executable segment unwinding records.");
       dynamic_runtime_function_tables_.Add(ptable);
     }
 #endif
@@ -399,6 +410,12 @@ bool LoadedElf::ResolveSymbols(const uint8_t** data, const uint8_t** text) {
 MappedMemory* LoadedElf::MapFilePiece(uword file_start,
                                       uword file_length,
                                       const void** mem_start) {
+  if (elf_data_offset_ > kUwordMax - file_start ||
+      file_length > kUwordMax - (elf_data_offset_ + file_start) ||
+      elf_data_offset_ + file_start + file_length >
+          kUwordMax - (PageSize() - 1)) {
+    return nullptr;
+  }
   const uword adjustment = (elf_data_offset_ + file_start) % PageSize();
   const uword mapping_offset = elf_data_offset_ + file_start - adjustment;
   const uword mapping_length =
@@ -467,8 +484,13 @@ DART_EXPORT Dart_LoadedElf* Dart_LoadELF_Memory(const uint8_t* snapshot,
                                                 const char** error,
                                                 const uint8_t** snapshot_data,
                                                 const uint8_t** snapshot_text) {
+  if (snapshot == nullptr || snapshot_size == 0 ||
+      snapshot_size > static_cast<uint64_t>(dart::kWordMax)) {
+    *error = "Invalid ELF memory source.";
+    return nullptr;
+  }
   std::unique_ptr<Mappable> mappable(
-      Mappable::FromMemory(snapshot, snapshot_size));
+      Mappable::FromMemory(snapshot, static_cast<size_t>(snapshot_size)));
   if (mappable == nullptr) {
     *error = "Couldn't open file.";
     return nullptr;
