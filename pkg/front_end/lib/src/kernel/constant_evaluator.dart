@@ -2688,33 +2688,40 @@ class ConstantEvaluator
     primitiveHashCodeCache = <Class, bool>{...primitiveEqualCache};
   }
 
-  Map<String, String>? _supportedLibrariesCache;
+  Map<String, bool>? _supportedLibrariesCache;
 
-  Map<String, String> _computeSupportedLibraries() => {
+  Map<String, bool> _computeSupportedLibraries() => {
     for (Library library in component.libraries)
-      if (library.importUri.isScheme('dart') &&
-          DartLibrarySupport.isDartLibrarySupported(
-            library.importUri.path,
-            libraryExists: true,
-            isSynthetic: library.isSynthetic,
-            conditionalImportSupported: library.conditionalImportSupported,
-            dartLibrarySupport: dartLibrarySupport,
-          ))
-        (DartLibrarySupport.dartLibraryPrefix + library.importUri.path): "true",
+      if (library.importUri.isScheme('dart'))
+        (DartLibrarySupport.dartLibraryPrefix +
+            library.importUri.path): DartLibrarySupport.isDartLibrarySupported(
+          library.importUri.path,
+          libraryExists: true,
+          isSynthetic: library.isSynthetic,
+          conditionalImportSupported: library.conditionalImportSupported,
+          dartLibrarySupport: dartLibrarySupport,
+        ),
   };
+
+  bool _isDartLibrarySupported(String key) =>
+      (_supportedLibrariesCache ??= _computeSupportedLibraries()).putIfAbsent(
+        key,
+        () => dartLibrarySupport.computeDartLibrarySupport(
+          DartLibrarySupport.getDartLibraryName(key),
+          isSupportedBySpec: false,
+        ),
+      );
 
   String? lookupEnvironment(String key) {
     if (DartLibrarySupport.isDartLibraryQualifier(key)) {
-      return (_supportedLibrariesCache ??= _computeSupportedLibraries())[key];
+      return _isDartLibrarySupported(key) ? "true" : null;
     }
     return _environmentDefines![key];
   }
 
   bool hasEnvironmentKey(String key) {
     if (DartLibrarySupport.isDartLibraryQualifier(key)) {
-      // Coverage-ignore-block(suite): Not run.
-      return (_supportedLibrariesCache ??= _computeSupportedLibraries())
-          .containsKey(key);
+      return _isDartLibrarySupported(key);
     }
     return _environmentDefines!.containsKey(key);
   }

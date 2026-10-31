@@ -10713,6 +10713,12 @@ FunctionPtr Function::NewImplicitClosureFunction(const String& name,
 
 bool Function::SafeToClosurize() const {
 #if defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_BYTECODE_INTERPRETER)
+  // Loaded bytecode functions do not necessarily have a pre-created implicit
+  // closure. They can create one using interpreter stubs without native code
+  // generation, including the main function retrieved by an embedder.
+  if (HasBytecode()) return true;
+#endif
   return HasImplicitClosureFunction();
 #else
   return true;

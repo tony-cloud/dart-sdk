@@ -381,6 +381,13 @@ Future<int> runCompiler(ArgResults options, String usage) async {
     }
   }
 
+  if (options['shorebird-full-replacement'] &&
+      targetName == 'flutter' &&
+      targetOS != 'ios') {
+    print('Flutter full replacement requires --target-os=ios.');
+    return badUsageExitCode;
+  }
+
   if (supportMirrors == true) {
     if (aot) {
       print('Error: --support-mirrors option cannot be used with --aot');
@@ -457,6 +464,10 @@ Future<int> runCompiler(ArgResults options, String usage) async {
     trackCreationLocations: options['track-creation-locations'],
     supportMirrors: supportMirrors ?? !(aot || minimalKernel),
     constKeepLocalsIndicator: !(aot || minimalKernel),
+    shorebirdIosFullReplacement:
+        options['shorebird-full-replacement'] &&
+        targetName == 'flutter' &&
+        targetOS == 'ios',
   );
   if (compilerOptions.target == null) {
     print('Failed to create front-end target $targetName.');
@@ -1113,6 +1124,7 @@ Target? createFrontEndTarget(
   bool includeUnsupportedPlatformLibraryStubs = false,
   bool? constKeepLocalsIndicator,
   bool isClosureContextLoweringEnabled = false,
+  bool shorebirdIosFullReplacement = false,
 }) {
   // Make sure VM-specific targets are available.
   installAdditionalTargets();
@@ -1124,6 +1136,7 @@ Target? createFrontEndTarget(
         includeUnsupportedPlatformLibraryStubs,
     constKeepLocalsIndicator: constKeepLocalsIndicator,
     isClosureContextLoweringEnabled: isClosureContextLoweringEnabled,
+    shorebirdIosFullReplacement: shorebirdIosFullReplacement,
   );
   return getTarget(targetName, targetFlags);
 }

@@ -96,7 +96,8 @@ struct ShorebirdReplacementManifest {
     }
     bool Uri(std::string* value) {
       uint32_t size;
-      if (!UInt(&size) || size == 0 || size > kMaxUri || size > left_ ||
+      if (!UInt(&size) || size == 0 || size > kMaxUri ||
+          static_cast<intptr_t>(size) > left_ ||
           !ValidUtf8(bytes_, size))
         return false;
       value->assign(reinterpret_cast<const char*>(bytes_), size);
@@ -106,7 +107,8 @@ struct ShorebirdReplacementManifest {
     }
     bool Set(std::vector<std::string>* values) {
       uint32_t count;
-      if (!UInt(&count) || count > kMaxLibraries || count > left_ / 5) {
+      if (!UInt(&count) || count > kMaxLibraries ||
+          static_cast<intptr_t>(count) > left_ / 5) {
         return false;
       }
       values->clear();

@@ -17,6 +17,7 @@ import 'package:front_end/src/api_unstable/vm.dart'
         resolveInputUri;
 import 'package:kernel/ast.dart' show Component;
 import 'package:vm/bytecode/full_replacement.dart';
+import 'package:vm/target_os.dart';
 import 'package:vm/kernel_front_end.dart'
     show
         badUsageExitCode,
@@ -58,6 +59,16 @@ final ArgParser _argParser = ArgParser(allowTrailingOptions: true)
     defaultsTo: null,
   )
   ..addOption('depfile', help: 'Path to output Ninja depfile')
+  ..addMultiOption(
+    'source',
+    help: 'List additional source files to include into compilation.',
+    defaultsTo: const <String>[],
+  )
+  ..addOption(
+    'target-os',
+    help: 'Compile for a specific target operating system.',
+    allowed: TargetOS.names,
+  )
   ..addOption(
     'patch-base',
     help: 'Full release bytecode baseline; emit a compatible bytecode delta',
@@ -240,9 +251,11 @@ Future<int> runCompilerWithCommandLineArguments(List<String> arguments) async {
 
   return await runCompilerWithOptions(
     input: input,
+    additionalSources: options['source'],
     platformKernel: platformKernel,
     outputFileName: outputFileName,
     targetName: targetName,
+    targetOS: options['target-os'],
     packages: packages,
     importDill: importDill,
     validateDynamicInterface: validateDynamicInterface,
@@ -269,11 +282,15 @@ Future<int> runCompilerWithCommandLineArguments(List<String> arguments) async {
 
 /// Run bytecode compiler tool with given options
 /// and return exit code (0 on success, non-zero on failure).
+///
+/// [additionalSources] adds source roots using the same path and URI resolution
+/// as the native kernel compiler. [input] remains the program root.
 Future<int> runCompilerWithOptions({
   required String input,
   required String platformKernel,
   required String outputFileName,
   required String targetName,
+  List<String> additionalSources = const [],
   String? packages,
   String? importDill,
   String? validateDynamicInterface,
@@ -296,11 +313,22 @@ Future<int> runCompilerWithOptions({
   bool shorebirdStructuralPatching = false,
   bool shorebirdFullReplacement = false,
   String? shorebirdHostAbi,
+  String? targetOS,
 }) async {
   if (shorebirdFullReplacement && shorebirdStructuralPatching) {
     printMessage(
       '--shorebird-full-replacement and --shorebird-structural-patching are mutually exclusive.',
     );
+    return badUsageExitCode;
+  }
+  if (targetOS != null && TargetOS.fromString(targetOS) == null) {
+    printMessage('Unsupported target operating system: $targetOS.');
+    return badUsageExitCode;
+  }
+  if (shorebirdFullReplacement &&
+      targetName == 'flutter' &&
+      targetOS != 'ios') {
+    printMessage('Flutter full replacement requires --target-os=ios.');
     return badUsageExitCode;
   }
   if (shorebirdFullReplacement || shorebirdHostAbi != null) {
@@ -372,6 +400,10 @@ Future<int> runCompilerWithOptions({
       targetName,
       trackCreationLocations: trackCreationLocations,
       supportMirrors: false,
+      shorebirdIosFullReplacement:
+          shorebirdFullReplacement &&
+          targetName == 'flutter' &&
+          targetOS == 'ios',
       isClosureContextLoweringEnabled:
           bytecodeOptions.isClosureContextLoweringEnabled,
     );
@@ -384,11 +416,13 @@ Future<int> runCompilerWithOptions({
   final results = await compileToKernel(
     KernelCompilationArguments(
       source: mainUri,
+      additionalSources: additionalSources.map(resolveInputUri).toList(),
       options: compilerOptions,
       requireMain: false,
       includePlatform: false,
       environmentDefines: Map.of(environmentDefines),
       enableAsserts: enableAsserts,
+      targetOS: targetOS,
     ),
   );
 

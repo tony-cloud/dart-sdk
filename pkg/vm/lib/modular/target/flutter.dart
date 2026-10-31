@@ -43,6 +43,10 @@ class FlutterTarget extends VmTarget {
   List<String> get extraRequiredLibrariesPlatform => const <String>[];
 
   @override
-  DartLibrarySupport get dartLibrarySupport =>
-      const CustomizedDartLibrarySupport(unsupported: {'mirrors'});
+  DartLibrarySupport get dartLibrarySupport => CustomizedDartLibrarySupport(
+    supported: flags.shorebirdIosFullReplacement
+        ? const {'_shorebird_ios_full_replacement'}
+        : const {},
+    unsupported: const {'mirrors'},
+  );
 }

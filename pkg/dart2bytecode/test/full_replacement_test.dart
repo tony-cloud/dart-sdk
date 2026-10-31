@@ -41,6 +41,7 @@ void main() {
     String name, {
     File? base,
     String host = abi,
+    List<String> extraArguments = const [],
   }) async {
     source.writeAsStringSync(contents);
     final output = File('${directory.path}/$name.sbr');
@@ -49,6 +50,7 @@ void main() {
         '--platform=$platform',
         '--shorebird-full-replacement',
         '--shorebird-host-abi=$host',
+        ...extraArguments,
         if (base != null) '--patch-base=${base.path}',
         '-o',
         output.path,
@@ -165,6 +167,182 @@ void main() { print(const Widget('new', 3)); print(changed()); }
         ),
         throwsFormatException,
       );
+    },
+  );
+
+  test(
+    'extra source roots match the native domain and retain registrants',
+    () async {
+      final generated = File(
+        '${directory.path}/generated_plugin_registrant.dart',
+      );
+      final packageRoot = Directory('${directory.path}/registrant')
+        ..createSync();
+      final packageLibrary = File(
+        '${packageRoot.path}/lib/src/dart_plugin_registrant.dart',
+      )..createSync(recursive: true);
+      packageLibrary.writeAsStringSync('''
+@pragma('vm:entry-point')
+class DartPluginRegistrant {
+  @pragma('vm:entry-point')
+  static void ensureInitialized() {}
+}
+void main() {}
+''');
+      generated.writeAsStringSync('''
+@pragma('vm:entry-point')
+class GeneratedPluginRegistrant {
+  @pragma('vm:entry-point')
+  static void register() {}
+}
+''');
+      final packages = File('${directory.path}/package_config.json');
+      packages.writeAsStringSync(
+        jsonEncode({
+          'configVersion': 2,
+          'packages': [
+            {
+              'name': 'registrant',
+              'rootUri': packageRoot.uri.toString(),
+              'packageUri': 'lib/',
+              'languageVersion': '3.12',
+            },
+          ],
+        }),
+      );
+      final extraArguments = [
+        '--packages=${packages.path}',
+        '--source=${generated.uri}',
+        '--source=package:registrant/src/dart_plugin_registrant.dart',
+        '-Dflutter.dart_plugin_registrant=${generated.uri}',
+      ];
+      const program = '''
+const registrant = String.fromEnvironment('flutter.dart_plugin_registrant');
+void main() { print(registrant); }
+''';
+      final baseline = await compile(
+        program,
+        'extra_base',
+        extraArguments: extraArguments,
+      );
+      final base = decodeShorebirdReplacement(baseline.readAsBytesSync());
+      final expected = canonicalReplacementUris([
+        source.uri.toString(),
+        generated.uri.toString(),
+        'package:registrant/src/dart_plugin_registrant.dart',
+      ]);
+      expect(base.manifest.rootUri, source.uri.toString());
+      expect(base.manifest.baselineUris, expected);
+      expect(base.manifest.currentUris, expected);
+      void checkRegistrant(ShorebirdReplacementBundle bundle) {
+        final component = dbc.Component.read(
+          BufferedReader(LinkReader(), bundle.component),
+        );
+        final root = component.libraries.singleWhere(
+          (library) =>
+              library.importUri!.stringConstantValue == source.uri.toString(),
+        );
+        expect(
+          root.classes.first.members.fields
+              .singleWhere((field) => field.name.toString() == "'registrant'")
+              .value!
+              .stringConstantValue,
+          generated.uri.toString(),
+        );
+        final library = component.libraries.singleWhere(
+          (library) =>
+              library.importUri!.stringConstantValue ==
+              generated.uri.toString(),
+        );
+        final registrant = library.classes.singleWhere(
+          (cls) => cls.name.toString() == "'GeneratedPluginRegistrant'",
+        );
+        expect(
+          registrant.members.functions.map((member) => member.name.toString()),
+          contains("'register'"),
+        );
+        expect(component.dynModuleEntryPoint.toString(), '${source.uri}::main');
+      }
+
+      checkRegistrant(base);
+      final native = File('${directory.path}/extra_native.dill');
+      final nativeArguments = [
+        '--platform=$platform',
+        '--aot',
+        '--no-tfa',
+        '--shorebird-full-replacement',
+        '--shorebird-host-abi=$abi',
+        '--shorebird-replacement-base=${baseline.path}',
+        ...extraArguments,
+        '-o',
+        native.path,
+        source.path,
+      ];
+      expect(
+        await kernel.runCompiler(
+          kernel.createCompilerArgParser().parse(nativeArguments),
+          '',
+        ),
+        0,
+      );
+      final component = ast.Component();
+      BinaryBuilderWithMetadata(
+        native.readAsBytesSync(),
+        disableLazyReading: true,
+      ).readComponent(component);
+      expect(component.mainMethod!.enclosingLibrary.importUri, source.uri);
+      expect(
+        canonicalReplacementUris(
+          component.libraries
+              .where((library) => library.importUri.scheme != 'dart')
+              .map((library) => library.importUri.toString()),
+        ),
+        expected,
+      );
+      await expectLater(
+        kernel.runCompiler(
+          kernel.createCompilerArgParser().parse(
+            nativeArguments
+                .where((arg) => !arg.startsWith('--source='))
+                .toList(),
+          ),
+          '',
+        ),
+        throwsFormatException,
+      );
+      generated.writeAsStringSync(
+        generated.readAsStringSync().replaceFirst(
+          'register()',
+          'register([int added = 1])',
+        ),
+      );
+      final update = await compile(
+        program,
+        'extra_update',
+        base: baseline,
+        extraArguments: extraArguments,
+      );
+      final patch = decodeShorebirdReplacement(update.readAsBytesSync());
+      expect(patch.manifest.rootUri, base.manifest.rootUri);
+      expect(patch.manifest.baselineUris, expected);
+      expect(patch.manifest.currentUris, expected);
+      expect(patch.manifest.removedUris, isEmpty);
+      checkRegistrant(patch);
+      final missing = File('${directory.path}/missing.sbr');
+      expect(
+        await runCompilerWithCommandLineArguments([
+          '--platform=$platform',
+          '--shorebird-full-replacement',
+          '--shorebird-host-abi=$abi',
+          '--packages=${packages.path}',
+          '--source=${directory.uri.resolve('missing.dart')}',
+          '-o',
+          missing.path,
+          source.path,
+        ]),
+        isNot(0),
+      );
+      expect(missing.existsSync(), isFalse);
     },
   );
 

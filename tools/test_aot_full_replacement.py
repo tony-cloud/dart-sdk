@@ -150,7 +150,7 @@ int readMessage() => messageResult;
 # particular, its omitted constructor argument must use the new default, and
 # its constant references must resolve to new-domain canonical objects.
 DRIVER = r'''
-import 'body.dart';
+import 'export_only.dart';
 @pragma('vm:entry-point') int probe() => const Existing<int>(7).read();
 @pragma('vm:entry-point') int probeState() => state();
 @pragma('vm:entry-point') int probeConstants() => constants();
@@ -162,7 +162,10 @@ import 'body.dart';
 @pragma('vm:entry-point') void releaseHeld() => clearCache();
 @pragma('vm:entry-point') void probeMessage() => startMessage();
 @pragma('vm:entry-point') int probeMessageResult() => readMessage();
-void main() {}
+@pragma('vm:entry-point', 'call') int callOnly() => 99;
+int entrypointRuns = 0;
+@pragma('vm:entry-point') int probeEntrypointRuns() => entrypointRuns;
+void main() { ++entrypointRuns; }
 '''
 
 HARNESS = r'''
@@ -213,6 +216,17 @@ void MakeRunnable(Dart_Isolate isolate) {
   if (error != nullptr) { std::cerr << error << std::endl; std::exit(1); }
   Dart_EnterIsolate(isolate);
   Dart_EnterScope();
+}
+
+void RunEntrypoint() {
+  // Flutter resolves main as a closure after installation, rather than calling
+  // it directly with Dart_Invoke. No Dart reference pre-creates this tear-off.
+  auto entrypoint = Dart_GetField(Dart_RootLibrary(),
+      Dart_NewStringFromCString("main"));
+  Check(entrypoint);
+  if (!Dart_IsClosure(entrypoint)) std::exit(9);
+  Check(Dart_InvokeClosure(entrypoint, 0, nullptr));
+  Expect("probeEntrypointRuns", 1);
 }
 
 const char* configured_script_uri = nullptr;
@@ -375,6 +389,13 @@ int main(int argc, char** argv) {
   auto isolate = CreateRoot(snapshot, "replacement-parent");
   const bool plain = mode == "reject-profile";
   if (!plain) CannotRun(isolate);
+  if (plain) {
+    // Native-only functions still require a retained implicit closure; an
+    // invocation-only entry-point pragma must not permit tear-off retrieval.
+    Expect("callOnly", 99);
+    Denied(Dart_GetField(Dart_RootLibrary(),
+        Dart_NewStringFromCString("callOnly")), "native call-only tear-off");
+  }
   const std::string base_path(argv[3]);
   const auto raw_path = base_path.substr(0, base_path.find_last_of('/')) +
                         "/plain.bytecode";
@@ -460,6 +481,7 @@ int main(int argc, char** argv) {
     const auto base = Read(argv[3]);
     Check(Dart_ReloadBytecodePatch(base.data(), base.size()));
     MakeRunnable(isolate);
+    RunEntrypoint();
     Expect("probe", 7);
     Expect("probeState", 15);
     ShutdownRoot();
@@ -483,6 +505,9 @@ int main(int argc, char** argv) {
   Dart_DeletePersistentHandle(old_root);
   Dart_DeletePersistentHandle(old_type);
   MakeRunnable(isolate);
+  RunEntrypoint();
+  Denied(Dart_GetField(Dart_RootLibrary(),
+      Dart_NewStringFromCString("callOnly")), "interpreted call-only tear-off");
   if (mode == "base") {
     Expect("probe", 7);
     Expect("probeState", 15);
@@ -613,6 +638,12 @@ def main():
         source.write_text(BASE)
         driver = work / 'driver.dart'
         driver.write_text(DRIVER)
+        # These have no declarations for PRODUCT dictionary pruning to retain.
+        # Their library identities must nevertheless survive in the complete
+        # native baseline domain and match the bundled base/update manifests.
+        (work / 'export_only.dart').write_text(
+            "export 'body.dart';\nexport 'empty.dart';\n")
+        (work / 'empty.dart').write_text('library empty;\n')
         removed = work / 'removed.dart'
         removed.write_text('int removed() => 0;\n')
         (work / 'added.dart').write_text('int addedValue() => 5;\n')

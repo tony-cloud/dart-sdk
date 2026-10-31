@@ -3235,6 +3235,14 @@ void Precompiler::PruneDictionaries() {
       if (precompiler_->HasApiUse(lib)) {
         retain = true;
       }
+#if defined(DART_SHOREBIRD_INTERPRETER)
+      if (lib.is_shorebird_full_replacement()) {
+        // DropLibraries preserves the complete baseline domain, including
+        // empty and export-only libraries. PRODUCT dictionary pruning runs
+        // later and must preserve those capability/URI identities as well.
+        retain = true;
+      }
+#endif
       return retain;
     }
 

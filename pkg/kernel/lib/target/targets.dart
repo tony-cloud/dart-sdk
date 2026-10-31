@@ -15,6 +15,10 @@ class TargetFlags {
   final bool trackCreationLocations;
   final bool supportMirrors;
 
+  /// Enables the SDK-owned iOS full-replacement conditional-library marker.
+  /// Set only for the explicit Flutter full profile targeting iOS.
+  final bool shorebirdIosFullReplacement;
+
   /// Whether the backend expects closure contexts to be present in the AST.
   ///
   /// This flag is currently experimental. Generally, the backends rely on their
@@ -34,6 +38,7 @@ class TargetFlags {
   const new({
     this.trackCreationLocations = false,
     this.supportMirrors = true,
+    this.shorebirdIosFullReplacement = false,
     this.isClosureContextLoweringEnabled = false,
     this.constKeepLocalsIndicator,
     this.includeUnsupportedPlatformLibraryStubs = false,
@@ -45,6 +50,7 @@ class TargetFlags {
     return other is TargetFlags &&
         trackCreationLocations == other.trackCreationLocations &&
         supportMirrors == other.supportMirrors &&
+        shorebirdIosFullReplacement == other.shorebirdIosFullReplacement &&
         includeUnsupportedPlatformLibraryStubs ==
             other.includeUnsupportedPlatformLibraryStubs &&
         constKeepLocalsIndicator == other.constKeepLocalsIndicator;
@@ -55,6 +61,9 @@ class TargetFlags {
     int hash = 485786;
     hash = 0x3fffffff & (hash * 31 + (hash ^ trackCreationLocations.hashCode));
     hash = 0x3fffffff & (hash * 31 + (hash ^ supportMirrors.hashCode));
+    hash =
+        0x3fffffff &
+        (hash * 31 + (hash ^ shorebirdIosFullReplacement.hashCode));
     hash =
         0x3fffffff &
         (hash * 31 + (hash ^ includeUnsupportedPlatformLibraryStubs.hashCode));

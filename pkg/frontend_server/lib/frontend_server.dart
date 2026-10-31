@@ -805,6 +805,13 @@ class FrontendCompiler implements CompilerInterface {
       }
     }
 
+    if (options['shorebird-full-replacement'] &&
+        options['target'] == 'flutter' &&
+        options['target-os'] != 'ios') {
+      print('Flutter full replacement requires --target-os=ios.');
+      return false;
+    }
+
     if (options['support-mirrors'] == true) {
       if (options['aot']) {
         print('Error: --support-mirrors option cannot be used with --aot');
@@ -837,6 +844,10 @@ class FrontendCompiler implements CompilerInterface {
       includeUnsupportedPlatformLibraryStubs:
           options['include-unsupported-platform-library-stubs'],
       constKeepLocalsIndicator: !(aot || minimalKernel),
+      shorebirdIosFullReplacement:
+          options['shorebird-full-replacement'] &&
+          options['target'] == 'flutter' &&
+          options['target-os'] == 'ios',
     );
     if (compilerOptions.target == null) {
       print('Failed to create front-end target ${options['target']}.');
