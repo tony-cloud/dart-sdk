@@ -27,7 +27,16 @@ template("build_run_ffi_unit_tests") {
 
     constants = rebase_path(constants_sources, ".", "../../vm")
     ffi_tests = rebase_path(ffi_sources_tests, ".", "../../vm/compiler")
-    platform = rebase_path(platform_sources, ".", "../../platform")
+
+    # These host executables calculate arbitrary target ABIs without emitting
+    # or loading executable code. Windows unwinding records couple host APIs to
+    # the selected target architecture and are not used by this data-only test.
+    ffi_test_platform_sources = platform_sources - [
+                                  "unwinding_records.cc",
+                                  "unwinding_records.h",
+                                  "unwinding_records_win.cc",
+                                ]
+    platform = rebase_path(ffi_test_platform_sources, ".", "../../platform")
 
     sources = [ "run_ffi_unit_tests.cc" ] + constants + ffi_tests + platform
   }
