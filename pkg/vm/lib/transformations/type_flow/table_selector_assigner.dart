@@ -15,6 +15,7 @@ import '../../metadata/unboxing_info.dart';
 void annotateWithoutTypeFlow(
   Component component, {
   bool shorebirdStructuralPatching = false,
+  bool shorebirdFullReplacement = false,
 }) {
   final assigner = TableSelectorAssigner(component);
   final attributes = ProcedureAttributesMetadataRepository();
@@ -23,6 +24,7 @@ void annotateWithoutTypeFlow(
     attributes.mapping[library] = ProcedureAttributesMetadata(
       isWithoutTypeFlowAnalysis: true,
       isShorebirdStructuralPatching: shorebirdStructuralPatching,
+      isShorebirdFullReplacement: shorebirdFullReplacement,
     );
     for (final member in library.members) {
       unboxing.mapping[member] = UnboxingInfoMetadata(0)..setFullyBoxed();

@@ -12,6 +12,7 @@
 #include "vm/constants_kbc.h"
 #include "vm/hash_table.h"
 #include "vm/object.h"
+#include "vm/shorebird_replacement.h"
 
 namespace dart {
 namespace bytecode {
@@ -26,7 +27,18 @@ class BytecodeLoader {
   ~BytecodeLoader();
 
   FunctionPtr LoadBytecode(bool load_code = true);
-  ErrorPtr LoadBytecodePatch();
+  ErrorPtr ValidateUnwrappedProfile();
+  ErrorPtr LoadBytecodePatch(
+      const ShorebirdReplacementManifest* replacement = nullptr);
+  bool is_full_replacement() const { return replacement_ != nullptr; }
+  const ShorebirdReplacementManifest& replacement() const {
+    ASSERT(replacement_ != nullptr);
+    return *replacement_;
+  }
+  LibraryPtr LookupReplacementLibrary(const String& uri) const;
+  const GrowableObjectArray& replacement_libraries() const {
+    return replacement_libraries_;
+  }
   bool is_loading_patch() const { return is_loading_patch_; }
   bool is_structural_patch() const { return is_structural_patch_; }
   void set_is_structural_patch(bool value) { is_structural_patch_ = value; }
@@ -95,6 +107,9 @@ class BytecodeLoader {
   Library* expression_evaluation_library_ = nullptr;
   Class* expression_evaluation_real_classs_ = nullptr;
   Function* expression_evaluation_function_ = nullptr;
+  const ShorebirdReplacementManifest* replacement_ = nullptr;
+  GrowableObjectArray& replacement_libraries_;
+  bool validated_unwrapped_profile_ = false;
   bool is_loading_patch_ = false;
   bool is_structural_patch_ = false;
   GrowableObjectArray& structural_functions_;
@@ -293,6 +308,7 @@ class BytecodeReaderHelper : public ValueObject {
                                bool load_code);
   intptr_t ReadLoadedLibraryBytecodePatch(intptr_t num_libraries);
   void ReadStructuralBytecodePatch(intptr_t num_libraries);
+  void ReadFullReplacement(intptr_t num_libraries);
   void ReadPendingCode(const GrowableObjectArray& pending_objects);
   void FindModifiedLibraries(BitVector* modified_libs, intptr_t num_libraries);
 

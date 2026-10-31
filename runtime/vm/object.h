@@ -5428,6 +5428,15 @@ class Library : public Object {
         UntaggedLibrary::ShorebirdPatchableBit::update(value, untag()->flags_));
   }
 
+  bool is_shorebird_full_replacement() const {
+    return UntaggedLibrary::ShorebirdFullReplacementBit::decode(
+        untag()->flags_);
+  }
+  void set_is_shorebird_full_replacement(bool value) const {
+    set_flags(UntaggedLibrary::ShorebirdFullReplacementBit::update(
+        value, untag()->flags_));
+  }
+
   bool is_shorebird_structural_patchable() const {
     return UntaggedLibrary::ShorebirdStructuralPatchableBit::decode(
         untag()->flags_);

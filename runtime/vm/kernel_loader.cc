@@ -22,6 +22,7 @@
 #include "vm/parser.h"
 #include "vm/reusable_handles.h"
 #include "vm/service_isolate.h"
+#include "vm/shorebird_replacement.h"
 #include "vm/symbols.h"
 #include "vm/thread.h"
 
@@ -528,7 +529,42 @@ ObjectPtr KernelLoader::LoadProgram(bool process_pending_classes) {
     NameIndex main = program_->main_method();
     if (main != -1) {
       NameIndex main_library = H.EnclosingName(main);
-      return LookupLibrary(main_library);
+      const auto& root = Library::Handle(Z, LookupLibrary(main_library));
+#if defined(DART_SHOREBIRD_INTERPRETER)
+      if (FLAG_precompiled_mode && FLAG_shorebird_full_replacement) {
+        const auto& descriptor = TypedData::Handle(
+            Z, IG->object_store()->shorebird_replacement_descriptor());
+        if (descriptor.IsNull() || !root.is_shorebird_full_replacement()) {
+          FATAL("Full replacement requires root baseline metadata.");
+        }
+        std::vector<uint8_t> bytes(descriptor.Length());
+        for (intptr_t i = 0; i < descriptor.Length(); ++i) {
+          bytes[i] = descriptor.GetUint8(i);
+        }
+        ShorebirdReplacementManifest manifest;
+        if (!manifest.Parse(bytes.data(), bytes.size()) ||
+            !manifest.IsBaseline() ||
+            !String::Handle(Z, root.url()).Equals(manifest.root.c_str())) {
+          FATAL("Invalid full replacement root baseline descriptor.");
+        }
+        std::vector<std::string> actual;
+        const auto& libraries =
+            GrowableObjectArray::Handle(Z, IG->object_store()->libraries());
+        auto& library = Library::Handle(Z);
+        for (intptr_t i = 0; i < libraries.Length(); ++i) {
+          library ^= libraries.At(i);
+          if (!library.is_dart_scheme()) {
+            if (!library.is_shorebird_full_replacement()) {
+              FATAL("Incomplete full replacement baseline capability.");
+            }
+            actual.push_back(String::Handle(Z, library.url()).ToCString());
+          }
+        }
+        std::sort(actual.begin(), actual.end());
+        if (actual != manifest.base) FATAL("Full replacement domain mismatch.");
+      }
+#endif
+      return root.ptr();
     }
 
     return Library::null();
@@ -784,6 +820,9 @@ LibraryPtr KernelLoader::LoadLibrary(intptr_t index) {
   library.set_kernel_program_info(kernel_program_info_);
 #if defined(DART_SHOREBIRD_INTERPRETER)
   if (FLAG_precompiled_mode) {
+    if (FLAG_shorebird_full_replacement && FLAG_shorebird_structural_patching) {
+      FATAL("Full replacement and structural patching profiles are exclusive.");
+    }
     ProcedureAttributesMetadataHelper attributes(&helper_);
     const auto metadata =
         attributes.GetProcedureAttributes(library_kernel_offset_);
@@ -795,6 +834,29 @@ LibraryPtr KernelLoader::LoadLibrary(intptr_t index) {
       FATAL(
           "Structural patch snapshots require gen_kernel --aot --no-tfa "
           "--shorebird-structural-patching.");
+    }
+    if (FLAG_shorebird_full_replacement && !library.is_dart_scheme() &&
+        (!metadata.is_without_type_flow_analysis ||
+         !metadata.is_shorebird_full_replacement)) {
+      FATAL(
+          "Full replacement requires gen_kernel --aot --no-tfa "
+          "--shorebird-full-replacement.");
+    }
+    library.set_is_shorebird_full_replacement(
+        FLAG_shorebird_full_replacement &&
+        metadata.is_without_type_flow_analysis &&
+        metadata.is_shorebird_full_replacement && !library.is_dart_scheme());
+    if (FLAG_shorebird_full_replacement) {
+      ShorebirdReplacementMetadataHelper replacement(&helper_);
+      const auto& descriptor = TypedData::Handle(
+          Z, replacement.ReadDescriptor(library_kernel_offset_));
+      if (!descriptor.IsNull()) {
+        if (IG->object_store()->shorebird_replacement_descriptor() !=
+            TypedData::null()) {
+          FATAL("Duplicate full replacement baseline descriptor.");
+        }
+        IG->object_store()->set_shorebird_replacement_descriptor(descriptor);
+      }
     }
     library.set_is_shorebird_structural_patchable(
         FLAG_shorebird_structural_patching &&
@@ -1351,7 +1413,7 @@ void KernelLoader::LoadClass(const Library& library,
       DynModuleImplicitlyExtendablePragma::decode(pragma_bits)) {
     out_class->set_has_dynamically_extendable_subtypes(true);
     IG->set_has_dynamically_extendable_classes(true);
-    if (FLAG_shorebird_structural_patching) {
+    if (FLAG_shorebird_structural_patching || FLAG_shorebird_full_replacement) {
       // A future interpreted implementation may also implement Future.
       out_class->set_can_be_future(true);
     }

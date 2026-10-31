@@ -17,6 +17,7 @@
 #include "vm/resolver.h"
 #include "vm/roots.h"
 #include "vm/runtime_entry.h"
+#include "vm/shorebird_replacement.h"
 #include "vm/simulator.h"
 #include "vm/stub_code.h"
 #include "vm/symbols.h"
@@ -151,6 +152,24 @@ ObjectPtr DartEntry::InvokeFunction(const Function& function,
   }
 #endif
 
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  auto* store = thread->isolate_group()->object_store();
+  if (store->shorebird_replacement_descriptor() != TypedData::null()) {
+    if (store->shorebird_replacement_installation_state() == Smi::New(1) ||
+        IsInactiveShorebirdReplacementObject(function)) {
+      return ApiError::New(String::Handle(String::New(
+          "Uncommitted, poisoned or retired full replacement application.")));
+    }
+    auto& argument = Object::Handle(thread->zone());
+    for (intptr_t i = 0; i < arguments.Length(); ++i) {
+      argument = arguments.At(i);
+      if (IsInactiveShorebirdReplacementObject(argument)) {
+        return ApiError::New(
+            String::Handle(String::New("Inactive full replacement argument.")));
+      }
+    }
+  }
+#endif
 #if defined(DART_BYTECODE_INTERPRETER)
   if (function.IsInterpreted()) {
     // SuspendLongJumpScope suspend_long_jump_scope(thread);

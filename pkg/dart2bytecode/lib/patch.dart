@@ -22,6 +22,14 @@ Uint8List createBytecodePatch(
 }) {
   final base = Component.read(BufferedReader(LinkReader(), baseline));
   final patch = Component.read(BufferedReader(LinkReader(), updated));
+  for (final library in [...base.libraries, ...patch.libraries]) {
+    if ((library.flags & LibraryDeclaration.shorebirdFullReplacementFlag) !=
+        0) {
+      throw const FormatException(
+        'Full replacement bytecode requires its bound replacement wrapper.',
+      );
+    }
+  }
   final baseLibraries = {for (final lib in base.libraries) lib.importUri: lib};
   final patchLibraries = {
     for (final lib in patch.libraries) lib.importUri: lib,

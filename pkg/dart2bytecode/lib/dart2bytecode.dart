@@ -16,6 +16,7 @@ import 'package:front_end/src/api_unstable/vm.dart'
         parseExperimentalFlags,
         resolveInputUri;
 import 'package:kernel/ast.dart' show Component;
+import 'package:vm/bytecode/full_replacement.dart';
 import 'package:vm/kernel_front_end.dart'
     show
         badUsageExitCode,
@@ -35,6 +36,7 @@ import 'package:vm/transformations/prefix_library_uris.dart'
 
 import 'bytecode_serialization.dart' show BytecodeSizeStatistics;
 import 'bytecode_generator.dart' show generateBytecode;
+import 'full_replacement.dart';
 import 'options.dart' show BytecodeOptions;
 import 'patch.dart' show createBytecodePatch;
 
@@ -66,6 +68,15 @@ final ArgParser _argParser = ArgParser(allowTrailingOptions: true)
         'Enable the explicit structural patch profile for a full baseline or '
         'delta. Requires a matching native structural baseline.',
     defaultsTo: false,
+  )
+  ..addFlag(
+    'shorebird-full-replacement',
+    defaultsTo: false,
+    help: 'Emit a complete mutable-domain replacement wrapper.',
+  )
+  ..addOption(
+    'shorebird-host-abi',
+    help: 'Frozen host ABI SHA-256, 64 lowercase hex digits.',
   )
   ..addOption(
     'depfile-target',
@@ -251,6 +262,8 @@ Future<int> runCompilerWithCommandLineArguments(List<String> arguments) async {
     dynamicCallsSelectorAllowList: dynamicCallsSelectorAllowList,
     patchBase: options['patch-base'],
     shorebirdStructuralPatching: options['shorebird-structural-patching'],
+    shorebirdFullReplacement: options['shorebird-full-replacement'],
+    shorebirdHostAbi: options['shorebird-host-abi'],
   );
 }
 
@@ -281,7 +294,28 @@ Future<int> runCompilerWithOptions({
   List<String> dynamicCallsSelectorAllowList = const [],
   String? patchBase,
   bool shorebirdStructuralPatching = false,
+  bool shorebirdFullReplacement = false,
+  String? shorebirdHostAbi,
 }) async {
+  if (shorebirdFullReplacement && shorebirdStructuralPatching) {
+    printMessage(
+      '--shorebird-full-replacement and --shorebird-structural-patching are mutually exclusive.',
+    );
+    return badUsageExitCode;
+  }
+  if (shorebirdFullReplacement || shorebirdHostAbi != null) {
+    try {
+      if (!shorebirdFullReplacement || shorebirdHostAbi == null) {
+        throw const FormatException(
+          '--shorebird-full-replacement requires --shorebird-host-abi.',
+        );
+      }
+      parseShorebirdHostAbi(shorebirdHostAbi);
+    } on FormatException catch (error) {
+      printMessage(error.message);
+      return badUsageExitCode;
+    }
+  }
   final fileSystem = createFrontEndFileSystem(
     fileSystemScheme,
     fileSystemRoots,
@@ -313,6 +347,7 @@ Future<int> runCompilerWithOptions({
   final BytecodeOptions bytecodeOptions = BytecodeOptions(
     enableAsserts: enableAsserts,
     shorebirdStructuralPatching: shorebirdStructuralPatching,
+    shorebirdFullReplacement: shorebirdFullReplacement,
   )..parseCommandLineFlags(bytecodeGeneratorOptions);
 
   final CompilerOptions compilerOptions = CompilerOptions()
@@ -371,12 +406,24 @@ Future<int> runCompilerWithOptions({
   if (bytecodeOptions.showBytecodeSizeStatistics) {
     BytecodeSizeStatistics.reset();
   }
+  if (shorebirdFullReplacement) {
+    try {
+      validateShorebirdReplacementLibraries(component.libraries);
+    } on FormatException catch (error) {
+      printMessage(error.message);
+      return compileTimeErrorExitCode;
+    }
+  }
   final io.IOSink sink = io.File(outputFileName).openWrite();
   generateBytecode(
     component,
     sink,
     libraries: component.libraries
-        .where((lib) => !results.loadedLibraries.contains(lib))
+        .where(
+          (lib) => shorebirdFullReplacement
+              ? lib.importUri.scheme != 'dart'
+              : !results.loadedLibraries.contains(lib),
+        )
         .toList(),
     hierarchy: results.classHierarchy!,
     coreTypes: results.coreTypes!,
@@ -385,14 +432,30 @@ Future<int> runCompilerWithOptions({
     extraLoadedLibraries: results.loadedLibraries,
   );
   await sink.close();
-  if (patchBase != null) {
+  if (patchBase != null || shorebirdFullReplacement) {
     final output = io.File(outputFileName);
     try {
-      final delta = createBytecodePatch(
-        await io.File(patchBase).readAsBytes(),
-        await output.readAsBytes(),
-        shorebirdStructuralPatching: shorebirdStructuralPatching,
-      );
+      final updated = await output.readAsBytes();
+      final delta = shorebirdFullReplacement
+          ? createShorebirdFullReplacement(
+              updated,
+              hostAbi: parseShorebirdHostAbi(shorebirdHostAbi!),
+              rootUri:
+                  (component.mainMethod?.enclosingLibrary ??
+                          component.libraries.firstWhere(
+                            (library) => library.importUri == mainUri,
+                          ))
+                      .importUri
+                      .toString(),
+              baseline: patchBase == null
+                  ? null
+                  : await io.File(patchBase).readAsBytes(),
+            )
+          : createBytecodePatch(
+              await io.File(patchBase!).readAsBytes(),
+              updated,
+              shorebirdStructuralPatching: shorebirdStructuralPatching,
+            );
       await output.writeAsBytes(delta);
     } on FormatException catch (error) {
       await output.delete();

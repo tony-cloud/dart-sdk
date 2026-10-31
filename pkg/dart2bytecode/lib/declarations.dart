@@ -33,6 +33,7 @@ class LibraryDeclaration extends BytecodeDeclaration {
   static const usesDartFfiFlag = 1 << 1;
   // Producer capability marker, independently checked against the native base.
   static const shorebirdStructuralPatchingFlag = 1 << 2;
+  static const shorebirdFullReplacementFlag = 1 << 3;
 
   ObjectHandle? importUri;
   final int flags;

@@ -1912,6 +1912,10 @@ class UntaggedLibrary : public UntaggedObject {
       BitField<decltype(flags_), bool, DebuggableBit::kNextBit>;
   using ShorebirdStructuralPatchableBit =
       BitField<decltype(flags_), bool, ShorebirdPatchableBit::kNextBit>;
+  using ShorebirdFullReplacementBit =
+      BitField<decltype(flags_),
+               bool,
+               ShorebirdStructuralPatchableBit::kNextBit>;
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
   uint32_t kernel_library_index_;

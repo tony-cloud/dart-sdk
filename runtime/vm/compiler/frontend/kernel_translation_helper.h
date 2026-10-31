@@ -1117,10 +1117,18 @@ struct ProcedureAttributesMetadata {
   bool has_tearoff_uses = true;
   bool is_without_type_flow_analysis = false;
   bool is_shorebird_structural_patching = false;
+  bool is_shorebird_full_replacement = false;
   int32_t method_or_setter_selector_id = kInvalidSelectorId;
   int32_t getter_selector_id = kInvalidSelectorId;
 
   void InitializeFromFlags(uint8_t flags);
+};
+
+class ShorebirdReplacementMetadataHelper : public MetadataHelper {
+ public:
+  explicit ShorebirdReplacementMetadataHelper(KernelReaderHelper* helper)
+      : MetadataHelper(helper, "vm.shorebird-replacement.metadata", true) {}
+  TypedDataPtr ReadDescriptor(intptr_t node_offset);
 };
 
 // Helper class which provides access to direct call metadata.
@@ -1404,6 +1412,7 @@ class KernelReaderHelper {
   friend class LibraryHelper;
   friend class MetadataHelper;
   friend class ProcedureAttributesMetadataHelper;
+  friend class ShorebirdReplacementMetadataHelper;
   friend class ProcedureHelper;
   friend class SimpleExpressionConverter;
   friend class ScopeBuilder;

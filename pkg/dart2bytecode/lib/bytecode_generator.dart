@@ -19,6 +19,7 @@ import 'package:kernel/type_algebra.dart' show containsTypeParameter;
 import 'package:kernel/type_environment.dart'
     show StatefulStaticTypeContext, TypeEnvironment;
 
+import 'package:vm/bytecode/full_replacement.dart';
 import 'package:vm/modular/transformations/pragma.dart';
 
 import 'assembler.dart';
@@ -75,6 +76,9 @@ void generateBytecode(
 }) {
   Timeline.timeSync("generateBytecode", () {
     verifyBytecodeInstructionDeclarations();
+    if (options.shorebirdFullReplacement) {
+      validateShorebirdReplacementLibraries(libraries);
+    }
     final typeEnvironment = TypeEnvironment(coreTypes, hierarchy);
 
     final bytecodeGenerator = BytecodeGenerator(
@@ -297,6 +301,9 @@ class BytecodeGenerator extends RecursiveVisitor {
       library.importUri.toString(),
     );
     int flags = 0;
+    if (options.shorebirdFullReplacement) {
+      flags |= LibraryDeclaration.shorebirdFullReplacementFlag;
+    }
     if (options.shorebirdStructuralPatching) {
       flags |= LibraryDeclaration.shorebirdStructuralPatchingFlag;
     }
@@ -954,6 +961,9 @@ class BytecodeGenerator extends RecursiveVisitor {
   }
 
   void _generateFfiCall(Expression? target) {
+    if (options.shorebirdFullReplacement) {
+      throw const FormatException("FFI is unsupported in replacement v1.");
+    }
     final function = enclosingFunction!;
     for (var param in function.positionalParameters) {
       asm.emitPush(locals.getVarIndexInFrame(param));
@@ -969,6 +979,9 @@ class BytecodeGenerator extends RecursiveVisitor {
   }
 
   void _generateFfiNativeAddressOf(DartType type, Expression target) {
+    if (options.shorebirdFullReplacement) {
+      throw const FormatException("FFI is unsupported in replacement v1.");
+    }
     _genTypeArguments(const [NeverType.nonNullable()]);
 
     _genPushConstant((target as ConstantExpression).constant);

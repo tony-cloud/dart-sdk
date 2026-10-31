@@ -19,6 +19,7 @@ class ProcedureAttributesMetadata {
   // is disabled. Consumers must not infer this from one method's uses.
   final bool isWithoutTypeFlowAnalysis;
   final bool isShorebirdStructuralPatching;
+  final bool isShorebirdFullReplacement;
   final int methodOrSetterSelectorId;
   final int getterSelectorId;
 
@@ -30,6 +31,7 @@ class ProcedureAttributesMetadata {
     this.hasTearOffUses = true,
     this.isWithoutTypeFlowAnalysis = false,
     this.isShorebirdStructuralPatching = false,
+    this.isShorebirdFullReplacement = false,
     this.methodOrSetterSelectorId = kInvalidSelectorId,
     this.getterSelectorId = kInvalidSelectorId,
   });
@@ -70,6 +72,7 @@ class ProcedureAttributesMetadataRepository
   static const int kGetterCalledDynamicallyBit = 1 << 4;
   static const int kWithoutTypeFlowAnalysisBit = 1 << 5;
   static const int kShorebirdStructuralPatchingBit = 1 << 6;
+  static const int kShorebirdFullReplacementBit = 1 << 7;
 
   static const repositoryTag = 'vm.procedure-attributes.metadata';
 
@@ -102,6 +105,9 @@ class ProcedureAttributesMetadataRepository
     }
     if (metadata.isShorebirdStructuralPatching) {
       flags |= kShorebirdStructuralPatchingBit;
+    }
+    if (metadata.isShorebirdFullReplacement) {
+      flags |= kShorebirdFullReplacementBit;
     }
     return flags;
   }
@@ -141,6 +147,7 @@ class ProcedureAttributesMetadataRepository
       isWithoutTypeFlowAnalysis: (flags & kWithoutTypeFlowAnalysisBit) != 0,
       isShorebirdStructuralPatching:
           (flags & kShorebirdStructuralPatchingBit) != 0,
+      isShorebirdFullReplacement: (flags & kShorebirdFullReplacementBit) != 0,
       methodOrSetterSelectorId: methodOrSetterSelectorId,
       getterSelectorId: getterSelectorId,
     );

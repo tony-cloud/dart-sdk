@@ -133,6 +133,8 @@ abstract class ObjectHandle extends BytecodeObject {
   /// Type parameters with unknown nullability deliberately return false.
   bool get isNullableType => false;
 
+  String? get stringConstantValue => null;
+
   int get flags => 0;
   set flags(int value) {}
 
@@ -1255,6 +1257,9 @@ class _TypeArgumentsHandle extends ObjectHandle {
 }
 
 class _ConstObjectHandle extends ObjectHandle {
+  @override
+  String? get stringConstantValue =>
+      tag == ConstTag.kString ? value as String : null;
   late ConstTag tag;
   late dynamic value;
   ObjectHandle? type;

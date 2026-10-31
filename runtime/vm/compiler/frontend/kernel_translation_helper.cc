@@ -1957,6 +1957,7 @@ void ProcedureAttributesMetadata::InitializeFromFlags(uint8_t flags) {
   const int kGetterCalledDynamicallyBit = 1 << 4;
   const int kWithoutTypeFlowAnalysisBit = 1 << 5;
   const int kShorebirdStructuralPatchingBit = 1 << 6;
+  const int kShorebirdFullReplacementBit = 1 << 7;
 
   method_or_setter_called_dynamically =
       (flags & kMethodOrSetterCalledDynamicallyBit) != 0;
@@ -1967,6 +1968,25 @@ void ProcedureAttributesMetadata::InitializeFromFlags(uint8_t flags) {
   is_without_type_flow_analysis = (flags & kWithoutTypeFlowAnalysisBit) != 0;
   is_shorebird_structural_patching =
       (flags & kShorebirdStructuralPatchingBit) != 0;
+  is_shorebird_full_replacement = (flags & kShorebirdFullReplacementBit) != 0;
+}
+
+TypedDataPtr ShorebirdReplacementMetadataHelper::ReadDescriptor(
+    intptr_t node_offset) {
+  const intptr_t md_offset = GetNextMetadataPayloadOffset(node_offset);
+  if (md_offset < 0) return TypedData::null();
+  AlternativeReadingScopeWithNewData alt(&helper_->reader_,
+                                         &H.metadata_payloads(), md_offset);
+  const intptr_t length = helper_->ReadUInt();
+  if (length <= 0 || length > 4 * MB) {
+    FATAL("Invalid full replacement baseline descriptor size.");
+  }
+  const auto& data = TypedData::Handle(
+      Thread::Current()->zone(),
+      TypedData::New(kTypedDataUint8ArrayCid, length, Heap::kOld));
+  for (intptr_t i = 0; i < length; ++i)
+    data.SetUint8(i, helper_->ReadByte());
+  return data.ptr();
 }
 
 ProcedureAttributesMetadataHelper::ProcedureAttributesMetadataHelper(

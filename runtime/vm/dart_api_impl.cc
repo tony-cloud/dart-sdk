@@ -65,6 +65,7 @@
 #include "vm/service.h"
 #include "vm/service_event.h"
 #include "vm/service_isolate.h"
+#include "vm/shorebird_replacement.h"
 #include "vm/stack_frame.h"
 #include "vm/symbols.h"
 #include "vm/tags.h"
@@ -3155,6 +3156,14 @@ DART_EXPORT Dart_Handle Dart_StringGetProperties(Dart_Handle object,
 
 // --- Lists ---
 
+static ErrorPtr CheckReplacementObject(const Object& object) {
+  if (IsInactiveShorebirdReplacementObject(object)) {
+    return ApiError::New(String::Handle(
+        String::New("Inactive full replacement object/declaration handle.")));
+  }
+  return Error::null();
+}
+
 DART_EXPORT Dart_Handle Dart_NewList(intptr_t length) {
   DARTSCOPE(Thread::Current());
   CHECK_LENGTH(length, Array::kMaxElements);
@@ -3169,6 +3178,7 @@ DART_EXPORT Dart_Handle Dart_NewListOfType(Dart_Handle element_type,
   CHECK_LENGTH(length, Array::kMaxElements);
   CHECK_CALLBACK_STATE(T);
   const Type& type = Api::UnwrapTypeHandle(Z, element_type);
+  CHECK_ERROR_HANDLE(CheckReplacementObject(type));
   if (type.IsNull()) {
     RETURN_TYPE_ERROR(Z, element_type, Type);
   }
@@ -3221,10 +3231,12 @@ DART_EXPORT Dart_Handle Dart_NewMap(Dart_Handle keys_type,
   CHECK_CALLBACK_STATE(T);
 
   const Type& keys_type_obj = Api::UnwrapTypeHandle(Z, keys_type);
+  CHECK_ERROR_HANDLE(CheckReplacementObject(keys_type_obj));
   if (keys_type_obj.IsNull()) {
     RETURN_TYPE_ERROR(Z, keys_type, Type);
   }
   const Type& values_type_obj = Api::UnwrapTypeHandle(Z, values_type);
+  CHECK_ERROR_HANDLE(CheckReplacementObject(values_type_obj));
   if (values_type_obj.IsNull()) {
     RETURN_TYPE_ERROR(Z, values_type, Type);
   }
@@ -3264,6 +3276,7 @@ DART_EXPORT Dart_Handle Dart_NewListOfTypeFilled(Dart_Handle element_type,
   CHECK_LENGTH(length, Array::kMaxElements);
   CHECK_CALLBACK_STATE(T);
   const Type& type = Api::UnwrapTypeHandle(Z, element_type);
+  CHECK_ERROR_HANDLE(CheckReplacementObject(type));
   if (type.IsNull()) {
     RETURN_TYPE_ERROR(Z, element_type, Type);
   }
@@ -3273,6 +3286,7 @@ DART_EXPORT Dart_Handle Dart_NewListOfTypeFilled(Dart_Handle element_type,
         CURRENT_FUNC);
   }
   const Instance& instance = Api::UnwrapInstanceHandle(Z, fill_object);
+  CHECK_ERROR_HANDLE(CheckReplacementObject(instance));
   if (!instance.IsNull() && !InstanceIsType(T, instance, type)) {
     return Api::NewError(
         "%s expects argument 'fill_object' to have the same type as "
@@ -4388,6 +4402,7 @@ DART_EXPORT Dart_Handle Dart_New(Dart_Handle type,
         CURRENT_FUNC);
   }
   Class& cls = Class::Handle(Z, type_obj.type_class());
+  CHECK_ERROR_HANDLE(CheckReplacementObject(type_obj));
   CHECK_ERROR_HANDLE(cls.EnsureIsAllocateFinalized(T));
 
   const String& base_constructor_name = String::Handle(Z, cls.Name());
@@ -4547,6 +4562,7 @@ DART_EXPORT Dart_Handle Dart_Allocate(Dart_Handle type) {
   }
 
   const Class& cls = Class::Handle(Z, type_obj.type_class());
+  CHECK_ERROR_HANDLE(CheckReplacementObject(type_obj));
   const TypeArguments& type_arguments =
       TypeArguments::Handle(Z, type_obj.GetInstanceTypeArguments(T));
 
@@ -4582,6 +4598,7 @@ Dart_AllocateWithNativeFields(Dart_Handle type,
     RETURN_NULL_ERROR(native_fields);
   }
   const Class& cls = Class::Handle(Z, type_obj.type_class());
+  CHECK_ERROR_HANDLE(CheckReplacementObject(type_obj));
   if (FLAG_verify_entry_points) {
     CHECK_ERROR_HANDLE(cls.VerifyEntryPoint());
   }
@@ -4612,6 +4629,8 @@ static Dart_Handle SetupArguments(Thread* thread,
   Object& arg = Object::Handle(zone);
   for (int i = 0; i < num_args; i++) {
     arg = Api::UnwrapHandle(arguments[i]);
+    const ErrorPtr error = CheckReplacementObject(arg);
+    if (error != Error::null()) return Api::NewHandle(thread, error);
     if (!arg.IsNull() && !arg.IsInstance()) {
       *args = Array::null();
       if (arg.IsError()) {
@@ -4641,6 +4660,7 @@ DART_EXPORT Dart_Handle Dart_InvokeConstructor(Dart_Handle object,
         CURRENT_FUNC);
   }
   const Instance& instance = Api::UnwrapInstanceHandle(Z, object);
+  CHECK_ERROR_HANDLE(CheckReplacementObject(instance));
   if (instance.IsNull()) {
     RETURN_TYPE_ERROR(Z, object, Instance);
   }
@@ -4731,6 +4751,7 @@ DART_EXPORT Dart_Handle Dart_Invoke(Dart_Handle target,
         CURRENT_FUNC);
   }
   const Object& obj = Object::Handle(Z, Api::UnwrapHandle(target));
+  CHECK_ERROR_HANDLE(CheckReplacementObject(obj));
   if (obj.IsError()) {
     return target;
   }
@@ -4814,6 +4835,7 @@ DART_EXPORT Dart_Handle Dart_InvokeClosure(Dart_Handle closure,
   API_TIMELINE_DURATION(T);
   CHECK_CALLBACK_STATE(T);
   const Instance& closure_obj = Api::UnwrapInstanceHandle(Z, closure);
+  CHECK_ERROR_HANDLE(CheckReplacementObject(closure_obj));
   if (closure_obj.IsNull() || !closure_obj.IsCallable(nullptr)) {
     RETURN_TYPE_ERROR(Z, closure, Instance);
   }
@@ -4829,6 +4851,7 @@ DART_EXPORT Dart_Handle Dart_InvokeClosure(Dart_Handle closure,
   args.SetAt(0, closure_obj);
   for (int i = 0; i < number_of_arguments; i++) {
     obj = Api::UnwrapHandle(arguments[i]);
+    CHECK_ERROR_HANDLE(CheckReplacementObject(obj));
     if (!obj.IsNull() && !obj.IsInstance()) {
       RETURN_TYPE_ERROR(Z, arguments[i], Instance);
     }
@@ -4849,6 +4872,7 @@ DART_EXPORT Dart_Handle Dart_GetField(Dart_Handle container, Dart_Handle name) {
     RETURN_TYPE_ERROR(Z, name, String);
   }
   const Object& obj = Object::Handle(Z, Api::UnwrapHandle(container));
+  CHECK_ERROR_HANDLE(CheckReplacementObject(obj));
   const bool respect_reflectable = false;
   const bool check_is_entrypoint = FLAG_verify_entry_points;
 
@@ -4913,6 +4937,7 @@ DART_EXPORT Dart_Handle Dart_SetField(Dart_Handle container,
 
   // Since null is allowed for value, we don't use UnwrapInstanceHandle.
   const Object& value_obj = Object::Handle(Z, Api::UnwrapHandle(value));
+  CHECK_ERROR_HANDLE(CheckReplacementObject(value_obj));
   if (!value_obj.IsNull() && !value_obj.IsInstance()) {
     RETURN_TYPE_ERROR(Z, value, Instance);
   }
@@ -4920,6 +4945,7 @@ DART_EXPORT Dart_Handle Dart_SetField(Dart_Handle container,
   value_instance ^= value_obj.ptr();
 
   const Object& obj = Object::Handle(Z, Api::UnwrapHandle(container));
+  CHECK_ERROR_HANDLE(CheckReplacementObject(obj));
   const bool respect_reflectable = false;
   const bool check_is_entrypoint = FLAG_verify_entry_points;
 
@@ -5657,6 +5683,11 @@ DART_EXPORT Dart_Handle Dart_LoadScriptFromBytecode(const uint8_t* buffer,
   }
   CHECK_CALLBACK_STATE(T);
 
+  if (buffer == nullptr) RETURN_NULL_ERROR(buffer);
+  if (buffer_size <= 0 || !Dart_IsBytecode(buffer, buffer_size)) {
+    return Api::NewError("Invalid unwrapped Dart bytecode program.");
+  }
+
   // NOTE: We do not attach a finalizer for this object, because the embedder
   // will free it once the isolate group has shutdown.
   const auto& typed_data = ExternalTypedData::Handle(ExternalTypedData::New(
@@ -5665,6 +5696,7 @@ DART_EXPORT Dart_Handle Dart_LoadScriptFromBytecode(const uint8_t* buffer,
 
   SafepointWriteRwLocker ml(T, IG->program_lock());
   bytecode::BytecodeLoader loader(T, typed_data);
+  CHECK_ERROR_HANDLE(loader.ValidateUnwrappedProfile());
   const Function& function = Function::Handle(loader.LoadBytecode());
 
   if (function.IsNull()) {
@@ -6050,6 +6082,7 @@ Dart_LoadLibraryFromBytecode(Dart_Handle bytecode_buffer) {
   }
   SafepointWriteRwLocker ml(T, T->isolate_group()->program_lock());
   bytecode::BytecodeLoader loader(T, td);
+  CHECK_ERROR_HANDLE(loader.ValidateUnwrappedProfile());
   const Function& function = Function::Handle(loader.LoadBytecode());
   if (function.IsNull()) {
     return Api::Null();
@@ -6076,6 +6109,95 @@ Dart_ReloadBytecodePatch(const uint8_t* bytecode_buffer,
   }
   if (bytecode_buffer_size <= 0) {
     return Api::NewError("Bytecode patch buffer must not be empty.");
+  }
+  const bool has_replacement_baseline =
+      T->isolate_group()->object_store()->shorebird_replacement_descriptor() !=
+      TypedData::null();
+  if (has_replacement_baseline && !ShorebirdReplacementManifest::IsWrapper(
+                                      bytecode_buffer, bytecode_buffer_size)) {
+    return Api::NewError("Full replacement baseline requires a wrapper.");
+  }
+  ShorebirdReplacementManifest replacement;
+  const ShorebirdReplacementManifest* replacement_ptr = nullptr;
+  if (ShorebirdReplacementManifest::IsWrapper(bytecode_buffer,
+                                              bytecode_buffer_size)) {
+#if !defined(DART_ENABLE_AOT_PATCHING)
+    return Api::NewError("Full replacement requires SHA-256 support.");
+#else
+    using Manifest = ShorebirdReplacementManifest;
+    if (bytecode_buffer_size < Manifest::kHeaderSize ||
+        Manifest::UInt32(bytecode_buffer + 8) != 1) {
+      return Api::NewError("Invalid full replacement wrapper version/header.");
+    }
+    const uint32_t manifest_size = Manifest::UInt32(bytecode_buffer + 12);
+    const uint64_t component_size =
+        static_cast<uint64_t>(Manifest::UInt32(bytecode_buffer + 16)) |
+        (static_cast<uint64_t>(Manifest::UInt32(bytecode_buffer + 20)) << 32);
+    if (manifest_size == 0 || manifest_size > Manifest::kMaxManifest ||
+        component_size == 0 || component_size > Manifest::kMaxComponent ||
+        static_cast<uint64_t>(bytecode_buffer_size) !=
+            Manifest::kHeaderSize + static_cast<uint64_t>(manifest_size) +
+                component_size ||
+        !replacement.Parse(bytecode_buffer + Manifest::kHeaderSize,
+                           manifest_size)) {
+      return Api::NewError("Invalid full replacement manifest or bounds.");
+    }
+    const auto& descriptor = TypedData::Handle(
+        Z,
+        T->isolate_group()->object_store()->shorebird_replacement_descriptor());
+    const auto& root =
+        Library::Handle(Z, T->isolate_group()->object_store()->root_library());
+    if (descriptor.IsNull() || root.IsNull() ||
+        !root.is_shorebird_full_replacement()) {
+      return Api::NewError("Full replacement requires a replacement baseline.");
+    }
+    if (T->isolate()->is_runnable() ||
+        T->isolate_group()
+                ->object_store()
+                ->shorebird_replacement_installation_state() != Smi::null()) {
+      return Api::NewError(
+          "Full replacement installation already attempted/late.");
+    }
+    std::vector<uint8_t> baseline_bytes(descriptor.Length());
+    for (intptr_t i = 0; i < descriptor.Length(); ++i) {
+      baseline_bytes[i] = descriptor.GetUint8(i);
+    }
+    Manifest baseline;
+    if (!baseline.Parse(baseline_bytes.data(), baseline_bytes.size()) ||
+        !replacement.MatchesBaseline(baseline) ||
+        !String::Handle(Z, root.url()).Equals(baseline.root.c_str())) {
+      return Api::NewError(
+          "Full replacement baseline/host ABI binding mismatch.");
+    }
+    // Capability completeness is checked independently of the descriptor:
+    // metadata alone cannot upgrade an old or partially compiled snapshot.
+    const auto& libraries = GrowableObjectArray::Handle(
+        Z, T->isolate_group()->object_store()->libraries());
+    std::vector<std::string> actual_baseline;
+    auto& library = Library::Handle(Z);
+    for (intptr_t i = 0; i < libraries.Length(); ++i) {
+      library ^= libraries.At(i);
+      if (!library.is_dart_scheme()) {
+        if (!library.is_shorebird_full_replacement()) {
+          return Api::NewError(
+              "Incomplete full replacement baseline capability.");
+        }
+        actual_baseline.push_back(String::Handle(Z, library.url()).ToCString());
+      }
+    }
+    std::sort(actual_baseline.begin(), actual_baseline.end());
+    if (actual_baseline != baseline.base) {
+      return Api::NewError("Full replacement baseline domain mismatch.");
+    }
+    bytecode_buffer += Manifest::kHeaderSize + manifest_size;
+    bytecode_buffer_size = static_cast<intptr_t>(component_size);
+    uint8_t digest[SHA256_DIGEST_LENGTH];
+    SHA256(bytecode_buffer, bytecode_buffer_size, digest);
+    if (memcmp(digest, replacement.current, sizeof(digest)) != 0) {
+      return Api::NewError("Full replacement component SHA-256 mismatch.");
+    }
+    replacement_ptr = &replacement;
+#endif
   }
   if (!Dart_IsBytecode(bytecode_buffer, bytecode_buffer_size)) {
     return Api::NewError(
@@ -6105,7 +6227,7 @@ Dart_ReloadBytecodePatch(const uint8_t* bytecode_buffer,
   {
     SafepointWriteRwLocker ml(thread, thread->isolate_group()->program_lock());
     bytecode::BytecodeLoader loader(thread, typed_data);
-    error = loader.LoadBytecodePatch();
+    error = loader.LoadBytecodePatch(replacement_ptr);
   }
 
   if (!error.IsNull()) return Api::NewHandle(thread, error.ptr());

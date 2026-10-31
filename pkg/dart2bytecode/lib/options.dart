@@ -24,6 +24,7 @@ class BytecodeOptions {
   bool emitAnnotations;
   bool emitInstanceFieldInitializers;
   final bool shorebirdStructuralPatching;
+  final bool shorebirdFullReplacement;
   bool omitAssertSourcePositions;
   bool keepUnreachableCode;
   bool showBytecodeSizeStatistics;
@@ -38,6 +39,7 @@ class BytecodeOptions {
     this.emitAnnotations = false,
     this.emitInstanceFieldInitializers = false,
     this.shorebirdStructuralPatching = false,
+    this.shorebirdFullReplacement = false,
     this.omitAssertSourcePositions = false,
     this.keepUnreachableCode = false,
     this.showBytecodeSizeStatistics = false,
@@ -45,7 +47,14 @@ class BytecodeOptions {
     this.embedSourceText = false,
     this.recordCoverage = false,
   }) {
-    if (shorebirdStructuralPatching) emitInstanceFieldInitializers = true;
+    if (shorebirdStructuralPatching && shorebirdFullReplacement) {
+      throw ArgumentError(
+        "Replacement and structural profiles are mutually exclusive.",
+      );
+    }
+    if (shorebirdStructuralPatching || shorebirdFullReplacement) {
+      emitInstanceFieldInitializers = true;
+    }
   }
 
   void parseCommandLineFlags(List<String>? flags) {

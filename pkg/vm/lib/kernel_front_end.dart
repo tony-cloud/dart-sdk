@@ -45,7 +45,9 @@ import 'package:kernel/kernel.dart' show loadComponentFromBinary;
 import 'package:kernel/target/targets.dart' show Target, TargetFlags, getTarget;
 import 'package:package_config/package_config.dart' show loadPackageConfigUri;
 
+import 'bytecode/full_replacement.dart';
 import 'http_filesystem.dart' show HttpAwareFileSystem;
+import 'metadata/shorebird_replacement.dart';
 import 'modular/target/install.dart' show installAdditionalTargets;
 import 'modular/transformations/call_site_annotator.dart'
     as call_site_annotator;
@@ -233,6 +235,16 @@ void declareCompilerOptions(ArgParser args) {
     'shorebird-structural-patching',
     defaultsTo: false,
     help: 'Prepare an AOT no-TFA baseline for additive bytecode patches.',
+  );
+  args.addFlag(
+    'shorebird-full-replacement',
+    defaultsTo: false,
+    help: 'Prepare a complete-domain replacement AOT baseline.',
+  );
+  args.addOption('shorebird-host-abi', help: 'Frozen host ABI SHA-256.');
+  args.addOption(
+    'shorebird-replacement-base',
+    help: 'Bound full replacement baseline wrapper.',
   );
   args.addOption(
     'dump-detailed-dynamic-interface',
@@ -463,6 +475,9 @@ Future<int> runCompiler(ArgResults options, String usage) async {
       keepClassNamesImplementing: options['keep-class-names-implementing'],
       dynamicInterface: dynamicInterfaceUri,
       shorebirdStructuralPatching: options['shorebird-structural-patching'],
+      shorebirdFullReplacement: options['shorebird-full-replacement'],
+      shorebirdHostAbi: options['shorebird-host-abi'],
+      shorebirdReplacementBase: options['shorebird-replacement-base'],
       dumpDetailedDynamicInterface: dumpDetailedDynamicInterface,
       aot: aot,
       useGlobalTypeFlowAnalysis: tfa,
@@ -580,6 +595,9 @@ class KernelCompilationArguments {
   final bool aot;
   final Uri? dynamicInterface;
   final bool shorebirdStructuralPatching;
+  final bool shorebirdFullReplacement;
+  final String? shorebirdHostAbi;
+  final String? shorebirdReplacementBase;
   final String? dumpDetailedDynamicInterface;
   final Map<String, String> environmentDefines; // Should be mutable.
   final bool enableAsserts;
@@ -605,6 +623,9 @@ class KernelCompilationArguments {
     this.aot = false,
     this.dynamicInterface,
     this.shorebirdStructuralPatching = false,
+    this.shorebirdFullReplacement = false,
+    this.shorebirdHostAbi,
+    this.shorebirdReplacementBase,
     this.dumpDetailedDynamicInterface,
     Map<String, String>? environmentDefines,
     this.enableAsserts = true,
@@ -628,6 +649,28 @@ class KernelCompilationArguments {
 Future<KernelCompilationResults> compileToKernel(
   KernelCompilationArguments args,
 ) async {
+  if (args.shorebirdFullReplacement) {
+    if (args.shorebirdStructuralPatching ||
+        !args.aot ||
+        args.useGlobalTypeFlowAnalysis ||
+        args.minimalKernel) {
+      throw ArgumentError(
+        '--shorebird-full-replacement requires --aot --no-tfa and excludes structural/minimal modes.',
+      );
+    }
+    if (args.shorebirdReplacementBase == null ||
+        args.shorebirdHostAbi == null) {
+      throw ArgumentError(
+        '--shorebird-full-replacement requires --shorebird-replacement-base and --shorebird-host-abi.',
+      );
+    }
+    parseShorebirdHostAbi(args.shorebirdHostAbi!);
+  } else if (args.shorebirdReplacementBase != null ||
+      args.shorebirdHostAbi != null) {
+    throw ArgumentError(
+      'Replacement binding options require --shorebird-full-replacement.',
+    );
+  }
   if (args.shorebirdStructuralPatching &&
       (!args.aot || args.useGlobalTypeFlowAnalysis)) {
     throw ArgumentError(
@@ -718,6 +761,37 @@ Future<KernelCompilationResults> compileToKernel(
 
   // Run global transformations only if component is correct.
   if (component != null) {
+    if (args.shorebirdFullReplacement) {
+      final bundle = decodeShorebirdReplacement(
+        await File(args.shorebirdReplacementBase!).readAsBytes(),
+      );
+      final manifest = bundle.manifest;
+      final uris = canonicalReplacementUris(
+        component.libraries
+            .where((library) => library.importUri.scheme != 'dart')
+            .map((library) => library.importUri.toString()),
+      );
+      final hostAbi = parseShorebirdHostAbi(args.shorebirdHostAbi!);
+      final root = component.mainMethod?.enclosingLibrary;
+      if (root == null ||
+          root.importUri.toString() != manifest.rootUri ||
+          uris.join('\u0000') != manifest.baselineUris.join('\u0000') ||
+          manifest.baselineUris.join('\u0000') !=
+              manifest.currentUris.join('\u0000') ||
+          manifest.removedUris.isNotEmpty ||
+          manifest.baselineDigest.join(',') !=
+              manifest.currentDigest.join(',') ||
+          hostAbi.join(',') != manifest.hostAbi.join(',')) {
+        throw const FormatException(
+          'Replacement native baseline root, domain or binding mismatch.',
+        );
+      }
+      validateShorebirdReplacementLibraries(component.libraries);
+      component.addMetadataRepository(
+        ShorebirdReplacementMetadataRepository()
+          ..mapping[root] = manifest.baselineProjection().encode(),
+      );
+    }
     if (args.aot || args.minimalKernel) {
       await runGlobalTransformations(target, component, errorDetector, args);
 
@@ -811,7 +885,7 @@ Future runGlobalTransformations(
   if (args.dynamicInterface != null) {
     await _runDynamicInterfaceAnnotator(component, coreTypes, args);
   }
-  if (args.shorebirdStructuralPatching) {
+  if (args.shorebirdStructuralPatching || args.shorebirdFullReplacement) {
     dynamic_interface_annotator.annotateShorebirdStructuralComponent(
       component,
       coreTypes,
@@ -857,13 +931,14 @@ Future runGlobalTransformations(
       useRapidTypeAnalysis: args.useRapidTypeAnalysis,
     );
   } else {
-    if (!args.shorebirdStructuralPatching) {
+    if (!args.shorebirdStructuralPatching && !args.shorebirdFullReplacement) {
       devirtualization.transformComponent(coreTypes, component);
       no_dynamic_invocations_annotator.transformComponent(component);
     }
     annotateWithoutTypeFlow(
       component,
       shorebirdStructuralPatching: args.shorebirdStructuralPatching,
+      shorebirdFullReplacement: args.shorebirdFullReplacement,
     );
   }
 

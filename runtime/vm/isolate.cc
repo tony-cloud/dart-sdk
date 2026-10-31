@@ -2188,6 +2188,15 @@ const char* Isolate::MakeRunnable() {
     return "A failed structural patch requires a fresh isolate group.";
   }
 #endif
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (group()->object_store()->shorebird_replacement_descriptor() !=
+          TypedData::null() &&
+      group()->object_store()->shorebird_replacement_installation_state() !=
+          Smi::New(2)) {
+    return "Full replacement must commit bundled base or update before "
+           "runnable.";
+  }
+#endif
   // Check if we are in a valid state to make the isolate runnable.
   if (is_runnable() == true) {
     return "Isolate is already runnable";

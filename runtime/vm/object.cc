@@ -64,6 +64,7 @@
 #include "vm/reverse_pc_lookup_cache.h"
 #include "vm/runtime_entry.h"
 #include "vm/scopes.h"
+#include "vm/shorebird_replacement.h"
 #include "vm/stack_frame.h"
 #include "vm/stub_code.h"
 #include "vm/symbols.h"
@@ -8134,6 +8135,77 @@ bool Function::HasCode() const {
   NoSafepointScope no_safepoint;
   ASSERT(untag()->code() != Code::null());
   return untag()->code() != StubCode::LazyCompile().ptr();
+}
+
+#if defined(DART_SHOREBIRD_INTERPRETER)
+static bool IsInactiveReplacementObject(const Object& object, intptr_t depth) {
+  Thread* thread = Thread::Current();
+  auto* store = thread->isolate_group()->object_store();
+  if (store->shorebird_replacement_descriptor() == TypedData::null() ||
+      object.IsNull())
+    return false;
+  Zone* zone = thread->zone();
+  if (depth > 64) return true;
+  if (object.IsTypeArguments()) {
+    const auto& arguments = TypeArguments::Cast(object);
+    auto& type = AbstractType::Handle(zone);
+    for (intptr_t i = 0; i < arguments.Length(); ++i) {
+      type = arguments.TypeAt(i);
+      if (IsInactiveReplacementObject(type, depth + 1)) return true;
+    }
+    return false;
+  }
+  auto& library = Library::Handle(zone);
+  auto& cls = Class::Handle(zone);
+  if (object.IsLibrary()) {
+    library ^= object.ptr();
+  } else if (object.IsClass()) {
+    cls ^= object.ptr();
+  } else if (object.IsType()) {
+    const auto& type = Type::Cast(object);
+    if (!type.HasTypeClass()) return false;
+    const auto& arguments = TypeArguments::Handle(zone, type.arguments());
+    if (!arguments.IsNull() &&
+        IsInactiveReplacementObject(arguments, depth + 1))
+      return true;
+    cls = type.type_class();
+  } else if (object.IsFunction()) {
+    cls = Function::Cast(object).Owner();
+  } else if (object.IsField()) {
+    cls = Field::Cast(object).Owner();
+  } else if (object.IsClosure()) {
+    const auto& function =
+        Function::Handle(zone, Closure::Cast(object).function());
+    cls = function.Owner();
+  } else if (object.IsInstance()) {
+    const auto& instance = Instance::Cast(object);
+    cls = instance.clazz();
+    if (cls.NumTypeArguments() > 0) {
+      const auto& arguments =
+          TypeArguments::Handle(zone, instance.GetTypeArguments());
+      if (!arguments.IsNull() &&
+          IsInactiveReplacementObject(arguments, depth + 1))
+        return true;
+    }
+  } else {
+    return false;
+  }
+  if (!cls.IsNull()) library = cls.library();
+  if (library.IsNull() || library.is_dart_scheme()) return false;
+  if (store->shorebird_replacement_installation_state() != Smi::New(2)) {
+    return true;
+  }
+  const auto& url = String::Handle(zone, library.url());
+  return Library::LookupLibrary(thread, url) != library.ptr();
+}
+#endif
+
+bool IsInactiveShorebirdReplacementObject(const Object& object) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  return IsInactiveReplacementObject(object, 0);
+#else
+  return false;
+#endif
 }
 
 #if defined(DART_SHOREBIRD_INTERPRETER)

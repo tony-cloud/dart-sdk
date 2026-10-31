@@ -307,6 +307,13 @@ ArgParser argParser = new ArgParser(allowTrailingOptions: true)
     defaultsTo: false,
     help: 'Prepare an AOT no-TFA baseline for additive bytecode patches.',
   )
+  ..addFlag(
+    'shorebird-full-replacement',
+    defaultsTo: false,
+    help: 'Prepare a complete-domain replacement AOT baseline.',
+  )
+  ..addOption('shorebird-host-abi')
+  ..addOption('shorebird-replacement-base')
   ..addOption(
     'dump-detailed-dynamic-interface',
     help: 'Path to output detailed dynamic interface.',
@@ -683,6 +690,19 @@ class FrontendCompiler implements CompilerInterface {
     if (_recordedUses == null && recordedUses != null) {
       _recordedUses = resolveInputUri(recordedUses);
     }
+    if (options['shorebird-full-replacement'] && !options['aot']) {
+      print('Error: --shorebird-full-replacement requires --aot --no-tfa');
+      return false;
+    }
+    if (!options['shorebird-full-replacement'] &&
+        (options['shorebird-host-abi'] != null ||
+            options['shorebird-replacement-base'] != null)) {
+      print(
+        'Error: replacement binding options require '
+        '--shorebird-full-replacement',
+      );
+      return false;
+    }
     if (_recordedUses != null && !options['aot']) {
       print('Error: --recorded-uses option must be used with --aot');
       return false;
@@ -885,6 +905,9 @@ class FrontendCompiler implements CompilerInterface {
             dynamicInterface: dynamicInterfaceUri,
             shorebirdStructuralPatching:
                 options['shorebird-structural-patching'],
+            shorebirdFullReplacement: options['shorebird-full-replacement'],
+            shorebirdHostAbi: options['shorebird-host-abi'],
+            shorebirdReplacementBase: options['shorebird-replacement-base'],
             dumpDetailedDynamicInterface: dumpDetailedDynamicInterface,
             aot: options['aot'],
             targetOS: options['target-os'],

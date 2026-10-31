@@ -214,6 +214,7 @@ class ObjectPointerVisitor;
   RW(GrowableObjectArray, megamorphic_cache_table)                             \
   RW(GrowableObjectArray, ffi_callback_code)                                   \
   ARW_AR(Class, typed_data_class)                                              \
+  RW(TypedData, shorebird_replacement_descriptor)                              \
   RW(Array, ffi_callback_functions)                                            \
   /* Roots for JIT/AOT snapshots are up until here (see to_snapshot() below)*/ \
   RW(Array, dispatch_table_code_entries)                                       \
@@ -221,6 +222,7 @@ class ObjectPointerVisitor;
   RW(GrowableObjectArray, tag_table)                                           \
   RW(Array, obfuscation_map)                                                   \
   RW(Array, loading_unit_uris)                                                 \
+  RW(Smi, shorebird_replacement_installation_state)                            \
   RW(Smi, shorebird_structural_installation_state)                             \
   RW(GrowableObjectArray, shorebird_added_fields)                              \
   RW(Array, shorebird_field_sidecars)                                          \

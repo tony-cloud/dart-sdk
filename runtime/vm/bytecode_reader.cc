@@ -104,6 +104,9 @@ BytecodeLoader::BytecodeLoader(Thread* thread, const TypedDataBase& binary)
       bytecode_offsets_map_(
           Array::Handle(thread->zone(),
                         HashTables::New<BytecodeOffsetsMap>(16))),
+      replacement_libraries_(
+          GrowableObjectArray::Handle(thread->zone(),
+                                      GrowableObjectArray::New())),
       structural_functions_(
           GrowableObjectArray::Handle(thread->zone(),
                                       GrowableObjectArray::New())) {
@@ -120,8 +123,51 @@ BytecodeLoader::~BytecodeLoader() {
   thread_->set_bytecode_loader(nullptr);
 }
 
+ErrorPtr BytecodeLoader::ValidateUnwrappedProfile() {
+  // This is a group policy, independent of the component's own profile and
+  // any earlier validation cached by this loader. Only the dedicated wrapped
+  // replacement path may publish libraries in a complete-domain group.
+  if (IG->object_store()->shorebird_replacement_descriptor() !=
+      TypedData::null()) {
+    return ApiError::New(String::Handle(
+        thread_->zone(),
+        String::New("Complete-domain baselines cannot load raw components.")));
+  }
+  if (validated_unwrapped_profile_) return Error::null();
+  is_loading_patch_ = true;
+  LongJumpScope jump(thread_);
+  if (DART_SETJMP(*jump.Set()) != 0) {
+    is_loading_patch_ = false;
+    return thread_->StealStickyError();
+  }
+  if (bytecode_component_array_.IsNull()) {
+    BytecodeReaderHelper component_reader(thread_, binary_);
+    bytecode_component_array_ = component_reader.ReadBytecodeComponent();
+  }
+  BytecodeComponentData component(bytecode_component_array_);
+  BytecodeReaderHelper reader(thread_, &component);
+  AlternativeReadingScope scan(&reader.reader(),
+                               component.GetLibraryIndexOffset());
+  for (intptr_t i = 0; i < component.GetNumLibraries(); ++i) {
+    reader.ReadObject();
+    const intptr_t offset =
+        component.GetLibrariesOffset() + reader.reader().ReadUInt();
+    AlternativeReadingScope declaration(&reader.reader(), offset);
+    if ((reader.reader().ReadUInt() & (1 << 3)) != 0) {
+      RejectBytecodePatch(
+          "Full replacement bytecode requires a manifest wrapper.");
+    }
+  }
+  validated_unwrapped_profile_ = true;
+  is_loading_patch_ = false;
+  return Error::null();
+}
+
 FunctionPtr BytecodeLoader::LoadBytecode(bool load_code) {
   ASSERT(IsolateGroup::Current()->program_lock()->IsCurrentThreadWriter());
+  const auto& profile_error =
+      Error::Handle(thread_->zone(), ValidateUnwrappedProfile());
+  if (!profile_error.IsNull()) Exceptions::PropagateError(profile_error);
 
   if (bytecode_component_array_.IsNull()) {
     BytecodeReaderHelper component_reader(thread_, binary_);
@@ -144,9 +190,30 @@ FunctionPtr BytecodeLoader::LoadBytecode(bool load_code) {
   return Function::RawCast(bytecode_reader.ReadObject());
 }
 
-ErrorPtr BytecodeLoader::LoadBytecodePatch() {
+LibraryPtr BytecodeLoader::LookupReplacementLibrary(const String& uri) const {
+  ASSERT(is_full_replacement());
+  auto& library = Library::Handle(thread_->zone());
+  auto& url = String::Handle(thread_->zone());
+  for (intptr_t i = 0; i < replacement_libraries_.Length(); ++i) {
+    library ^= replacement_libraries_.At(i);
+    url = library.url();
+    if (uri.Equals(url)) return library.ptr();
+  }
+  if (uri.StartsWith(String::Handle(thread_->zone(), String::New("dart:")))) {
+    if (uri.Equals("dart:ffi") || uri.Equals("dart:mirrors") ||
+        uri.Equals("dart:nativewrappers")) {
+      RejectBytecodePatch("Full replacement does not support FFI or mirrors.");
+    }
+    return Library::LookupLibrary(thread_, uri);
+  }
+  return Library::null();
+}
+
+ErrorPtr BytecodeLoader::LoadBytecodePatch(
+    const ShorebirdReplacementManifest* replacement) {
   ASSERT(IsolateGroup::Current()->program_lock()->IsCurrentThreadWriter());
 
+  replacement_ = replacement;
   is_loading_patch_ = true;
   LongJumpScope jump(thread_);
   if (DART_SETJMP(*jump.Set()) != 0) {
@@ -172,10 +239,17 @@ ErrorPtr BytecodeLoader::LoadBytecodePatch() {
       const intptr_t offset = bytecode_component.GetLibrariesOffset() +
                               bytecode_reader.reader().ReadUInt();
       AlternativeReadingScope declaration(&bytecode_reader.reader(), offset);
-      structural |= (bytecode_reader.reader().ReadUInt() & (1 << 2)) != 0;
+      const intptr_t flags = bytecode_reader.reader().ReadUInt();
+      if ((flags & (1 << 3)) != 0 && !is_full_replacement()) {
+        RejectBytecodePatch(
+            "Full replacement requires an authenticated wrapper.");
+      }
+      structural |= (flags & (1 << 2)) != 0;
     }
   }
-  if (structural) {
+  if (is_full_replacement()) {
+    bytecode_reader.ReadFullReplacement(bytecode_component.GetNumLibraries());
+  } else if (structural) {
     is_structural_patch_ = true;
     bytecode_reader.ReadStructuralBytecodePatch(
         bytecode_component.GetNumLibraries());
@@ -814,6 +888,9 @@ intptr_t BytecodeReaderHelper::ReadConstantPool(const Function& function,
         obj = ReadObject();
       } break;
       case ConstantPoolTag::kExternalCall: {
+        if (thread_->bytecode_loader()->is_full_replacement()) {
+          RejectBytecodePatch("Full replacement cannot contain native pools.");
+        }
         // ExternalCall constant occupies 2 entries:
         // trampoline and native function.
         pool.SetTypeAt(i, ObjectPool::EntryType::kNativeFunction,
@@ -829,6 +906,9 @@ intptr_t BytecodeReaderHelper::ReadConstantPool(const Function& function,
         continue;
       }
       case ConstantPoolTag::kNativeFunction: {
+        if (thread_->bytecode_loader()->is_full_replacement()) {
+          RejectBytecodePatch("Full replacement cannot contain native pools.");
+        }
         // NativeFunction constant has 1 raw value entry.
         pool.SetTypeAt(i, ObjectPool::EntryType::kNativeFunction,
                        ObjectPool::Patchability::kNotPatchable,
@@ -893,7 +973,25 @@ BytecodePtr BytecodeReaderHelper::ReadBytecode(const ObjectPool& pool) {
   const intptr_t size = reader_.ReadUInt();
   const intptr_t offset = reader_.offset();
 
+  CheckBytecodeRange(offset, size, reader_.typed_data()->LengthInBytes());
   const uint8_t* data = reader_.BufferAt(offset);
+  if (thread_->bytecode_loader()->is_full_replacement()) {
+    for (intptr_t pc = 0; pc < size;) {
+      const uint8_t op = data[pc];
+      if (op >= KernelBytecode::kNumOpcodes || op == KernelBytecode::kFfiCall ||
+          op == KernelBytecode::kFfiCall_Wide ||
+          op == KernelBytecode::kExternalCall ||
+          op == KernelBytecode::kExternalCall_Wide ||
+          op == KernelBytecode::kResolveNativeFunction ||
+          op == KernelBytecode::kResolveNativeFunction_Wide ||
+          op >= KernelBytecode::kVMInternal_ImplicitConstructorClosure ||
+          KernelBytecode::kInstructionSize[op] <= 0 ||
+          KernelBytecode::kInstructionSize[op] > size - pc) {
+        RejectBytecodePatch("Unsupported or truncated replacement opcode.");
+      }
+      pc += KernelBytecode::kInstructionSize[op];
+    }
+  }
   reader_.set_offset(offset + size);
 
   // Create and return bytecode object.
@@ -1037,6 +1135,18 @@ ArrayPtr BytecodeReaderHelper::ReadBytecodeComponent() {
           version, KernelBytecode::kBytecodeFormatVersion);
   }
 
+  // Every declared item consumes at least one byte, including annotations
+  // which PRODUCT does not otherwise decode. Validate all section extents
+  // before allocating caches or accepting an unused truncated tail.
+  {
+    AlternativeReadingScope sections(&reader_, reader_.offset());
+    for (intptr_t i = 0; i < 14; ++i) {
+      const intptr_t count = reader_.ReadUInt32();
+      const intptr_t offset = start_offset + reader_.ReadUInt32();
+      CheckBytecodeRange(offset, count, reader_.size());
+    }
+  }
+
   reader_.ReadUInt32();  // Skip stringTable.numItems
   const intptr_t string_table_offset = start_offset + reader_.ReadUInt32();
 
@@ -1083,8 +1193,15 @@ ArrayPtr BytecodeReaderHelper::ReadBytecodeComponent() {
   reader_.set_offset(string_table_offset);
   const intptr_t num_one_byte_strings = reader_.ReadUInt32();
   const intptr_t num_two_byte_strings = reader_.ReadUInt32();
+  if (num_one_byte_strings > reader_.size() / 4 ||
+      num_two_byte_strings > reader_.size() / 4 - num_one_byte_strings) {
+    CheckBytecodeRange(-1, 0, reader_.size());
+  }
+  const intptr_t string_offsets_size =
+      (num_one_byte_strings + num_two_byte_strings) * 4;
+  CheckBytecodeRange(reader_.offset(), string_offsets_size, reader_.size());
   const intptr_t strings_contents_offset =
-      reader_.offset() + (num_one_byte_strings + num_two_byte_strings) * 4;
+      reader_.offset() + string_offsets_size;
 
   // Read header of object table.
   reader_.set_offset(object_table_offset);
@@ -1094,6 +1211,10 @@ ArrayPtr BytecodeReaderHelper::ReadBytecodeComponent() {
   // Skip over contents of objects.
   const intptr_t objects_contents_offset = reader_.offset();
   const intptr_t object_offsets_offset = objects_contents_offset + objects_size;
+  // Each packed object offset occupies at least one byte. Bound the cache
+  // allocation before decoding a checksum-consistent malformed component.
+  CheckBytecodeRange(object_offsets_offset, num_objects, reader_.size());
+  CheckBytecodeRange(objects_contents_offset, objects_size, reader_.size());
   reader_.set_offset(object_offsets_offset);
 
   auto& bytecode_component_array = Array::Handle(
@@ -1228,7 +1349,10 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
             "Encountered dart:concurrent when functionality is disabled. "
             "Pass --experimental-shared-data");
       }
-      LibraryPtr library = Library::LookupLibrary(thread_, uri);
+      BytecodeLoader* loader = thread_->bytecode_loader();
+      LibraryPtr library = loader->is_full_replacement()
+                               ? loader->LookupReplacementLibrary(uri)
+                               : Library::LookupLibrary(thread_, uri);
       if (library == Library::null()) {
         // Expression evaluation libraries are not registered with the VM:
         // The expression evaluation functions should be GC-able as soon as
@@ -1784,11 +1908,12 @@ StringPtr BytecodeReaderHelper::ReadString(bool is_canonical) {
   const bool isOneByteString = (ref & kFlagTwoByteString) == 0;
   intptr_t index = ref >> 1;
 
-  if (!isOneByteString) {
-    const uint32_t num_one_byte_strings =
-        reader_.ReadUInt32At(bytecode_component_->GetStringsHeaderOffset());
-    index += num_one_byte_strings;
-  }
+  const intptr_t strings_header = bytecode_component_->GetStringsHeaderOffset();
+  const intptr_t one_byte_count = reader_.ReadUInt32At(strings_header);
+  const intptr_t two_byte_count = reader_.ReadUInt32At(strings_header + 4);
+  CheckBytecodeRange(index, 1,
+                     isOneByteString ? one_byte_count : two_byte_count);
+  if (!isOneByteString) index += one_byte_count;
 
   AlternativeReadingScope alt(&reader_,
                               bytecode_component_->GetStringsHeaderOffset() +
@@ -1801,26 +1926,44 @@ StringPtr BytecodeReaderHelper::ReadString(bool is_canonical) {
     start_offs = 0;
   }
 
+  CheckBytecodeRange(
+      bytecode_component_->GetStringsContentsOffset() + start_offs,
+      end_offs - start_offs, reader_.size());
+  if (!isOneByteString && ((end_offs - start_offs) & 1) != 0) {
+    if (thread_->bytecode_loader()->is_loading_patch()) {
+      RejectBytecodePatch("Odd-length UTF-16 bytecode string.");
+    }
+    FATAL("Odd-length UTF-16 bytecode string.");
+  }
+
   // Bytecode strings reside in ExternalTypedData which is not movable by GC,
   // so it is OK to take a direct pointer to string characters even if
   // symbol allocation triggers GC.
   const uint8_t* data = reader_.BufferAt(
       bytecode_component_->GetStringsContentsOffset() + start_offs);
 
+  // DBC packs UTF-16 after Latin1 without alignment padding.
+  uint16_t* utf16 = nullptr;
+  if (!isOneByteString) {
+    const intptr_t length = (end_offs - start_offs) >> 1;
+    utf16 = Z->Alloc<uint16_t>(length);
+    for (intptr_t i = 0; i < length; ++i) {
+      utf16[i] = static_cast<uint16_t>(data[2 * i]) |
+                 (static_cast<uint16_t>(data[2 * i + 1]) << 8);
+    }
+  }
+
   if (is_canonical) {
     if (isOneByteString) {
       return Symbols::FromLatin1(thread_, data, end_offs - start_offs);
     } else {
-      return Symbols::FromUTF16(thread_,
-                                reinterpret_cast<const uint16_t*>(data),
-                                (end_offs - start_offs) >> 1);
+      return Symbols::FromUTF16(thread_, utf16, (end_offs - start_offs) >> 1);
     }
   } else {
     if (isOneByteString) {
       return String::FromLatin1(data, end_offs - start_offs, Heap::kOld);
     } else {
-      return String::FromUTF16(reinterpret_cast<const uint16_t*>(data),
-                               (end_offs - start_offs) >> 1, Heap::kOld);
+      return String::FromUTF16(utf16, (end_offs - start_offs) >> 1, Heap::kOld);
     }
   }
 }
@@ -2343,6 +2486,11 @@ void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
 
     const bool is_static = (flags & kIsStaticFlag) != 0;
     const bool is_native = (flags & kIsNativeFlag) != 0;
+    if (thread_->bytecode_loader()->is_full_replacement() &&
+        (is_native || (flags & kIsExternalFlag) != 0)) {
+      RejectBytecodePatch(
+          "Full replacement cannot define native/external code.");
+    }
     const bool has_pragma = (flags & kHasPragmaFlag) != 0;
     const bool is_extension_member = (flags & kIsExtensionMemberFlag) != 0;
     const bool is_extension_type_member =
@@ -2397,6 +2545,9 @@ void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
       thread_->bytecode_loader()->SetExpressionEvaluationFunction(function);
     }
 
+    if (thread_->bytecode_loader()->is_full_replacement()) {
+      function.set_is_dynamically_callable(true);
+    }
     function.set_has_pragma(has_pragma);
     NOT_IN_PRECOMPILED(function.set_end_token_pos(end_position));
     function.set_is_synthetic((flags & kIsNoSuchMethodForwarderFlag) != 0);
@@ -2743,7 +2894,12 @@ void BytecodeReaderHelper::ReadLibraryDeclaration(const Library& library,
 
   // TODO(alexmarkov): fill in library.used_scripts.
 
-  reader_.ReadUInt();  // Flags.
+  const intptr_t flags = reader_.ReadUInt();
+  if ((flags & (1 << 3)) != 0 &&
+      !thread_->bytecode_loader()->is_full_replacement()) {
+    RejectBytecodePatch(
+        "Full replacement bytecode requires a manifest wrapper.");
+  }
 
   auto& name = String::CheckedHandle(Z, ReadObject());
   ASSERT(name.ptr() !=
@@ -2833,6 +2989,174 @@ void BytecodeReaderHelper::ReadLibraryDeclarations(
   if (load_code) {
     ReadPendingCode(pending_objects);
   }
+}
+
+void BytecodeReaderHelper::ReadFullReplacement(intptr_t num_libraries) {
+#if !defined(DART_SHOREBIRD_INTERPRETER) || !defined(DART_PRECOMPILED_RUNTIME)
+  RejectBytecodePatch("Full replacement requires the AOT interpreter.");
+#else
+  auto* loader = thread_->bytecode_loader();
+  const auto& manifest = loader->replacement();
+  const auto& old_root = Library::Handle(Z, IG->object_store()->root_library());
+  if (old_root.IsNull() || !old_root.is_shorebird_full_replacement() ||
+      IG->object_store()->shorebird_replacement_descriptor() ==
+          TypedData::null()) {
+    RejectBytecodePatch(
+        "Full replacement requires a replacement AOT baseline.");
+  }
+  if (thread_->isolate()->is_runnable() ||
+      IG->object_store()->shorebird_replacement_installation_state() !=
+          Smi::null()) {
+    RejectBytecodePatch("Full replacement requires a fresh uncommitted group.");
+  }
+  intptr_t isolate_count = 0;
+  IG->ForEachIsolate([&](Isolate*) { ++isolate_count; });
+  if (isolate_count != 1) {
+    RejectBytecodePatch("Full replacement requires a single-isolate group.");
+  }
+  if (num_libraries != static_cast<intptr_t>(manifest.updated.size())) {
+    RejectBytecodePatch("Replacement component has an incomplete domain.");
+  }
+  auto& uri = String::Handle(Z);
+  auto& name = String::Handle(Z);
+  auto& library = Library::Handle(Z);
+  auto& offset = Smi::Handle(Z);
+  const auto& offsets =
+      GrowableObjectArray::Handle(Z, GrowableObjectArray::New());
+  // Before any identity registration, verify the actual component's URI set,
+  // uniqueness and flags. Index order itself need not be sorted.
+  BitVector seen(Z, num_libraries);
+  {
+    AlternativeReadingScope scan(&reader_, reader_.offset());
+    for (intptr_t i = 0; i < num_libraries; ++i) {
+      const auto& entry = Object::Handle(Z, ReadObject());
+      if (!entry.IsString()) RejectBytecodePatch("Invalid replacement URI.");
+      uri ^= entry.ptr();
+      const intptr_t library_offset =
+          bytecode_component_->GetLibrariesOffset() + reader_.ReadUInt();
+      const char* text = uri.ToCString();
+      const auto found = std::lower_bound(manifest.updated.begin(),
+                                          manifest.updated.end(), text);
+      if (found == manifest.updated.end() || *found != text ||
+          !uri.Equals(found->c_str())) {
+        RejectBytecodePatch("Unexpected replacement library URI.");
+      }
+      const intptr_t index = found - manifest.updated.begin();
+      if (seen.Contains(index)) {
+        RejectBytecodePatch("Duplicate replacement library URI.");
+      }
+      seen.Add(index);
+      AlternativeReadingScope declaration(&reader_, library_offset);
+      const intptr_t flags = reader_.ReadUInt();
+      if (flags != (1 << 3)) {
+        RejectBytecodePatch(
+            "Replacement requires bit3-only libraries; FFI/mirrors "
+            "unsupported.");
+      }
+    }
+  }
+  // Class registration, finalization and static allocation below are permanent
+  // mutations. Any failure poisons this group until it is destroyed.
+  IG->object_store()->set_shorebird_replacement_installation_state(
+      Smi::Handle(Z, Smi::New(1)));
+  const auto& staged = loader->replacement_libraries();
+  for (intptr_t i = 0; i < num_libraries; ++i) {
+    uri ^= ReadObject();
+    offset = Smi::New(bytecode_component_->GetLibrariesOffset() +
+                      reader_.ReadUInt());
+    library = Library::New(uri);
+    library.set_is_shorebird_patchable(true);
+    library.set_is_shorebird_full_replacement(true);
+    staged.Add(library);
+    offsets.Add(offset);
+  }
+  // Library objects stay private. All class identities/offsets are established
+  // before reading any type or member, including cross-library forward refs.
+  for (intptr_t i = 0; i < staged.Length(); ++i) {
+    library ^= staged.At(i);
+    offset ^= offsets.At(i);
+    AlternativeReadingScope declaration(&reader_, offset.Value());
+    ReadLibraryDeclaration(library, true);
+  }
+  const auto& pending =
+      GrowableObjectArray::Handle(Z, GrowableObjectArray::New());
+  auto& cls = Class::Handle(Z);
+  // Read declarations first to keep member loading and constants independent
+  // from the source order of libraries.
+  for (intptr_t i = 0; i < staged.Length(); ++i) {
+    library ^= staged.At(i);
+    cls = library.toplevel_class();
+    pending.Add(cls);
+    ClassDictionaryIterator classes(library);
+    while (classes.HasNext()) {
+      cls = classes.GetNextClass();
+      if (!cls.IsTopLevel()) pending.Add(cls);
+    }
+  }
+  for (intptr_t i = 0; i < pending.Length(); ++i) {
+    cls ^= pending.At(i);
+    if (!cls.is_declaration_loaded()) {
+      AlternativeReadingScope declaration(&reader_, loader->GetOffset(cls));
+      ReadClassDeclaration(cls);
+    }
+    if (cls.num_native_fields() != 0) {
+      RejectBytecodePatch("Replacement cannot define native wrapper classes.");
+    }
+  }
+  ReadPendingCode(pending);
+  for (intptr_t i = 0; i < pending.Length(); ++i) {
+    cls ^= pending.At(i);
+    if (cls.num_native_fields() != 0) {
+      RejectBytecodePatch("Replacement cannot inherit native wrapper layouts.");
+    }
+  }
+  if (bytecode_component_->GetMainOffset() == 0) {
+    RejectBytecodePatch("Replacement component has no main function.");
+  }
+  auto& main_object = Object::Handle(Z);
+  {
+    AlternativeReadingScope main_scope(&reader_,
+                                       bytecode_component_->GetMainOffset());
+    main_object = ReadObject();
+  }
+  if (!main_object.IsFunction())
+    RejectBytecodePatch("Invalid replacement main.");
+  const auto& main = Function::Cast(main_object);
+  const auto& main_class = Class::Handle(Z, main.Owner());
+  const auto& root = Library::Handle(Z, main_class.library());
+  uri = root.url();
+  name = main.name();
+  if (!uri.Equals(manifest.root.c_str()) || !main_class.IsTopLevel() ||
+      !name.Equals("main") || !main.is_static() || !main.HasBytecode()) {
+    RejectBytecodePatch("Replacement main does not match the persisted root.");
+  }
+  const auto& published =
+      GrowableObjectArray::Handle(Z, GrowableObjectArray::New());
+  const auto& old_libraries =
+      GrowableObjectArray::Handle(Z, IG->object_store()->libraries());
+  for (intptr_t i = 0; i < old_libraries.Length(); ++i) {
+    library ^= old_libraries.At(i);
+    if (library.is_dart_scheme()) published.Add(library);
+  }
+  for (intptr_t i = 0; i < staged.Length(); ++i) {
+    library ^= staged.At(i);
+    library.set_index(published.Length());
+    published.Add(library);
+  }
+  // Frozen libraries can have holes after removing the inactive domain.
+  // RegisterLibraries rebuilds both active lookup structures as one step.
+  for (intptr_t i = 0; i < published.Length(); ++i) {
+    library ^= published.At(i);
+    library.set_index(i);
+  }
+  {
+    GcSafepointOperationScope safepoint(thread_);
+    Library::RegisterLibraries(thread_, published);
+    IG->object_store()->set_root_library(root);
+    IG->object_store()->set_shorebird_replacement_installation_state(
+        Smi::Handle(Z, Smi::New(2)));
+  }
+#endif
 }
 
 void BytecodeReaderHelper::ReadStructuralBytecodePatch(intptr_t num_libraries) {

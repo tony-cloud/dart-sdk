@@ -2901,7 +2901,14 @@ void Precompiler::DropLibraries() {
       it.GetNext();
     }
     bool retain = false;
-    if (entries > 0) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (lib.is_shorebird_full_replacement()) {
+      // The persisted baseline domain also includes empty libraries. Their
+      // capability/URI identities must survive independently of reachability.
+      retain = true;
+    } else
+#endif
+        if (entries > 0) {
       retain = true;
     } else if (lib.is_dart_scheme()) {
       // The core libraries are referenced from the object store.
