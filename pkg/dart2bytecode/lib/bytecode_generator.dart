@@ -81,7 +81,11 @@ void generateBytecode(
       libraries = libraries
           .where((library) => !isNativeAssetsMetadataLibrary(library))
           .toList();
-      validateShorebirdReplacementLibraries(libraries);
+      validateShorebirdReplacementLibraries(
+        libraries,
+        coreTypes,
+        extraLibraries: extraLoadedLibraries,
+      );
     }
     final typeEnvironment = TypeEnvironment(coreTypes, hierarchy);
 
@@ -965,9 +969,6 @@ class BytecodeGenerator extends RecursiveVisitor {
   }
 
   void _generateFfiCall(Expression? target) {
-    if (options.shorebirdFullReplacement) {
-      throw const FormatException("FFI is unsupported in replacement v1.");
-    }
     final function = enclosingFunction!;
     for (var param in function.positionalParameters) {
       asm.emitPush(locals.getVarIndexInFrame(param));
@@ -983,9 +984,6 @@ class BytecodeGenerator extends RecursiveVisitor {
   }
 
   void _generateFfiNativeAddressOf(DartType type, Expression target) {
-    if (options.shorebirdFullReplacement) {
-      throw const FormatException("FFI is unsupported in replacement v1.");
-    }
     _genTypeArguments(const [NeverType.nonNullable()]);
 
     _genPushConstant((target as ConstantExpression).constant);

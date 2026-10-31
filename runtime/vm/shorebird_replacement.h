@@ -115,6 +115,7 @@ struct ShorebirdReplacementManifest {
       for (uint32_t i = 0; i < count; ++i) {
         std::string value;
         if (!Uri(&value) || value.compare(0, 5, "dart:") == 0 ||
+            value == "vm:ffi:native-assets" ||
             (i != 0 && values->back() >= value))
           return false;
         values->push_back(value);

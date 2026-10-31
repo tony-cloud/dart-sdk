@@ -10,6 +10,10 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:kernel/ast.dart';
+import 'package:kernel/core_types.dart';
+import 'package:kernel/external_name.dart';
+import 'package:kernel/library_index.dart';
+import 'package:vm/modular/transformations/pragma.dart';
 
 const int shorebirdReplacementMaxComponent = 128 * 1024 * 1024;
 const int shorebirdReplacementMaxManifest = 4 * 1024 * 1024;
@@ -115,6 +119,7 @@ class ShorebirdReplacementManifest {
       for (var i = 0; i < values.length; ++i) {
         uri(values[i]);
         if (values[i].startsWith('dart:') ||
+            values[i] == 'vm:ffi:native-assets' ||
             (i > 0 && _compare(values[i - 1], values[i]) >= 0)) {
           throw const FormatException(
             'Replacement URI sets must be canonical mutable-library sets.',
@@ -302,13 +307,75 @@ class _Reader {
   }
 }
 
-/// Validates mutable definitions before lowering can hide native declarations.
-void validateShorebirdReplacementLibraries(Iterable<Library> libraries) {
+/// Validates mutable definitions after the VM's FFI modular transformations.
+void validateShorebirdReplacementLibraries(
+  Iterable<Library> libraries,
+  CoreTypes coreTypes, {
+  Iterable<Library> extraLibraries = const [],
+}) {
+  final ffiIndex = coreTypes.index.containsLibrary('dart:ffi')
+      ? coreTypes.index
+      : LibraryIndex.fromLibraries(
+          [...libraries, ...extraLibraries],
+          ['dart:ffi'],
+        );
+  bool isLoweredFfiNative(Member member) {
+    if (member is! Procedure || !member.isStatic) {
+      return false;
+    }
+    InstanceConstant? native;
+    for (final annotation in member.annotations) {
+      if (annotation is! ConstantExpression) return false;
+      final constant = annotation.constant;
+      if (constant is! InstanceConstant ||
+          constant.classNode != coreTypes.pragmaClass) {
+        continue;
+      }
+      final name = constant.fieldValues[coreTypes.pragmaName.fieldReference];
+      if (name is! StringConstant) return false;
+      if (name.value == 'vm:external-name') return false;
+      if (name.value != vmFfiNative) continue;
+      final value =
+          constant.fieldValues[coreTypes.pragmaOptions.fieldReference];
+      if (native != null || value is! InstanceConstant) return false;
+      native = value;
+    }
+    if (native == null ||
+        native.classNode != ffiIndex.tryGetClass('dart:ffi', 'Native') ||
+        native.typeArguments.length != 1) {
+      return false;
+    }
+    final fields = <String, Constant>{};
+    for (final entry in native.fieldValues.entries) {
+      final field = entry.key.node;
+      if (field is! Field ||
+          field.enclosingClass != native.classNode ||
+          field.isStatic) {
+        return false;
+      }
+      fields[field.name.text] = entry.value;
+    }
+    if (fields['isLeaf'] is! BoolConstant ||
+        fields['symbol'] is! StringConstant ||
+        fields['assetId'] is! StringConstant) {
+      return false;
+    }
+    final signature = native.typeArguments.single;
+    if (signature is! FunctionType ||
+        signature.typeParameters.isNotEmpty ||
+        signature.namedParameters.isNotEmpty ||
+        signature.requiredParameterCount !=
+            signature.positionalParameters.length) {
+      return false;
+    }
+    return member.isFfiNative(coreTypes) &&
+        getExternalName(coreTypes, member) == null;
+  }
+
   for (final library in libraries) {
     if (library.importUri.scheme == 'dart') continue;
     for (final dependency in library.dependencies) {
       if (const {
-        'dart:ffi',
         'dart:mirrors',
         'dart:nativewrappers',
       }.contains(dependency.targetLibrary.importUri.toString())) {
@@ -318,7 +385,7 @@ void validateShorebirdReplacementLibraries(Iterable<Library> libraries) {
       }
     }
     void member(Member member) {
-      if (member.isExternal) {
+      if (member.isExternal && !isLoweredFfiNative(member)) {
         throw FormatException(
           'External/native replacement definition: ${library.importUri}::${member.name}.',
         );

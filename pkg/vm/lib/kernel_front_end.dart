@@ -802,7 +802,11 @@ Future<KernelCompilationResults> compileToKernel(
           'Replacement native baseline root, domain or binding mismatch.',
         );
       }
-      validateShorebirdReplacementLibraries(component.libraries);
+      validateShorebirdReplacementLibraries(
+        component.libraries,
+        CoreTypes(component),
+        extraLibraries: loadedLibraries,
+      );
       component.addMetadataRepository(
         ShorebirdReplacementMetadataRepository()
           ..mapping[root] = manifest.baselineProjection().encode(),

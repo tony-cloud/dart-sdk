@@ -447,6 +447,8 @@ Future<int> runCompilerWithOptions({
         component.libraries.where(
           (library) => !isNativeAssetsMetadataLibrary(library),
         ),
+        results.coreTypes!,
+        extraLibraries: results.loadedLibraries,
       );
     } on FormatException catch (error) {
       printMessage(error.message);

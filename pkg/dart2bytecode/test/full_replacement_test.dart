@@ -7,8 +7,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dart2bytecode/bytecode_serialization.dart';
+import 'package:dart2bytecode/bytecode_generator.dart' show generateBytecode;
+import 'package:dart2bytecode/options.dart';
 import 'package:dart2bytecode/dart2bytecode.dart';
 import 'package:dart2bytecode/declarations.dart' as dbc;
+import 'package:dart2bytecode/constant_pool.dart';
+import 'package:dart2bytecode/dbc.dart';
+import 'package:dart2bytecode/disassembler.dart';
 import 'package:dart2bytecode/full_replacement.dart';
 import 'package:dart2bytecode/patch.dart';
 import 'package:front_end/src/api_unstable/vm.dart'
@@ -16,11 +21,17 @@ import 'package:front_end/src/api_unstable/vm.dart'
 import 'package:kernel/binary/ast_from_binary.dart'
     show BinaryBuilderWithMetadata;
 import 'package:kernel/ast.dart' as ast;
+import 'package:kernel/core_types.dart';
+import 'package:kernel/class_hierarchy.dart';
+import 'package:kernel/target/targets.dart';
+import 'package:vm/modular/target/vm.dart';
 import 'package:test/test.dart';
 import 'package:vm/bytecode/full_replacement.dart';
 import 'package:vm/kernel_front_end.dart' as kernel;
 import 'package:vm/metadata/procedure_attributes.dart';
 import 'package:vm/metadata/shorebird_replacement.dart';
+
+import 'bytecode_generator_test.dart' as support;
 
 const abi = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
@@ -423,10 +434,307 @@ void main() { print(registrant); }
   );
 
   test(
-    'profile rejects ffi, external/native definitions and invalid mode binding',
+    'full profile admits lowered FFI calls, closures and address resolution',
+    () async {
+      final output = await compile('''
+import 'dart:ffi';
+@Native<Int32 Function(Int32)>(symbol: 'full_ffi_scalar')
+external int scalar(int value);
+final class Record extends Struct {
+  @Int32()
+  external int value;
+}
+int invoke(Pointer<NativeFunction<Int32 Function(Int32)>> pointer) =>
+    pointer.asFunction<int Function(int)>()(42);
+void main() {
+  print(scalar(7));
+  print(Native.addressOf<NativeFunction<Int32 Function(Int32)>>(scalar));
+  print(sizeOf<Record>());
+}
+''', 'ffi');
+      final wrapped = decodeShorebirdReplacement(output.readAsBytesSync());
+      final component = dbc.Component.read(
+        BufferedReader(LinkReader(), wrapped.component),
+      );
+      expect(
+        component.libraries.single.flags,
+        dbc.LibraryDeclaration.shorebirdFullReplacementFlag |
+            dbc.LibraryDeclaration.usesDartFfiFlag,
+      );
+      final functions = component.libraries.single.classes.expand(
+        (cls) => cls.members.functions,
+      );
+      expect(
+        functions.where(
+          (function) =>
+              (function.flags & dbc.FunctionDeclaration.isNativeFlag) != 0,
+        ),
+        isNotEmpty,
+      );
+      expect(component.codes.expand((code) => code.closures), isNotEmpty);
+      expect(
+        createShorebirdFullReplacement(
+          wrapped.component,
+          hostAbi: parseShorebirdHostAbi(abi),
+          rootUri: source.uri.toString(),
+        ),
+        output.readAsBytesSync(),
+      );
+      // The native-baseline frontend uses the same post-lowering validator.
+      expect(
+        await kernel.runCompiler(
+          kernel.createCompilerArgParser().parse([
+            '--platform=$platform',
+            '--aot',
+            '--no-tfa',
+            '--shorebird-full-replacement',
+            '--shorebird-host-abi=$abi',
+            '--shorebird-replacement-base=${output.path}',
+            '-o',
+            '${directory.path}/ffi.dill',
+            source.path,
+          ]),
+          '',
+        ),
+        0,
+      );
+      expect(
+        await kernel.runCompiler(
+          kernel.createCompilerArgParser().parse([
+            '--platform=$platform',
+            '--aot',
+            '--no-tfa',
+            '--shorebird-full-replacement',
+            '--shorebird-host-abi=$abi',
+            '--shorebird-replacement-base=${output.path}',
+            '--from-dill=${directory.path}/ffi.dill',
+            '-o',
+            '${directory.path}/ffi-from-dill.dill',
+            source.path,
+          ]),
+          '',
+        ),
+        0,
+      );
+    },
+  );
+
+  test(
+    'direct bytecode API validates lowered FFI metadata using loaded SDK identity',
+    () async {
+      source.writeAsStringSync('''
+import 'dart:ffi';
+@Native<Int32 Function(Int32)>(symbol: 'direct_scalar')
+external int scalar(int value);
+void main() { print(scalar(1)); }
+''');
+      final target = VmTarget(TargetFlags());
+      final result = await support.compileTestCaseToKernelProgram(
+        source.uri,
+        target: target,
+      );
+      final coreTypes = result.coreTypes ?? CoreTypes(result.component);
+      final hierarchy =
+          result.classHierarchy ?? ClassHierarchy(result.component, coreTypes);
+      Uint8List generate() {
+        final sink = support.ByteSink();
+        generateBytecode(
+          result.component,
+          sink,
+          options: BytecodeOptions(shorebirdFullReplacement: true),
+          libraries: result.component.libraries
+              .where((lib) => !result.loadedLibraries.contains(lib))
+              .toList(),
+          coreTypes: coreTypes,
+          hierarchy: hierarchy,
+          target: target,
+          extraLoadedLibraries: result.loadedLibraries,
+        );
+        return sink.builder.takeBytes();
+      }
+
+      expect(
+        createShorebirdFullReplacement(
+          generate(),
+          hostAbi: parseShorebirdHostAbi(abi),
+          rootUri: source.uri.toString(),
+        ),
+        isNotEmpty,
+      );
+      final native = result.component.mainMethod!.enclosingLibrary.procedures
+          .singleWhere((procedure) => procedure.isExternal);
+      native.annotations.clear();
+      expect(generate, throwsFormatException);
+    },
+  );
+
+  test(
+    'bundle validates full flags, FFI declarations, owners and cache operands',
+    () async {
+      final output = await compile('''
+import 'dart:ffi';
+@Native<Int32 Function(Int32)>(symbol: 'scalar')
+external int scalar(int value);
+@pragma('vm:ffi:native', 42)
+int wrongAnnotation() => 0;
+@pragma('vm:ffi:native', Native<int>(symbol: 'scalar', assetId: 'asset'))
+int wrongSignature() => 0;
+final class FakeNative<T> {
+  final String symbol = 'scalar';
+  final String assetId = 'asset';
+  final bool isLeaf = false;
+  const FakeNative();
+}
+@pragma('vm:ffi:native', FakeNative<Int32 Function(Int32)>())
+int wrongIdentity() => 0;
+int invoke(Pointer<NativeFunction<Int32 Function(Int32)>> pointer) =>
+    pointer.asFunction<int Function(int)>()(7);
+void main() { print(scalar(1)); }
+''', 'mutations');
+      final original = decodeShorebirdReplacement(
+        output.readAsBytesSync(),
+      ).component;
+      dbc.Component read() =>
+          dbc.Component.read(BufferedReader(LinkReader(), original));
+      Uint8List write(dbc.Component component) {
+        final writer = BufferedWriter(
+          component.stringTable,
+          component.objectTable,
+          LinkWriter(),
+        );
+        component.write(writer);
+        return writer.getContents();
+      }
+
+      void rejects(void Function(dbc.Component) mutate) {
+        final component = read();
+        mutate(component);
+        expect(
+          () => createShorebirdFullReplacement(
+            write(component),
+            hostAbi: parseShorebirdHostAbi(abi),
+            rootUri: source.uri.toString(),
+          ),
+          throwsFormatException,
+        );
+      }
+
+      List<dbc.FunctionDeclaration> functions(dbc.Component c) =>
+          c.libraries.single.classes.first.members.functions;
+      dbc.FunctionDeclaration scalar(dbc.Component c) =>
+          functions(c).singleWhere((f) => f.name.toString() == "'scalar'");
+      void replaceScalar(
+        dbc.Component c, {
+        int? flags,
+        bool oldName = false,
+        dbc.AnnotationsDeclaration? annotations,
+        bool omitAnnotations = false,
+      }) {
+        final f = scalar(c);
+        functions(c)[functions(c).indexOf(f)] = dbc.FunctionDeclaration(
+          flags ?? f.flags,
+          f.name,
+          f.script,
+          f.position,
+          f.endPosition,
+          f.typeParameters,
+          f.numRequiredParameters,
+          f.parameters,
+          f.parameterFlags,
+          f.returnType,
+          oldName ? c.libraries.single.importUri : null,
+          f.code,
+          omitAnnotations ? null : annotations ?? f.annotations,
+        );
+      }
+
+      for (final flags in [0, 2, 8 | 1, 8 | 4, 8 | 16]) {
+        rejects((c) {
+          final lib = c.libraries.single;
+          c.libraries[0] = dbc.LibraryDeclaration(
+            lib.importUri,
+            flags,
+            lib.name,
+            lib.script,
+            lib.classes,
+          );
+        });
+      }
+      for (final flag in [
+        dbc.FunctionDeclaration.isNativeFlag,
+        dbc.FunctionDeclaration.isExternalFlag,
+      ]) {
+        rejects((c) => replaceScalar(c, flags: scalar(c).flags & ~flag));
+      }
+      rejects((c) => replaceScalar(c, oldName: true));
+      rejects(
+        (c) => replaceScalar(
+          c,
+          flags:
+              scalar(c).flags &
+              ~(dbc.FunctionDeclaration.hasAnnotationsFlag |
+                  dbc.FunctionDeclaration.hasPragmaFlag),
+          omitAnnotations: true,
+        ),
+      );
+      for (final name in [
+        'wrongAnnotation',
+        'wrongSignature',
+        'wrongIdentity',
+      ]) {
+        rejects(
+          (c) => replaceScalar(
+            c,
+            annotations: functions(
+              c,
+            ).singleWhere((f) => f.name.toString() == "'$name'").annotations,
+          ),
+        );
+      }
+      rejects((c) {
+        final code = scalar(c).code!;
+        final call = BytecodeDisassembler()
+            .decode(code.bytecodes)
+            .singleWhere((i) => i.opcode == Opcode.kFfiCall);
+        code.bytecodes[call.pc + 1] = 255;
+      });
+      rejects((c) {
+        final code = scalar(c).code!;
+        final call = BytecodeDisassembler()
+            .decode(code.bytecodes)
+            .singleWhere((i) => i.opcode == Opcode.kFfiCall);
+        code.bytecodes[call.pc] = Opcode.kFfiCall_Wide.index;
+      });
+      rejects((c) {
+        final code = scalar(c).code!;
+        final call = BytecodeDisassembler()
+            .decode(code.bytecodes)
+            .singleWhere((i) => i.opcode == Opcode.kFfiCall);
+        code.bytecodes[call.pc] = Opcode.kExternalCall.index;
+      });
+      rejects((c) {
+        final code = scalar(c).code!;
+        final index = code.constantPool.entries.indexWhere(
+          (e) => e is ConstantNativeFunction,
+        );
+        code.constantPool.entries[index] = ConstantObjectRef(null);
+      });
+      rejects((c) {
+        final closure = c.codes.expand((code) => code.closures).first;
+        closure.flags &= ~dbc.ClosureDeclaration.hasPragmaFlag;
+      });
+      rejects((c) {
+        final code = scalar(c).code!;
+        // The two-slot ExternalCall pool entry is rejected independently of opcodes.
+        code.constantPool.addExternalCall();
+      });
+    },
+  );
+
+  test(
+    'profile rejects external/native definitions and invalid mode binding',
     () async {
       for (final contents in [
-        "import 'dart:ffi'; void main() {}",
         "external int native(); void main() {}",
         "import 'dart:mirrors'; void main() {}",
       ]) {
@@ -503,6 +811,7 @@ void main() { print(registrant); }
         [''],
         ['file:a\u0000'],
         ['dart:core'],
+        ['vm:ffi:native-assets'],
         ['file:${'x' * shorebirdReplacementMaxUri}'],
       ]) {
         expect(() => manifest(uris: uris).encode(), throwsFormatException);
@@ -537,6 +846,13 @@ void main() { print(registrant); }
       expect(
         () => ShorebirdReplacementManifest.decode(tooMany),
         throwsFormatException,
+      );
+      expect(
+        manifest(
+          uris: ['vm:ffi:native-assets-extra'],
+          root: 'vm:ffi:native-assets-extra',
+        ).encode(),
+        isNotEmpty,
       );
       final unicode = canonicalReplacementUris([
         'file:\u{10000}',

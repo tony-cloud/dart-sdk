@@ -223,6 +223,101 @@ abstract class ObjectHandle extends BytecodeObject {
   void indexStrings(StringWriter strings) {}
 }
 
+// Inspect evaluated metadata using the same library/class/field identities as
+// the runtime. Keep this beside the private handle representations; it does not
+// change their encoding or admit a class by its unqualified name.
+bool isValidFfiAnnotation(
+  ObjectHandle? value, {
+  required bool native,
+  bool requireFunctionType = true,
+}) {
+  if (value is! _ConstObjectHandle || value.tag != ConstTag.kInstance) {
+    return false;
+  }
+  final type = value.type;
+  if (type is! _GenericTypeHandle ||
+      !_isSdkClass(type.class_, 'dart:ffi', native ? 'Native' : '_FfiCall')) {
+    return false;
+  }
+  final args = type.typeArgs?.args;
+  if (args == null || args.length != 1) return false;
+  if (requireFunctionType) {
+    final signature = args.single;
+    if (signature is! _FunctionTypeHandle ||
+        signature.numEnclosingTypeParameters != 0 ||
+        signature.typeParameters != null ||
+        signature.namedParams.isNotEmpty ||
+        signature.numRequiredParams != signature.positionalParams.length) {
+      return false;
+    }
+  }
+  final fields = value.value as Map<ObjectHandle, ObjectHandle?>;
+  ObjectHandle? field(String name) {
+    for (final entry in fields.entries) {
+      final key = entry.key;
+      if (key is _MemberHandle &&
+          key.flags == _MemberHandle.flagIsField &&
+          key.parent == type.class_ &&
+          key.name.name == name) {
+        return entry.value;
+      }
+    }
+    return null;
+  }
+
+  final leaf = field('isLeaf');
+  return leaf is _ConstObjectHandle &&
+      leaf.tag == ConstTag.kBool &&
+      (!native ||
+          (field('symbol')?.stringConstantValue != null &&
+              field('assetId')?.stringConstantValue != null));
+}
+
+bool _isSdkClass(_ClassHandle cls, String uri, String name) =>
+    cls.library.uri.stringConstantValue == uri &&
+    cls.name.name == name &&
+    (name.startsWith('_')
+        ? cls.name is _PrivateNameHandle &&
+              (cls.name as _PrivateNameHandle).library == cls.library
+        : cls.name is _PublicNameHandle);
+
+bool hasValidFfiPragma(ObjectHandle? metadata, {required bool native}) {
+  if (metadata is! _ConstObjectHandle || metadata.tag != ConstTag.kList) {
+    return false;
+  }
+  var found = false;
+  for (final annotation in metadata.value as List<ObjectHandle?>) {
+    if (annotation is! _ConstObjectHandle ||
+        annotation.tag != ConstTag.kInstance) {
+      continue;
+    }
+    final type = annotation.type;
+    if (type is! _SimpleTypeHandle ||
+        !_isSdkClass(type.class_, 'dart:core', 'pragma')) {
+      continue;
+    }
+    final fields = annotation.value as Map<ObjectHandle, ObjectHandle?>;
+    ObjectHandle? name;
+    ObjectHandle? options;
+    for (final entry in fields.entries) {
+      final key = entry.key;
+      if (key is! _MemberHandle ||
+          key.flags != _MemberHandle.flagIsField ||
+          key.parent != type.class_) {
+        continue;
+      }
+      if (key.name.name == 'name') name = entry.value;
+      if (key.name.name == 'options') options = entry.value;
+    }
+    final pragma = name?.stringConstantValue;
+    if (pragma == null || pragma == 'vm:external-name') return false;
+    if (pragma != (native ? 'vm:ffi:native' : 'vm:ffi:call-closure')) continue;
+    if (found || !isValidFfiAnnotation(options, native: native)) return false;
+    found = true;
+  }
+  return found;
+}
+
 class _InvalidHandle extends ObjectHandle {
   _InvalidHandle();
 

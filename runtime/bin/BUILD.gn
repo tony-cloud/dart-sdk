@@ -1205,6 +1205,7 @@ if (dart_enable_shorebird_interpreter && (is_mac || is_linux) &&
           [
             "product_ffi_test",
             "product_ffi_callback_test",
+            "product_full_ffi_test",
           ]) {
     executable(test_name) {
       testonly = true

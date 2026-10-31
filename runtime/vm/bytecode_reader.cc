@@ -18,6 +18,7 @@
 #include "vm/compiler/assembler/disassembler_kbc.h"
 #include "vm/constants_kbc.h"
 #include "vm/dart_entry.h"
+#include "vm/ffi/interpreter_callback.h"
 #include "vm/flags.h"
 #include "vm/hash.h"
 #include "vm/hash_map.h"
@@ -53,6 +54,167 @@ static void RejectBytecodePatch(const char* message) {
       thread->zone(),
       ApiError::New(String::Handle(thread->zone(), String::New(message))));
   thread->long_jump_base()->Jump(1, error);
+}
+
+// Full replacements may use only the FFI machinery supported by the released
+// native host. Check actual uses as well as the advisory library flag.
+static void RequireFullReplacementFfi() {
+  if (!InterpreterFfiCallbacksSupported()) {
+    RejectBytecodePatch("Full replacement FFI requires native ARM64 support.");
+  }
+}
+
+static void ValidateFullFfiAnnotation(const Object& value,
+                                      bool native,
+                                      bool require_function_type = true) {
+  auto* thread = Thread::Current();
+  auto* zone = thread->zone();
+  const auto& ffi = Library::Handle(
+      zone, thread->isolate_group()->object_store()->ffi_library());
+  if (!value.IsInstance() || value.IsNull() || ffi.IsNull()) {
+    RejectBytecodePatch("Invalid full replacement FFI annotation.");
+  }
+  const auto& expected = Class::Handle(
+      zone, ffi.LookupClassAllowPrivate(String::Handle(
+                zone, Symbols::New(thread, native ? "Native" : "_FfiCall"))));
+  if (expected.IsNull() || value.clazz() != expected.ptr()) {
+    RejectBytecodePatch(
+        "Full replacement requires SDK FFI annotation identity.");
+  }
+  const auto& instance = Instance::Cast(value);
+  const auto& args = TypeArguments::Handle(zone, instance.GetTypeArguments());
+  if (args.IsNull() || args.Length() != 1) {
+    RejectBytecodePatch("Invalid full replacement FFI type arguments.");
+  }
+  const auto& type = AbstractType::Handle(zone, args.TypeAt(0));
+  if (require_function_type) {
+    if (!type.IsFunctionType()) {
+      RejectBytecodePatch("Full replacement FFI requires a function type.");
+    }
+    const auto& signature = FunctionType::Cast(type);
+    if (signature.NumTypeParameters() != 0 ||
+        signature.NumParentTypeArguments() != 0 ||
+        signature.HasOptionalParameters() || !signature.IsInstantiated()) {
+      RejectBytecodePatch("Invalid full replacement FFI function signature.");
+    }
+  }
+  const auto& leaf = Field::Handle(
+      zone, expected.LookupInstanceFieldAllowPrivate(Symbols::isLeaf()));
+  if (leaf.IsNull() ||
+      !Object::Handle(zone, instance.GetField(leaf)).IsBool()) {
+    RejectBytecodePatch("Invalid full replacement FFI leaf metadata.");
+  }
+  if (native) {
+    for (const auto* name : {"symbol", "assetId"}) {
+      const auto& field = Field::Handle(
+          zone, expected.LookupInstanceFieldAllowPrivate(
+                    String::Handle(zone, Symbols::New(thread, name))));
+      if (field.IsNull() ||
+          !Object::Handle(zone, instance.GetField(field)).IsString()) {
+        RejectBytecodePatch(
+            "Invalid full replacement FFI resolution metadata.");
+      }
+    }
+  }
+}
+
+static void ValidateFullFfiFunction(const Function& function) {
+  RequireFullReplacementFfi();
+  const bool native = function.is_ffi_native();
+  if (!native && !function.IsNonImplicitClosureFunction()) {
+    RejectBytecodePatch("Invalid full replacement FFI call owner.");
+  }
+  auto* thread = Thread::Current();
+  auto* zone = thread->zone();
+  const auto& library =
+      Library::Handle(zone, Class::Handle(zone, function.Owner()).library());
+  const auto& metadata = Object::Handle(zone, library.GetMetadata(function));
+  const auto& pragma_class = Class::Handle(
+      zone, thread->isolate_group()->object_store()->pragma_class());
+  if (!function.has_pragma() || !metadata.IsArray() || pragma_class.IsNull()) {
+    RejectBytecodePatch("Missing full replacement FFI pragma.");
+  }
+  const auto& name_field =
+      Field::Handle(zone, pragma_class.LookupField(Symbols::name()));
+  const auto& options_field =
+      Field::Handle(zone, pragma_class.LookupField(Symbols::options()));
+  if (name_field.IsNull() || options_field.IsNull()) {
+    RejectBytecodePatch("Missing released SDK pragma fields.");
+  }
+  auto& value = Object::Handle(zone);
+  auto& annotation = Object::Handle(zone);
+  auto& name = Object::Handle(zone);
+  const auto& annotations = Array::Cast(metadata);
+  for (intptr_t i = 0; i < annotations.Length(); ++i) {
+    annotation = annotations.At(i);
+    if (!annotation.IsInstance() || annotation.IsNull() ||
+        annotation.clazz() != pragma_class.ptr())
+      continue;
+    const auto& pragma = Instance::Cast(annotation);
+    name = pragma.GetField(name_field);
+    if (!name.IsString()) {
+      RejectBytecodePatch("Invalid full replacement pragma name.");
+    }
+    if (String::Cast(name).Equals("vm:external-name")) {
+      RejectBytecodePatch("Full replacement cannot define old native names.");
+    }
+    if (String::Cast(name).Equals(native ? "vm:ffi:native"
+                                         : "vm:ffi:call-closure")) {
+      if (!value.IsNull()) {
+        RejectBytecodePatch("Duplicate full replacement FFI pragma.");
+      }
+      value = pragma.GetField(options_field);
+      ValidateFullFfiAnnotation(value, native);
+    }
+  }
+  if (value.IsNull()) {
+    RejectBytecodePatch("Missing full replacement FFI annotation.");
+  }
+}
+
+static void ValidateFullFfiCode(const Function& function,
+                                const Bytecode& bytecode) {
+  if (!Thread::Current()->bytecode_loader()->is_full_replacement()) return;
+  const auto& pool = ObjectPool::Handle(bytecode.object_pool());
+  const auto* data = reinterpret_cast<const uint8_t*>(bytecode.PayloadStart());
+  intptr_t previous = -1;
+  for (intptr_t pc = 0; pc < bytecode.Size();) {
+    const auto op = KernelBytecode::DecodeOpcode(data + pc);
+    const bool call =
+        op == KernelBytecode::kFfiCall || op == KernelBytecode::kFfiCall_Wide;
+    const bool resolve = op == KernelBytecode::kResolveNativeFunction ||
+                         op == KernelBytecode::kResolveNativeFunction_Wide;
+    if (call || resolve) {
+      RequireFullReplacementFfi();
+      const intptr_t index = KernelBytecode::DecodeD(data + pc);
+      if (index >= pool.Length() ||
+          pool.TypeAt(index) != ObjectPool::EntryType::kNativeFunction ||
+          pool.RawValueAt(index) != 0) {
+        RejectBytecodePatch("Invalid full replacement FFI cache operand.");
+      }
+      if (call) {
+        ValidateFullFfiFunction(function);
+      } else {
+        if (previous < 0 ||
+            (data[previous] != KernelBytecode::kPushConstant &&
+             data[previous] != KernelBytecode::kPushConstant_Wide)) {
+          RejectBytecodePatch("Invalid full replacement FFI address metadata.");
+        }
+        const intptr_t annotation_index =
+            KernelBytecode::DecodeD(data + previous);
+        if (annotation_index >= pool.Length() ||
+            pool.TypeAt(annotation_index) !=
+                ObjectPool::EntryType::kTaggedObject) {
+          RejectBytecodePatch(
+              "Invalid full replacement FFI annotation operand.");
+        }
+        ValidateFullFfiAnnotation(
+            Object::Handle(pool.ObjectAt(annotation_index)), true, false);
+      }
+    }
+    previous = pc;
+    pc += KernelBytecode::kInstructionSize[op];
+  }
 }
 
 void CheckBytecodeRange(intptr_t offset, intptr_t length, intptr_t size) {
@@ -200,9 +362,10 @@ LibraryPtr BytecodeLoader::LookupReplacementLibrary(const String& uri) const {
     if (uri.Equals(url)) return library.ptr();
   }
   if (uri.StartsWith(String::Handle(thread_->zone(), String::New("dart:")))) {
-    if (uri.Equals("dart:ffi") || uri.Equals("dart:mirrors") ||
-        uri.Equals("dart:nativewrappers")) {
-      RejectBytecodePatch("Full replacement does not support FFI or mirrors.");
+    if (uri.Equals("dart:ffi")) RequireFullReplacementFfi();
+    if (uri.Equals("dart:mirrors") || uri.Equals("dart:nativewrappers")) {
+      RejectBytecodePatch(
+          "Full replacement does not support mirrors/native wrappers.");
     }
     return Library::LookupLibrary(thread_, uri);
   }
@@ -407,6 +570,7 @@ BytecodePtr BytecodeReaderHelper::ReadCode(const Function& function,
   // Read bytecode and attach to function.
   const Bytecode& bytecode = Bytecode::Handle(Z, ReadBytecode(pool));
   bytecode.set_code_offset(code_offset);
+  ValidateFullFfiCode(function, bytecode);
   if (attach) function.AttachBytecode(bytecode);
 
   ReadExceptionsTable(function, bytecode, has_exceptions_table);
@@ -468,6 +632,7 @@ BytecodePtr BytecodeReaderHelper::ReadCode(const Function& function,
 
       // Read closure bytecode and attach to closure function.
       closure_bytecode = ReadBytecode(pool);
+      ValidateFullFfiCode(closure, closure_bytecode);
 
       closure.set_captures_only_final_not_late_vars(
           captures_only_final_not_late_vars);
@@ -907,7 +1072,7 @@ intptr_t BytecodeReaderHelper::ReadConstantPool(const Function& function,
       }
       case ConstantPoolTag::kNativeFunction: {
         if (thread_->bytecode_loader()->is_full_replacement()) {
-          RejectBytecodePatch("Full replacement cannot contain native pools.");
+          RequireFullReplacementFfi();
         }
         // NativeFunction constant has 1 raw value entry.
         pool.SetTypeAt(i, ObjectPool::EntryType::kNativeFunction,
@@ -978,16 +1143,19 @@ BytecodePtr BytecodeReaderHelper::ReadBytecode(const ObjectPool& pool) {
   if (thread_->bytecode_loader()->is_full_replacement()) {
     for (intptr_t pc = 0; pc < size;) {
       const uint8_t op = data[pc];
-      if (op >= KernelBytecode::kNumOpcodes || op == KernelBytecode::kFfiCall ||
-          op == KernelBytecode::kFfiCall_Wide ||
+      if (op >= KernelBytecode::kNumOpcodes ||
           op == KernelBytecode::kExternalCall ||
           op == KernelBytecode::kExternalCall_Wide ||
-          op == KernelBytecode::kResolveNativeFunction ||
-          op == KernelBytecode::kResolveNativeFunction_Wide ||
           op >= KernelBytecode::kVMInternal_ImplicitConstructorClosure ||
           KernelBytecode::kInstructionSize[op] <= 0 ||
           KernelBytecode::kInstructionSize[op] > size - pc) {
         RejectBytecodePatch("Unsupported or truncated replacement opcode.");
+      }
+      if (op == KernelBytecode::kFfiCall ||
+          op == KernelBytecode::kFfiCall_Wide ||
+          op == KernelBytecode::kResolveNativeFunction ||
+          op == KernelBytecode::kResolveNativeFunction_Wide) {
+        RequireFullReplacementFfi();
       }
       pc += KernelBytecode::kInstructionSize[op];
     }
@@ -2493,8 +2661,13 @@ void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
     const bool is_native = (flags & kIsNativeFlag) != 0;
     if (thread_->bytecode_loader()->is_full_replacement() &&
         (is_native || (flags & kIsExternalFlag) != 0)) {
-      RejectBytecodePatch(
-          "Full replacement cannot define native/external code.");
+      RequireFullReplacementFfi();
+      if (!is_native || (flags & kIsExternalFlag) == 0 || !is_static ||
+          (flags & (kIsAbstractFlag | kIsConstructorFlag | kIsFactoryFlag)) !=
+              0) {
+        RejectBytecodePatch(
+            "Full replacement requires lowered FFI declarations.");
+      }
     }
     const bool has_pragma = (flags & kHasPragmaFlag) != 0;
     const bool is_extension_member = (flags & kIsExtensionMemberFlag) != 0;
@@ -2642,7 +2815,12 @@ void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
     signature.set_result_type(type);
 
     if (is_native) {
-      name ^= ReadObject();
+      const auto& native_name = Object::Handle(Z, ReadObject());
+      if (thread_->bytecode_loader()->is_full_replacement() &&
+          !native_name.IsNull()) {
+        RejectBytecodePatch("Full replacement cannot define old native names.");
+      }
+      name ^= native_name.ptr();
       if (!name.IsNull()) {
         function.set_native_name(name);
       }
@@ -2659,6 +2837,10 @@ void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
     if ((flags & kHasAnnotationsFlag) != 0) {
       ASSERT(!is_expression_evaluation);
       ReadAnnotations(cls, function, has_pragma);
+    }
+
+    if (thread_->bytecode_loader()->is_full_replacement() && is_native) {
+      ValidateFullFfiFunction(function);
     }
 
     if (is_expression_evaluation) {
@@ -3053,11 +3235,10 @@ void BytecodeReaderHelper::ReadFullReplacement(intptr_t num_libraries) {
       seen.Add(index);
       AlternativeReadingScope declaration(&reader_, library_offset);
       const intptr_t flags = reader_.ReadUInt();
-      if (flags != (1 << 3)) {
-        RejectBytecodePatch(
-            "Replacement requires bit3-only libraries; FFI/mirrors "
-            "unsupported.");
+      if ((flags & (1 << 3)) == 0 || (flags & ~((1 << 3) | (1 << 1))) != 0) {
+        RejectBytecodePatch("Replacement requires full-profile library flags.");
       }
+      if ((flags & (1 << 1)) != 0) RequireFullReplacementFfi();
     }
   }
   // Class registration, finalization and static allocation below are permanent
