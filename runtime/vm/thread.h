@@ -394,7 +394,9 @@ class Thread : public ThreadState, public IntrusiveDListEntry<Thread> {
   // Makes the current thread enter 'isolate'.
   static void EnterIsolate(Isolate* isolate);
   // Makes the current thread exit its isolate.
-  static void ExitIsolate(bool isolate_shutdown = false);
+  // force_suspend retains the exact Thread even without active stack state.
+  static void ExitIsolate(bool isolate_shutdown = false,
+                          bool force_suspend = false);
 
   static void EnterIsolateGroupAsHelper(IsolateGroup* isolate_group,
                                         TaskKind kind,
@@ -408,7 +410,8 @@ class Thread : public ThreadState, public IntrusiveDListEntry<Thread> {
   static void EnterIsolateGroupAsMutator(IsolateGroup* isolate_group,
                                          bool bypass_safepoint,
                                          Thread* suspended_thread = nullptr);
-  static void ExitIsolateGroupAsMutator(bool bypass_safepoint);
+  static void ExitIsolateGroupAsMutator(bool bypass_safepoint,
+                                        bool force_suspend = false);
 
   // Empties the store buffer block into the isolate.
   void ReleaseStoreBuffer();

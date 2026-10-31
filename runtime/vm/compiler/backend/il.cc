@@ -4661,7 +4661,7 @@ void LoadStaticFieldInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
       __ BranchIf(EQUAL, slow_path->entry_label());
       return;
     }
-    ASSERT((FLAG_experimental_shared_data && !field().is_shared()) ||
+    ASSERT(!field().is_shared() ||
            (field().has_initializer() && field().is_late()));
     const Field& original_field = Field::ZoneHandle(field().Original());
 
@@ -4686,7 +4686,7 @@ void LoadStaticFieldInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
                           : StubCode::InitLateStaticField().ptr());
       }
     } else {
-      ASSERT(FLAG_experimental_shared_data && !field().is_shared());
+      ASSERT(!field().is_shared());
       stub = StubCode::CheckIsolateFieldAccess().ptr();
     }
 

@@ -555,14 +555,14 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ movq(RAX, Address(RSP, 0 * target::kWordSize));  // entry_point
     __ movq(TMP, Address(RSP, 1 * target::kWordSize));  // is_tail
     __ movq(R12, Address(RSP, 2 * target::kWordSize));  // epilogue
-    __ movq(R13, Address(RSP, 3 * target::kWordSize));  // isolate
-    __ movq(R10, Address(RSP, 4 * target::kWordSize));  // isolate_group
+    __ movq(R13, Address(RSP, 3 * target::kWordSize));  // caller_thread
+    __ movq(R10, Address(RSP, 4 * target::kWordSize));  // caller_vm_tag
 
     // Restore the arguments.
     __ PopRegistersAligned(kArgumentRegisterSet, 5 * target::kWordSize);
 
-    __ pushq(R10);  // save isolate_group
-    __ pushq(R13);  // save isolate
+    __ pushq(R10);  // save caller_vm_tag
+    __ pushq(R13);  // save caller_thread
   }
 
   Label tail;
@@ -577,8 +577,8 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
 
   {
     __ call(RAX);  // entry_point
-    __ popq(R13);  // restore isolate
-    __ popq(R10);  // restore isolate_group
+    __ popq(R13);  // restore caller_thread
+    __ popq(R10);  // restore caller_vm_tag
     __ PushRegistersAligned(return_registers, 0);
     __ movq(CallingConventions::kArg1Reg, THR);
     __ movq(CallingConventions::kArg2Reg, R13);
@@ -599,8 +599,13 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
   {
     __ Bind(&tail);
     __ call(RAX);                           // entry_point
-    __ popq(CallingConventions::kArg2Reg);  // restore isolate
-    __ popq(CallingConventions::kArg3Reg);  // restore isolate_group
+    __ popq(CallingConventions::kArg2Reg);  // restore caller_thread
+    __ popq(CallingConventions::kArg3Reg);  // restore caller_vm_tag
+    // Republish native cookies after the target clobbered runtime scratch.
+    __ movq(Address(THR, target::Thread::unboxed_runtime_arg_offset()),
+            CallingConventions::kArg3Reg);
+    __ movq(Address(THR, target::Thread::unboxed_runtime_arg_offset() + 8),
+            CallingConventions::kArg2Reg);
     __ movq(CallingConventions::kArg1Reg, THR);
     __ movq(RAX, R12);
     __ popq(R10);
@@ -617,9 +622,9 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
 
   // 'kNativeCallbackSharedStubSize' is an upper bound because the exact
   // instruction size can vary slightly based on OS calling conventions.
-  ASSERT_LESS_OR_EQUAL(__ CodeSize() - shared_stub_start,
-                       FfiCallbackMetadata::kNativeCallbackSharedStubSize);
-  ASSERT_LESS_OR_EQUAL(__ CodeSize(), FfiCallbackMetadata::kPageSize);
+  RELEASE_ASSERT(__ CodeSize() - shared_stub_start <=
+                 FfiCallbackMetadata::kNativeCallbackSharedStubSize);
+  RELEASE_ASSERT(__ CodeSize() <= FfiCallbackMetadata::kPageSize);
 
 #if defined(DEBUG)
   while (__ CodeSize() < FfiCallbackMetadata::kPageSize) {

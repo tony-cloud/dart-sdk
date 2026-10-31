@@ -76,9 +76,7 @@ static FunctionPtr CreateFfiCallback(Zone* zone,
           "This function should be handled on call site.");
     }
   }
-  // Signature/kind support is checked when the callback is registered. In
-  // particular, listener registration must first close its frontend-created
-  // receive port when rejecting an unsupported runtime callback.
+  // Signature/kind support is checked when the callback is registered.
   return NewFfiCallbackFunction(native_sig, target, exceptional_return, kind);
 #else
   Exceptions::ThrowUnsupportedError(
@@ -168,15 +166,40 @@ static uword UnwrapFunctionPointer(const Pointer& pointer) {
   return raw;
 }
 
+// The frontend owns the receive port before entering registration. Cover every
+// subsequent allocation/publication failure, including VM exception unwinding.
+class FfiListenerPortRollback : public StackResource {
+ public:
+  FfiListenerPortRollback(Thread* thread,
+                          Isolate* isolate,
+                          const ReceivePort& port)
+      : StackResource(thread), isolate_(isolate), port_(port) {}
+
+  ~FfiListenerPortRollback() {
+    if (active_) isolate_->CloseReceivePort(port_);
+  }
+
+  void Release() { active_ = false; }
+
+ private:
+  Isolate* const isolate_;
+  const ReceivePort& port_;
+  bool active_ = true;
+};
+
 DEFINE_NATIVE_ENTRY(Ffi_createNativeCallableListener, 1, 2) {
   const auto& send_function =
       Function::CheckedHandle(zone, arguments->NativeArg0());
   const auto& port =
       ReceivePort::CheckedHandle(zone, arguments->NativeArgAt(1));
   if (IsRuntimeFfiCallbackFunction(send_function)) {
-    isolate->CloseReceivePort(port);
-    Exceptions::ThrowUnsupportedError(
-        "Interpreted NativeCallable.listener callbacks are not implemented.");
+    FfiListenerPortRollback rollback(thread, isolate, port);
+    const auto& pointer = Pointer::Handle(zone, Pointer::New(0));
+    const uword raw =
+        isolate->CreateAsyncFfiCallback(zone, send_function, port.Id());
+    pointer.SetNativeAddress(SignFunctionPointer(raw));
+    rollback.Release();
+    return pointer.ptr();
   }
   return WrapFunctionPointer(
       isolate->CreateAsyncFfiCallback(zone, send_function, port.Id()));
@@ -204,6 +227,14 @@ DEFINE_NATIVE_ENTRY(Ffi_createNativeCallableIsolateGroupBound, 1, 2) {
   const auto& trampoline =
       Function::CheckedHandle(zone, arguments->NativeArg0());
   const auto& target = Closure::CheckedHandle(zone, arguments->NativeArgAt(1));
+  if (IsRuntimeFfiCallbackFunction(trampoline)) {
+    const auto& pointer = Pointer::Handle(zone, Pointer::New(0));
+    const uword raw =
+        thread->isolate_group()->CreateIsolateGroupBoundFfiCallback(
+            zone, trampoline, target);
+    pointer.SetNativeAddress(SignFunctionPointer(raw));
+    return pointer.ptr();
+  }
   return WrapFunctionPointer(
       thread->isolate_group()->CreateIsolateGroupBoundFfiCallback(
           zone, trampoline, target));

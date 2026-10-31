@@ -480,7 +480,8 @@ static bool ShouldSuspend(bool isolate_shutdown, Thread* thread) {
          kMaxSuspendedThreads;
 }
 
-void Thread::ExitIsolate(bool isolate_shutdown) {
+void Thread::ExitIsolate(bool isolate_shutdown, bool force_suspend) {
+  RELEASE_ASSERT(!isolate_shutdown || !force_suspend);
   Thread* thread = Thread::Current();
   ASSERT(thread != nullptr);
   ASSERT(thread->IsDartMutatorThread());
@@ -511,7 +512,7 @@ void Thread::ExitIsolate(bool isolate_shutdown) {
   // transitions. Though any operation that walks over all active threads will
   // see this thread as well (e.g. safepoint operations).
   const bool is_nested_exit = thread->top_exit_frame_info() != 0;
-  if (ShouldSuspend(isolate_shutdown, thread)) {
+  if (force_suspend || ShouldSuspend(isolate_shutdown, thread)) {
     const auto tag =
         isolate->is_runnable() ? VMTag::kIdleTagId : VMTag::kLoadWaitTagId;
     SuspendDartMutatorThreadInternal(thread, tag);
@@ -621,14 +622,15 @@ void Thread::EnterIsolateGroupAsMutator(IsolateGroup* isolate_group,
   }
 }
 
-void Thread::ExitIsolateGroupAsMutator(bool bypass_safepoint) {
+void Thread::ExitIsolateGroupAsMutator(bool bypass_safepoint,
+                                       bool force_suspend) {
   Thread* thread = Thread::Current();
   thread->AssertDartMutatorInvariants();
   auto group = thread->isolate_group();
 
   // Even if [bypass_safepoint] is true, a thread may need mutator state (e.g.
   // parallel scavenger threads write to the [Thread]s storebuffer)
-  if (thread->HasActiveState() || thread->OwnsSafepoint()) {
+  if (force_suspend || thread->HasActiveState() || thread->OwnsSafepoint()) {
     // must not free the thread
     SuspendThreadInternal(thread, VMTag::kLoadWaitTagId);
     {

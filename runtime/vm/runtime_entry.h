@@ -5,6 +5,7 @@
 #ifndef RUNTIME_VM_RUNTIME_ENTRY_H_
 #define RUNTIME_VM_RUNTIME_ENTRY_H_
 
+#include "include/dart_api.h"
 #include "vm/allocation.h"
 #if !defined(DART_PRECOMPILED_RUNTIME)
 #include "vm/compiler/runtime_api.h"
@@ -104,9 +105,11 @@ struct CallbackMetadata {
   uword entry_point;
   uword type;  // FfiCallbackMetadata::CallType
   uword epilogue;
-  uword caller_isolate;
-  uword caller_isolate_group;
+  // Native cookies survive all compiled/interpreted target scratch clobbers.
+  uword caller_thread;
+  uword caller_vm_tag;
 };
+COMPILE_ASSERT(sizeof(CallbackMetadata) == 5 * kWordSize);
 extern "C" Thread* DLRT_GetFfiCallbackMetadata(uword trampoline,
                                                CallbackMetadata* out);
 #if defined(HOST_ARCH_IA32)
@@ -114,13 +117,15 @@ extern "C" void* DLRT_ExitTemporaryIsolate();
 #else
 extern "C" void* DLRT_ExitTemporaryIsolate(Thread*);
 #endif
-extern "C" void* DLRT_ExitIsolateGroupBoundIsolate(Thread*,
-                                                   Isolate*,
-                                                   IsolateGroup*);
-extern "C" void* DLRT_ExitSyncCallbackTargetIsolate(Thread*,
-                                                    Isolate*,
-                                                    IsolateGroup*);
-extern "C" void* DLRT_ExitSyncCallback(Thread*, Isolate*, IsolateGroup*);
+extern "C" void* DLRT_ExitIsolateGroupBoundIsolate(Thread*, Thread*, uword);
+extern "C" void* DLRT_ExitSyncCallbackTargetIsolate(Thread*, Thread*, uword);
+extern "C" void* DLRT_ExitSyncCallback(Thread*, Thread*, uword);
+
+// Posts the existing listener envelope in VM state, within the owning group.
+// The Message takes ownership of the persistent root, including failed delivery.
+void FfiAsyncCallbackSendMessage(Thread* thread,
+                                 Dart_Port target_port,
+                                 const Object& arguments);
 
 const char* DeoptReasonToCString(ICData::DeoptReasonId deopt_reason);
 

@@ -383,8 +383,8 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ lx(T4, Address(SP, 0 * target::kWordSize));  // entry_point
     __ lx(T3, Address(SP, 1 * target::kWordSize));  // is_tail
     __ lx(S2, Address(SP, 2 * target::kWordSize));  // epilogue
-    __ lx(S3, Address(SP, 3 * target::kWordSize));  // isolate
-    __ lx(S6, Address(SP, 4 * target::kWordSize));  // isolate_group
+    __ lx(S3, Address(SP, 3 * target::kWordSize));  // caller_thread
+    __ lx(S6, Address(SP, 4 * target::kWordSize));  // caller_vm_tag
 
     __ PopRegistersAligned(kArgumentRegisterSet,
                            (aligned_stack_frame_size - 1) * target::kWordSize);
@@ -417,6 +417,13 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
   {
     __ Bind(&tail);
     __ jalr(T4);  // entry_point
+    // Republish native cookies after the target clobbered runtime scratch.
+    __ sx(S6, Address(THR, target::Thread::unboxed_runtime_arg_offset()));
+    __ sx(S3, Address(THR, target::Thread::unboxed_runtime_arg_offset() + 8));
+#if defined(TARGET_ARCH_RISCV32)
+    __ sw(ZR, Address(THR, target::Thread::unboxed_runtime_arg_offset() + 4));
+    __ sw(ZR, Address(THR, target::Thread::unboxed_runtime_arg_offset() + 12));
+#endif
     __ mv(A0, THR);
     __ mv(A1, S2);
     __ lx(S6, Address(SP, 0 * target::kWordSize));
@@ -433,10 +440,10 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ ebreak();
   }
 
-  ASSERT_LESS_OR_EQUAL(__ CodeSize() - shared_stub_start,
-                       FfiCallbackMetadata::kUbsanTargetValidationPaddingSize +
-                           FfiCallbackMetadata::kNativeCallbackSharedStubSize);
-  ASSERT_LESS_OR_EQUAL(__ CodeSize(), FfiCallbackMetadata::kPageSize);
+  RELEASE_ASSERT(__ CodeSize() - shared_stub_start <=
+                 FfiCallbackMetadata::kUbsanTargetValidationPaddingSize +
+                     FfiCallbackMetadata::kNativeCallbackSharedStubSize);
+  RELEASE_ASSERT(__ CodeSize() <= FfiCallbackMetadata::kPageSize);
 
 #if defined(DEBUG)
   while (__ CodeSize() < FfiCallbackMetadata::kPageSize) {

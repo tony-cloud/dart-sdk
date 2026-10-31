@@ -204,7 +204,8 @@ class FfiCallbackMetadata {
       return context_;
     }
 
-    // The send port that the async callback will send a message to.
+    // The send port for a compiled async callback. Runtime listeners carry a
+    // descriptor context instead; their port lives in that descriptor's slot 2.
     Dart_Port send_port() const {
       ASSERT(IsLive());
       ASSERT(trampoline_type_ == TrampolineType::kAsync);
@@ -341,27 +342,27 @@ class FfiCallbackMetadata {
 
 #if defined(TARGET_ARCH_X64)
   static constexpr intptr_t kNativeCallbackTrampolineSize = 12;
-  static constexpr intptr_t kNativeCallbackSharedStubSize = 288;
+  static constexpr intptr_t kNativeCallbackSharedStubSize = 302;
   static constexpr intptr_t kNativeCallbackTrampolineStackDelta = 6;
 #elif defined(TARGET_ARCH_IA32)
   static constexpr intptr_t kNativeCallbackTrampolineSize = 10;
-  static constexpr intptr_t kNativeCallbackSharedStubSize = 181;
+  static constexpr intptr_t kNativeCallbackSharedStubSize = 213;
   static constexpr intptr_t kNativeCallbackTrampolineStackDelta = 6;
 #elif defined(TARGET_ARCH_ARM)
   static constexpr intptr_t kNativeCallbackTrampolineSize = 8;
-  static constexpr intptr_t kNativeCallbackSharedStubSize = 180;
+  static constexpr intptr_t kNativeCallbackSharedStubSize = 204;
   static constexpr intptr_t kNativeCallbackTrampolineStackDelta = 6;
 #elif defined(TARGET_ARCH_ARM64)
   static constexpr intptr_t kNativeCallbackTrampolineSize = 8;
-  static constexpr intptr_t kNativeCallbackSharedStubSize = 260;
+  static constexpr intptr_t kNativeCallbackSharedStubSize = 268;
   static constexpr intptr_t kNativeCallbackTrampolineStackDelta = 6;
 #elif defined(TARGET_ARCH_RISCV32)
   static constexpr intptr_t kNativeCallbackTrampolineSize = 8;
-  static constexpr intptr_t kNativeCallbackSharedStubSize = 210;
+  static constexpr intptr_t kNativeCallbackSharedStubSize = 226;
   static constexpr intptr_t kNativeCallbackTrampolineStackDelta = 8;
 #elif defined(TARGET_ARCH_RISCV64)
   static constexpr intptr_t kNativeCallbackTrampolineSize = 8;
-  static constexpr intptr_t kNativeCallbackSharedStubSize = 206;
+  static constexpr intptr_t kNativeCallbackSharedStubSize = 214;
   static constexpr intptr_t kNativeCallbackTrampolineStackDelta = 6;
 #else
 #error What architecture?

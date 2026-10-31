@@ -6822,7 +6822,7 @@ class StoreStaticFieldInstr : public TemplateDefinition<1, Throws> {
 
   virtual bool ComputeCanDeoptimize() const { return false; }
   virtual bool ComputeCanDeoptimizeAfterCall() const {
-    return FLAG_experimental_shared_data;
+    return !field().is_shared() || FLAG_experimental_shared_data;
   }
 
   // Currently CSE/LICM don't operate on any instructions that can be affected
@@ -6832,8 +6832,12 @@ class StoreStaticFieldInstr : public TemplateDefinition<1, Throws> {
 
   virtual bool MayHaveVisibleEffect() const { return true; }
 
-  virtual bool CanTriggerGC() const { return FLAG_experimental_shared_data; }
-  virtual bool MayThrow() const { return FLAG_experimental_shared_data; }
+  virtual bool CanTriggerGC() const {
+    return !field().is_shared() || FLAG_experimental_shared_data;
+  }
+  virtual bool MayThrow() const {
+    return !field().is_shared() || FLAG_experimental_shared_data;
+  }
 
   virtual TokenPosition token_pos() const { return token_pos_; }
 

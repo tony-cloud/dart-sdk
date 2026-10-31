@@ -747,7 +747,11 @@ mixin _FfiUseSiteTransformer on FfiTransformer {
           return node;
         }
 
-        final replacement = _replaceNativeCallableListenerConstructor(node);
+        final replacement = _replaceNativeCallableListenerConstructor(
+          node,
+          ffiFuncType,
+          dartType,
+        );
 
         final compoundClasses = funcType.positionalParameters
             .whereType<InterfaceType>()
@@ -1113,12 +1117,18 @@ mixin _FfiUseSiteTransformer on FfiTransformer {
   }
 
   // NativeCallable<T>.listener(target) calls become:
-  // void _handler(List args) => target(args[0], args[1], ...)
+  // final _target = target;
+  // final _function = _nativeAsyncCallbackFunction<T>();
+  // void _handler(List args) => _target(args[0], args[1], ...)
   // final _callback = _NativeCallableListener<T>(_handler, debugName);
   // _callback._pointer = _createNativeCallableListener<NativeFunction<T>>(
-  //       _nativeAsyncCallbackFunction<T>(), _callback._port);
+  //       _function, _callback._port);
   // expression result: _callback;
-  Expression _replaceNativeCallableListenerConstructor(StaticInvocation node) {
+  Expression _replaceNativeCallableListenerConstructor(
+    StaticInvocation node,
+    FunctionType ffiFuncType,
+    FunctionType dartType,
+  ) {
     final nativeFunctionType = InterfaceType(
       nativeFunctionClass,
       currentLibrary.nonNullable,
@@ -1130,7 +1140,22 @@ mixin _FfiUseSiteTransformer on FfiTransformer {
       currentLibrary.nonNullable,
       node.arguments.types,
     );
-    final targetType = node.arguments.types[0] as FunctionType;
+    final nativeType = node.arguments.types[0] as FunctionType;
+    final target = node.arguments.positional[0];
+    final targetVariable = SyntheticVariable(
+      initializer: target,
+      type: dartType,
+      isFinal: true,
+    )..fileOffset = node.fileOffset;
+    // The interpreted factory may allocate or throw. Evaluate it before the
+    // listener constructor creates a receive port that needs native rollback.
+    final nativeFunction = SyntheticVariable(
+      initializer: StaticInvocation(
+        nativeAsyncCallbackFunctionProcedure,
+        Arguments([], types: [nativeType]),
+      ),
+      isFinal: true,
+    )..fileOffset = node.fileOffset;
 
     // void _handler(List args) => target(args[0], args[1], ...)
     final args = PositionalParameter(
@@ -1139,7 +1164,9 @@ mixin _FfiUseSiteTransformer on FfiTransformer {
       isFinal: true,
     )..fileOffset = node.fileOffset;
     final targetArgs = <Expression>[];
-    for (int i = 0; i < targetType.positionalParameters.length; ++i) {
+    // Validation has already flattened VarArgs into the native argument list.
+    // Optional extra parameters on the Dart target are not native arguments.
+    for (int i = 0; i < ffiFuncType.positionalParameters.length; ++i) {
       targetArgs.add(
         InstanceInvocation(
           InstanceAccessKind.Instance,
@@ -1155,13 +1182,12 @@ mixin _FfiUseSiteTransformer on FfiTransformer {
         ),
       );
     }
-    final target = node.arguments.positional[0];
     final handlerBody = ExpressionStatement(
       FunctionInvocation(
         FunctionAccessKind.FunctionType,
-        target,
+        VariableGet(targetVariable),
         Arguments(targetArgs),
-        functionType: targetType,
+        functionType: dartType,
       ),
     );
     final handler = FunctionNode(
@@ -1179,7 +1205,7 @@ mixin _FfiUseSiteTransformer on FfiTransformer {
             FunctionExpression(handler),
             StringLiteral('NativeCallable($target)'),
           ],
-          types: [targetType],
+          types: [nativeType],
         ),
       ),
       type: nativeCallableType,
@@ -1187,15 +1213,12 @@ mixin _FfiUseSiteTransformer on FfiTransformer {
     )..fileOffset = node.fileOffset;
 
     // _callback._pointer = _createNativeCallableListener<NativeFunction<T>>(
-    //       _nativeAsyncCallbackFunction<T>(), _callback._port);
+    //       _function, _callback._port);
     final pointerValue = StaticInvocation(
       createNativeCallableListenerProcedure,
       Arguments(
         [
-          StaticInvocation(
-            nativeAsyncCallbackFunctionProcedure,
-            Arguments([], types: [targetType]),
-          ),
+          VariableGet(nativeFunction),
           InstanceGet(
             InstanceAccessKind.Instance,
             VariableGet(nativeCallable),
@@ -1220,6 +1243,8 @@ mixin _FfiUseSiteTransformer on FfiTransformer {
     // expression result: _callback;
     return BlockExpression(
       Block([
+        VariableStatement(VariableDeclaration(targetVariable)),
+        VariableStatement(VariableDeclaration(nativeFunction)),
         VariableStatement(VariableDeclaration(nativeCallable)),
         pointerSetter,
       ]),

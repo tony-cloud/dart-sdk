@@ -2513,7 +2513,7 @@ LocationSummary* StoreStaticFieldInstr::MakeLocationSummary(Zone* zone,
                                field().is_shared() &&
                                !field().has_deeply_immutable_type();
   const intptr_t kNumTemps = need_extra_temp ? 2 : 1;
-  const bool can_call_to_throw = FLAG_experimental_shared_data;
+  const bool can_call_to_throw = MayThrow();
   LocationSummary* locs = new (zone)
       LocationSummary(zone, kNumInputs, kNumTemps,
                       can_call_to_throw ? LocationSummary::kCallOnSlowPath
@@ -2535,7 +2535,7 @@ void StoreStaticFieldInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   compiler->used_static_fields().Add(&field());
 
   CheckedStoreIntoSharedSlowPath* checked_store_into_shared_slow_path = nullptr;
-  if (FLAG_experimental_shared_data) {
+  if (MayThrow()) {
     if (!field().is_shared()) {
       auto slow_path = new FieldAccessErrorSlowPath(this);
       compiler->AddSlowPathCode(slow_path);

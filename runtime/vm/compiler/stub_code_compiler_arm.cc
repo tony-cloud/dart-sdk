@@ -357,8 +357,8 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ ldr(TMP, Address(SP, 0 * target::kWordSize));              // entry_point
     CLOBBERS_LR(__ ldr(LR, Address(SP, 1 * target::kWordSize)));  // is_tail
     __ ldr(R4, Address(SP, 2 * target::kWordSize));               // epilogue
-    __ ldr(R8, Address(SP, 3 * target::kWordSize));  // caller_isolate
-    __ ldr(R9, Address(SP, 4 * target::kWordSize));  // caller_isolate_group
+    __ ldr(R8, Address(SP, 3 * target::kWordSize));  // caller_thread
+    __ ldr(R9, Address(SP, 4 * target::kWordSize));  // caller_vm_tag
 
     __ PopRegistersAligned(argument_registers, 5 * target::kWordSize);
   }
@@ -393,6 +393,13 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     SPILLS_LR_TO_FRAME();  //...
     __ Bind(&tail);
     __ blx(TMP);  // entry_point
+    // Republish native cookies after the target clobbered runtime scratch.
+    __ str(R9, Address(THR, target::Thread::unboxed_runtime_arg_offset()));
+    __ str(R8, Address(THR, target::Thread::unboxed_runtime_arg_offset() + 8));
+    __ mov(TMP, Operand(0));
+    __ str(TMP, Address(THR, target::Thread::unboxed_runtime_arg_offset() + 4));
+    __ str(TMP,
+           Address(THR, target::Thread::unboxed_runtime_arg_offset() + 12));
     __ mov(R0, Operand(THR));
     __ mov(R1, Operand(R4));
     __ PopList((1 << THR) | (1 << R4) | (1 << R8) | (1 << R9));
@@ -404,10 +411,10 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ Breakpoint();
   }
 
-  ASSERT_LESS_OR_EQUAL(__ CodeSize() - shared_stub_start,
-                       FfiCallbackMetadata::kUbsanTargetValidationPaddingSize +
-                           FfiCallbackMetadata::kNativeCallbackSharedStubSize);
-  ASSERT_LESS_OR_EQUAL(__ CodeSize(), FfiCallbackMetadata::kPageSize);
+  RELEASE_ASSERT(__ CodeSize() - shared_stub_start <=
+                 FfiCallbackMetadata::kUbsanTargetValidationPaddingSize +
+                     FfiCallbackMetadata::kNativeCallbackSharedStubSize);
+  RELEASE_ASSERT(__ CodeSize() <= FfiCallbackMetadata::kPageSize);
 
 #if defined(DEBUG)
   while (__ CodeSize() < FfiCallbackMetadata::kPageSize) {

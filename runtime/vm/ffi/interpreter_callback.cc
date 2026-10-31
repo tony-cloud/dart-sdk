@@ -19,6 +19,7 @@
 #include "vm/handles.h"
 #include "vm/longjump.h"
 #include "vm/object_store.h"
+#include "vm/runtime_entry.h"
 #include "vm/simulator.h"
 #include "vm/thread.h"
 #include "vm/zone.h"
@@ -422,14 +423,8 @@ ObjectPtr BoxArgument(Zone* zone,
   return Double::New(bit_cast<double, uint64_t>(bits));
 }
 
-// Called below setjmp so no modified automatic variable from this worker is
-// inspected after a VM longjmp. All managed state stays in local VM handles.
-DART_NOINLINE bool InvokeCallback(Thread* thread,
-                                  const Function& function,
-                                  const Closure& closure,
-                                  InterpreterFfiCallbackFrame* frame,
-                                  LocalHandle* handle_result) {
-  Zone* const zone = thread->zone();
+const InterpreterFfiCallPlan* CallbackCallPlan(Zone* zone,
+                                               const Function& function) {
   const auto& signature =
       FunctionType::ZoneHandle(zone, function.FfiCSignature());
   const char* error = nullptr;
@@ -437,16 +432,23 @@ DART_NOINLINE bool InvokeCallback(Thread* thread,
                                                           signature, &error);
   // Preparation already checked this immutable signature before publication.
   RELEASE_ASSERT(error == nullptr && plan != nullptr);
+  return plan;
+}
 
+ArrayPtr BuildCallbackArguments(Thread* thread,
+                                const InterpreterFfiCallPlan& plan,
+                                const Closure& closure,
+                                const InterpreterFfiCallbackFrame& frame) {
+  Zone* const zone = thread->zone();
   const Object** const handle_arguments =
-      zone->Alloc<const Object*>(plan->num_args());
-  auto* compound_offsets = zone->Alloc<intptr_t>(plan->num_args());
+      zone->Alloc<const Object*>(plan.num_args());
+  auto* compound_offsets = zone->Alloc<intptr_t>(plan.num_args());
   intptr_t snapshot_size = 0;
-  for (intptr_t i = 0; i < plan->num_args(); ++i) {
+  for (intptr_t i = 0; i < plan.num_args(); ++i) {
     handle_arguments[i] = nullptr;
     compound_offsets[i] = -1;
-    if (plan->IsHandleCType(i)) {
-      const uword address = ReadArgument(*frame, plan->Location(i));
+    if (plan.IsHandleCType(i)) {
+      const uword address = ReadArgument(frame, plan.Location(i));
       if (address == 0) {
         FATAL(
             "A native callback Handle argument must be a valid Dart_Handle, "
@@ -456,9 +458,9 @@ DART_NOINLINE bool InvokeCallback(Thread* thread,
       // every referent before any later argument boxing can collect the heap.
       handle_arguments[i] = &Object::ZoneHandle(
           zone, Api::UnwrapHandle(reinterpret_cast<Dart_Handle>(address)));
-    } else if (plan->IsCompoundCType(i)) {
-      const intptr_t size = plan->Location(i).payload_type().SizeInBytes();
-      if (Utils::WillAddOverflow(snapshot_size, size)) return false;
+    } else if (plan.IsCompoundCType(i)) {
+      const intptr_t size = plan.Location(i).payload_type().SizeInBytes();
+      if (Utils::WillAddOverflow(snapshot_size, size)) return Array::null();
       compound_offsets[i] = snapshot_size;
       snapshot_size += size;
     }
@@ -469,30 +471,45 @@ DART_NOINLINE bool InvokeCallback(Thread* thread,
     // all by-value arguments together before allocating managed wrappers or
     // entering Dart; the target may retain wrappers or overwrite input memory.
     NoSafepointScope no_safepoint;
-    for (intptr_t i = 0; i < plan->num_args(); ++i) {
+    for (intptr_t i = 0; i < plan.num_args(); ++i) {
       if (compound_offsets[i] >= 0) {
-        CopyCompoundArgument(*frame, plan->Location(i),
+        CopyCompoundArgument(frame, plan.Location(i),
                              snapshots + compound_offsets[i]);
       }
     }
   }
   const intptr_t receiver_count = closure.IsNull() ? 0 : 1;
   const auto& arguments =
-      Array::Handle(zone, Array::New(plan->num_args() + receiver_count));
+      Array::Handle(zone, Array::New(plan.num_args() + receiver_count));
   if (receiver_count != 0) arguments.SetAt(0, closure);
   auto& argument = Object::Handle(zone);
-  for (intptr_t i = 0; i < plan->num_args(); ++i) {
+  for (intptr_t i = 0; i < plan.num_args(); ++i) {
     if (handle_arguments[i] != nullptr) {
       argument = handle_arguments[i]->ptr();
     } else if (compound_offsets[i] >= 0) {
-      argument = BoxCompoundArgument(thread, *plan, i,
-                                     snapshots + compound_offsets[i]);
+      argument =
+          BoxCompoundArgument(thread, plan, i, snapshots + compound_offsets[i]);
     } else {
       argument =
-          BoxArgument(zone, *plan, i, ReadArgument(*frame, plan->Location(i)));
+          BoxArgument(zone, plan, i, ReadArgument(frame, plan.Location(i)));
     }
     arguments.SetAt(i + receiver_count, argument);
   }
+  return arguments.ptr();
+}
+
+// Called below setjmp so no modified automatic variable from this worker is
+// inspected after a VM longjmp. All managed state stays in local VM handles.
+DART_NOINLINE bool InvokeCallback(Thread* thread,
+                                  const Function& function,
+                                  const Closure& closure,
+                                  InterpreterFfiCallbackFrame* frame,
+                                  LocalHandle* handle_result) {
+  Zone* const zone = thread->zone();
+  const auto* plan = CallbackCallPlan(zone, function);
+  const auto& arguments = Array::Handle(
+      zone, BuildCallbackArguments(thread, *plan, closure, *frame));
+  if (arguments.IsNull()) return false;
   auto& result = Object::Handle(zone);
   if (closure.IsNull()) {
     const auto& target = Function::Handle(zone, function.FfiCallbackTarget());
@@ -517,6 +534,20 @@ DART_NOINLINE bool InvokeCallback(Thread* thread,
     return true;
   }
   return false;
+}
+
+DART_NOINLINE void PostCallback(Thread* thread,
+                                const Function& function,
+                                Dart_Port target_port,
+                                const InterpreterFfiCallbackFrame& frame) {
+  Zone* const zone = thread->zone();
+  const auto* plan = CallbackCallPlan(zone, function);
+  const auto& arguments = Array::Handle(
+      zone,
+      BuildCallbackArguments(thread, *plan, Object::null_closure(), frame));
+  if (!arguments.IsNull()) {
+    FfiAsyncCallbackSendMessage(thread, target_port, arguments);
+  }
 }
 
 void ApplyIndirectFallback(const InterpreterFfiCallbackFallback& fallback,
@@ -553,10 +584,11 @@ InterpreterFfiCallbackPreparation PrepareInterpreterFfiCallback(
   memset(fallback, 0, sizeof(*fallback));
   const auto kind = function.GetFfiCallbackKind();
   if (kind != FfiCallbackKind::kIsolateLocalStaticCallback &&
-      kind != FfiCallbackKind::kIsolateLocalClosureCallback) {
-    *error =
-        "Runtime-created callbacks currently require isolate-local "
-        "synchronous invocation.";
+      kind != FfiCallbackKind::kIsolateLocalClosureCallback &&
+      kind != FfiCallbackKind::kIsolateGroupBoundStaticCallback &&
+      kind != FfiCallbackKind::kIsolateGroupBoundClosureCallback &&
+      kind != FfiCallbackKind::kAsyncCallback) {
+    *error = "The native callback kind is not supported by the interpreter.";
     return InterpreterFfiCallbackPreparation::kUnsupportedKind;
   }
 #if defined(INTERPRETER_FFI_CALLBACK)
@@ -568,6 +600,11 @@ InterpreterFfiCallbackPreparation PrepareInterpreterFfiCallback(
     const auto* plan = InterpreterFfiCallPlan::FromFunction(
         zone, plan_function, 0, signature, error);
     if (*error != nullptr || plan == nullptr) {
+      return InterpreterFfiCallbackPreparation::kInvalidSignature;
+    }
+    if (kind == FfiCallbackKind::kAsyncCallback &&
+        !plan->IsVoid(InterpreterFfiCallPlan::kResultIndex)) {
+      *error = "NativeCallable.listener callbacks must return Void.";
       return InterpreterFfiCallbackPreparation::kInvalidSignature;
     }
     intptr_t snapshot_size = 0;
@@ -600,6 +637,10 @@ InterpreterFfiCallbackPreparation PrepareInterpreterFfiCallback(
     }
     const auto& exceptional =
         Instance::Handle(zone, function.FfiCallbackExceptionalReturn());
+    if (kind == FfiCallbackKind::kAsyncCallback && !exceptional.IsNull()) {
+      *error = "NativeCallable.listener does not accept an exceptional return.";
+      return InterpreterFfiCallbackPreparation::kInvalidSignature;
+    }
     constexpr intptr_t result_index = InterpreterFfiCallPlan::kResultIndex;
     if (plan->IsHandleCType(result_index) ||
         plan->IsCompoundCType(result_index)) {
@@ -637,6 +678,9 @@ extern "C" void DLRT_InterpreterFfiCallback(
   ASSERT(thread == Thread::Current());
   ASSERT(thread->execution_state() == Thread::kThreadInVM);
   ASSERT(!thread->IsAtSafepoint());
+  // Async's tail epilogue needs this native original-isolate cookie even when
+  // argument work or a nested Dart/native invocation uses the scratch slot.
+  const int64_t saved_second_arg = thread->unboxed_int64_runtime_second_arg();
   StackZone zone(thread);
   HANDLESCOPE(thread);
   // Read the registration root once. The callback may close itself and delete
@@ -652,6 +696,26 @@ extern "C" void DLRT_InterpreterFfiCallback(
   const auto& closure = Closure::Handle(
       zone.GetZone(),
       Closure::RawCast(descriptor.At(kInterpreterFfiCallbackClosure)));
+  const auto kind = function.GetFfiCallbackKind();
+  bool is_async = false;
+  switch (kind) {
+    case FfiCallbackKind::kIsolateLocalStaticCallback:
+    case FfiCallbackKind::kIsolateLocalClosureCallback:
+    case FfiCallbackKind::kIsolateGroupBoundStaticCallback:
+    case FfiCallbackKind::kIsolateGroupBoundClosureCallback:
+      break;
+    case FfiCallbackKind::kAsyncCallback:
+      is_async = true;
+      break;
+    default:
+      FATAL("Invalid interpreter native callback kind.");
+  }
+  const auto& send_port = Integer::Handle(
+      zone.GetZone(),
+      Integer::RawCast(descriptor.At(kInterpreterFfiCallbackSendPort)));
+  const Dart_Port target_port = send_port.Value();
+  RELEASE_ASSERT(is_async ? closure.IsNull() && target_port > ILLEGAL_PORT
+                          : target_port == ILLEGAL_PORT);
   const auto& fallback_data = TypedData::Handle(
       zone.GetZone(),
       TypedData::RawCast(descriptor.At(kInterpreterFfiCallbackFallback)));
@@ -664,6 +728,8 @@ extern "C" void DLRT_InterpreterFfiCallback(
     memcpy(&fallback, fallback_data.DataAddr(0), sizeof(fallback));
   }
   ASSERT((fallback.flags & ~kInterpreterFfiCallbackReturnsHandle) == 0);
+  RELEASE_ASSERT(!is_async ||
+                 (fallback.flags == 0 && fallback.indirect_result_size == 0));
   frame->result = fallback.registers;
   LocalHandle* const handle_result =
       (fallback.flags & kInterpreterFfiCallbackReturnsHandle) != 0
@@ -682,7 +748,12 @@ extern "C" void DLRT_InterpreterFfiCallback(
   DEBUG_ONLY(auto* const outer_api_scope = thread->api_top_scope());
   DEBUG_ONLY(auto* const outer_resource = thread->top_resource());
   if (DART_SETJMP(*jump.Set()) == 0) {
-    if (!InvokeCallback(thread, function, closure, frame, handle_result)) {
+    if (is_async) {
+      // Only post copied arguments. The port's Zone-bound handler executes on
+      // its owning isolate later, never on this native calling thread.
+      PostCallback(thread, function, target_port, *frame);
+    } else if (!InvokeCallback(thread, function, closure, frame,
+                               handle_result)) {
       ApplyIndirectFallback(fallback, *frame);
     }
   } else {
@@ -694,6 +765,7 @@ extern "C" void DLRT_InterpreterFfiCallback(
     }
     ApplyIndirectFallback(fallback, *frame);
   }
+  thread->set_unboxed_int64_runtime_second_arg(saved_second_arg);
   DEBUG_ASSERT(thread->top_exit_frame_info() == outer_exit_frame);
   DEBUG_ASSERT(thread->vm_tag() == outer_vm_tag);
   DEBUG_ASSERT(thread->api_top_scope() == outer_api_scope);

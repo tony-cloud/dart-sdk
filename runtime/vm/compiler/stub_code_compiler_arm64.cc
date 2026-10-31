@@ -524,9 +524,9 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     COMPILE_ASSERT(IsCalleeSavedRegister(R20));
     __ ldr(R20, Address(CSP, 2 * target::kWordSize));  // epilogue
     COMPILE_ASSERT(IsCalleeSavedRegister(R21));
-    __ ldr(R21, Address(CSP, 3 * target::kWordSize));  // isolate
+    __ ldr(R21, Address(CSP, 3 * target::kWordSize));  // caller_thread
     COMPILE_ASSERT(IsCalleeSavedRegister(R22));
-    __ ldr(R22, Address(CSP, 4 * target::kWordSize));  // isolate_group
+    __ ldr(R22, Address(CSP, 4 * target::kWordSize));  // caller_vm_tag
 
     __ PopRegistersAligned(argument_registers, 5 * target::kWordSize);
     __ mov(CSP, SP);
@@ -563,6 +563,9 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     SPILLS_LR_TO_FRAME();  //...
     __ Bind(&tail);
     __ blr(R10);
+    // Republish native cookies after the target clobbered runtime scratch.
+    __ str(R22, Address(THR, target::Thread::unboxed_runtime_arg_offset()));
+    __ str(R21, Address(THR, target::Thread::unboxed_runtime_arg_offset() + 8));
     __ mov(R0, THR);
     __ mov(R1, R20);
     __ ldp(R22, R21,
@@ -578,10 +581,10 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ brk(0);
   }
 
-  ASSERT_LESS_OR_EQUAL(__ CodeSize() - shared_stub_start,
-                       FfiCallbackMetadata::kUbsanTargetValidationPaddingSize +
-                           FfiCallbackMetadata::kNativeCallbackSharedStubSize);
-  ASSERT_LESS_OR_EQUAL(__ CodeSize(), FfiCallbackMetadata::kPageSize);
+  RELEASE_ASSERT(__ CodeSize() - shared_stub_start <=
+                 FfiCallbackMetadata::kUbsanTargetValidationPaddingSize +
+                     FfiCallbackMetadata::kNativeCallbackSharedStubSize);
+  RELEASE_ASSERT(__ CodeSize() <= FfiCallbackMetadata::kPageSize);
 
 #if defined(DEBUG)
   while (__ CodeSize() < FfiCallbackMetadata::kPageSize) {

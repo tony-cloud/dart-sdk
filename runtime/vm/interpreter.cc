@@ -2807,7 +2807,7 @@ SwitchDispatchNoSingleStep:
     InstancePtr value = Instance::RawCast(*SP--);
     intptr_t field_id = Smi::Value(field->untag()->host_offset_or_field_id());
     if (thread->isolate() == nullptr) [[unlikely]] {
-      SP[0] = field;
+      *++SP = field;
       goto ThrowStaticFieldAccessedWithoutIsolateError;
     }
     thread->field_table_values()[field_id] = value;
@@ -2819,7 +2819,7 @@ SwitchDispatchNoSingleStep:
     FieldPtr field = Field::RawCast(LOAD_CONSTANT(rD));
     intptr_t field_id = Smi::Value(field->untag()->host_offset_or_field_id());
     if (thread->isolate() == nullptr) [[unlikely]] {
-      SP[0] = field;
+      *++SP = field;
       goto ThrowStaticFieldAccessedWithoutIsolateError;
     }
     ObjectPtr value = thread->field_table_values()[field_id];
@@ -3956,7 +3956,7 @@ SwitchDispatchNoSingleStep:
     FieldPtr field = Field::RawCast(function->untag()->data());
     intptr_t field_id = Smi::Value(field->untag()->host_offset_or_field_id());
     if (thread->isolate() == nullptr) [[unlikely]] {
-      SP[0] = field;
+      *++SP = field;
       goto ThrowStaticFieldAccessedWithoutIsolateError;
     }
     ObjectPtr value = thread->field_table_values()[field_id];
@@ -4045,7 +4045,7 @@ SwitchDispatchNoSingleStep:
     FieldPtr field = Field::RawCast(function->untag()->data());
     intptr_t field_id = Smi::Value(field->untag()->host_offset_or_field_id());
     if (thread->isolate() == nullptr) [[unlikely]] {
-      SP[0] = field;
+      *++SP = field;
       goto ThrowStaticFieldAccessedWithoutIsolateError;
     }
 
@@ -4833,6 +4833,7 @@ SwitchDispatchNoSingleStep:
 
   {
   ThrowStaticFieldAccessedWithoutIsolateError:
+    // Callers push the field, preserving the frame header for zero locals.
     // SP[0] contains field.
     SP[1] = 0;  // Unused space for result.
     Exit(thread, FP, SP + 2, pc);

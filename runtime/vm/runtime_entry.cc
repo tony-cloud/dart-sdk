@@ -5068,6 +5068,10 @@ DEFINE_RUNTIME_ENTRY(StoreShorebirdInstanceField, 4) {
 
 DEFINE_RUNTIME_ENTRY(InitStaticField, 1) {
   const Field& field = Field::CheckedHandle(zone, arguments.ArgAt(0));
+  if (!field.is_shared() && thread->isolate() == nullptr) {
+    Exceptions::ThrowStaticFieldAccessedWithoutIsolate(
+        String::Handle(zone, field.name()));
+  }
   Object& result = Object::Handle(zone, field.InitializeStatic());
   ThrowIfError(result);
   result = field.StaticValue();
@@ -5114,17 +5118,29 @@ DEFINE_RUNTIME_ENTRY(NotLoaded, 0) {
   FATAL("Not loaded");
 }
 
-DEFINE_RUNTIME_ENTRY(FfiAsyncCallbackSend, 1) {
-  Dart_Port target_port = thread->unboxed_int64_runtime_arg();
+void FfiAsyncCallbackSendMessage(Thread* thread,
+                                 Dart_Port target_port,
+                                 const Object& arguments) {
+  ASSERT(thread == Thread::Current());
+  ASSERT(thread->execution_state() == Thread::kThreadInVM);
+  Zone* const zone = thread->zone();
   TRACE_RUNTIME_CALL("FfiAsyncCallbackSend %p", (void*)target_port);
-  const Object& message = Object::Handle(zone, arguments.ArgAt(0));
   const Array& msg_array = Array::Handle(zone, Array::New(3));
-  msg_array.SetAt(0, message);
+  msg_array.SetAt(0, arguments);
   PersistentHandle* handle =
       thread->isolate_group()->api_state()->AllocatePersistentHandle();
   handle->set_ptr(msg_array);
+  // No managed allocation or potentially throwing VM work occurs between root
+  // allocation and transferring it to Message. Failed posts destroy that same
+  // Message in this group and release its root through Message::~Message.
   PortMap::PostMessage(
       Message::New(target_port, handle, Message::kNormalPriority));
+}
+
+DEFINE_RUNTIME_ENTRY(FfiAsyncCallbackSend, 1) {
+  const auto& message = Object::Handle(zone, arguments.ArgAt(0));
+  FfiAsyncCallbackSendMessage(thread, thread->unboxed_int64_runtime_arg(),
+                              message);
 }
 
 // Use expected function signatures to help MSVC compiler resolve overloading.
@@ -5320,7 +5336,7 @@ DEFINE_RUNTIME_ENTRY(ResumeInterpreter, 3) {
 //
 // Arg0: Bytecode object that needs an allocated coverage array.
 DEFINE_RUNTIME_ENTRY(AllocateBytecodeCoverageArray, 1) {
-#if defined(DART_BYTECODE_INTERPRETER) && !defined(PRODUCT) &&                      \
+#if defined(DART_BYTECODE_INTERPRETER) && !defined(PRODUCT) &&                 \
     !defined(DART_PRECOMPILED_RUNTIME)
   const auto& bytecode = Bytecode::CheckedHandle(zone, arguments.ArgAt(0));
   const auto& coverage_array =
@@ -5408,63 +5424,48 @@ Thread* HandleAsyncFfiCallback(FfiCallbackMetadata::Metadata metadata) {
   if (current_isolate == nullptr ||
       current_isolate->group() != target_isolate->group()) {
     if (current_isolate != nullptr) {
-      Thread::ExitIsolate(/*isolate_shutdown=*/false);
+      Thread::ExitIsolate(/*isolate_shutdown=*/false, /*force_suspend=*/true);
+    } else if (current_thread != nullptr) {
+      Thread::ExitIsolateGroupAsMutator(/*bypass_safepoint=*/false,
+                                        /*force_suspend=*/true);
     }
     target_isolate->group()->EnterTemporaryIsolate();
   }
   Thread* const temp_thread = Thread::Current();
   ASSERT(temp_thread != nullptr);
-  temp_thread->set_unboxed_int64_runtime_arg(metadata.send_port());
+  // Compiled listeners store the port directly; runtime listeners store their
+  // descriptor's persistent handle. The selected entry interprets this context.
+  temp_thread->set_unboxed_int64_runtime_arg(metadata.context());
   temp_thread->set_unboxed_int64_runtime_second_arg(
-      reinterpret_cast<intptr_t>(current_isolate));
+      reinterpret_cast<intptr_t>(current_thread));
   ASSERT(!temp_thread->IsAtSafepoint());
   return temp_thread;
 }
 
 Thread* HandleIsolateGroupBoundSyncFfiCallback(
-    FfiCallbackMetadata::Metadata metadata,
-    CallbackMetadata* out) {
-  Thread* current_thread = Thread::Current();
-
-  if (current_thread != nullptr) {
-    current_thread->ExitSafepointFromNative();
-    current_thread->set_execution_state(Thread::kThreadInVM);
-  }
-
-  Isolate* current_isolate =
-      current_thread != nullptr ? current_thread->isolate() : nullptr;
-
-  bool should_enter_group = true;
-  if (current_thread != nullptr) {
-    if (current_isolate != nullptr) {
-      Thread::ExitIsolate(/*isolate_shutdown=*/false);
-    } else {
-      IsolateGroup* current_isolategroup = current_thread->isolate_group();
-      if (current_isolategroup != nullptr) {
-        if (current_isolategroup == metadata.target_isolate_group()) {
-          should_enter_group = false;
-        } else {
-          Thread::ExitIsolateGroupAsMutator(/*bypass_safepoint=*/false);
-        }
-      }
+    FfiCallbackMetadata::Metadata metadata) {
+  Thread* const source_thread = Thread::Current();
+  if (source_thread != nullptr) {
+    if (source_thread->execution_state() != Thread::kThreadInNative) {
+      FATAL("Cannot invoke native callback from a leaf call.");
+    }
+    source_thread->ExitSafepointFromNative();
+    source_thread->set_execution_state(Thread::kThreadInVM);
+    if (source_thread->isolate() != nullptr) {
+      Thread::ExitIsolate(/*isolate_shutdown=*/false, /*force_suspend=*/true);
+    } else if (source_thread->isolate_group() !=
+               metadata.target_isolate_group()) {
+      Thread::ExitIsolateGroupAsMutator(/*bypass_safepoint=*/false,
+                                        /*force_suspend=*/true);
     }
   }
-  if (should_enter_group) {
+  if (Thread::Current() == nullptr) {
     Thread::EnterIsolateGroupAsMutator(metadata.target_isolate_group(),
                                        /*bypass_safepoint=*/false);
   }
-
-  auto new_thread = Thread::Current();
-  new_thread->set_execution_state(Thread::kThreadInVM);
-  // We need to return to original isolate or isolate group if we were in them.
-  out->caller_isolate = reinterpret_cast<uword>(current_isolate);
-  out->caller_isolate_group = reinterpret_cast<uword>(
-      current_thread != nullptr ? current_thread->isolate_group() : nullptr);
-  current_thread = new_thread;
-
-  current_thread->set_unboxed_int64_runtime_arg(metadata.context());
-
-  return current_thread;
+  Thread* const thread = Thread::Current();
+  thread->set_unboxed_int64_runtime_arg(metadata.context());
+  return thread;
 }
 
 void FfiCallbackThreadChecks(Thread* thread, Isolate* target_isolate) {
@@ -5548,6 +5549,9 @@ extern "C" Thread* DLRT_GetFfiCallbackMetadata(
 
   Thread* thread = nullptr;
 
+  Thread* const source_thread = Thread::Current();
+  out->caller_thread = reinterpret_cast<uword>(source_thread);
+  out->caller_vm_tag = source_thread != nullptr ? source_thread->vm_tag() : 0;
   out->entry_point = metadata.target_entry_point();
   switch (metadata.trampoline_type()) {
     default:
@@ -5569,7 +5573,7 @@ extern "C" Thread* DLRT_GetFfiCallbackMetadata(
     thread = HandleAsyncFfiCallback(metadata);
     out->epilogue = reinterpret_cast<uword>(&DLRT_ExitTemporaryIsolate);
   } else if (metadata.is_isolate_group_bound()) {
-    thread = HandleIsolateGroupBoundSyncFfiCallback(metadata, out);
+    thread = HandleIsolateGroupBoundSyncFfiCallback(metadata);
     out->epilogue = reinterpret_cast<uword>(&DLRT_ExitIsolateGroupBoundIsolate);
   } else {
     thread = HandleIsolateBoundSyncFfiCallback(metadata, out);
@@ -5593,29 +5597,35 @@ extern "C" LargestReturn dart_msan_unpoison_retval() {
 }
 #endif
 
-extern "C" void* DLRT_ExitIsolateGroupBoundIsolate(
-    Thread* thread,
-    Isolate* caller_isolate,
-    IsolateGroup* caller_isolate_group) {
+extern "C" void* DLRT_ExitIsolateGroupBoundIsolate(Thread* thread,
+                                                   Thread* source_thread,
+                                                   uword source_vm_tag) {
   TRACE_RUNTIME_CALL("ExitIsolateGroupBoundIsolate%s", "");
   ASSERT(thread != nullptr);
   ASSERT(thread == Thread::Current());
-  // Need to accommodate ExitIsolateGroupAsHelper assumptions.
   thread->set_execution_state(Thread::kThreadInVM);
-  Thread::ExitIsolateGroupAsMutator(/*bypass_safepoint=*/false);
-  if (caller_isolate != nullptr || caller_isolate_group != nullptr) {
-    if (caller_isolate != nullptr) {
-      // if we were called from an isolate, return to that isolate
-      Thread::EnterIsolate(caller_isolate);
-    } else {
-      ASSERT(caller_isolate_group != nullptr);
-      // if we were called from an isolate group, return to that instead.
-      Thread::EnterIsolateGroupAsMutator(caller_isolate_group,
-                                         /*bypass_safepoint=*/false,
-                                         /*suspended_thread=*/thread);
+  // A nested callback within the same group can reuse the source mutator.
+  if (thread != source_thread) {
+    Isolate* const source_isolate =
+        source_thread != nullptr ? source_thread->isolate() : nullptr;
+    IsolateGroup* const source_group =
+        source_thread != nullptr ? source_thread->isolate_group() : nullptr;
+    Thread::ExitIsolateGroupAsMutator(/*bypass_safepoint=*/false);
+    if (source_thread != nullptr) {
+      if (source_isolate != nullptr) {
+        Thread::EnterIsolate(source_isolate);
+      } else {
+        Thread::EnterIsolateGroupAsMutator(source_group,
+                                           /*bypass_safepoint=*/false,
+                                           source_thread);
+      }
     }
-    Thread::Current()->set_execution_state(Thread::kThreadInNative);
-    Thread::Current()->EnterSafepoint();
+  }
+  if (source_thread != nullptr) {
+    ASSERT(Thread::Current() == source_thread);
+    source_thread->set_execution_state(Thread::kThreadInNative);
+    source_thread->EnterSafepointToNative();
+    source_thread->set_vm_tag(source_vm_tag);
   }
 #if defined(USING_MEMORY_SANITIZER)
   return reinterpret_cast<void*>(dart_msan_unpoison_retval);
@@ -5624,10 +5634,9 @@ extern "C" void* DLRT_ExitIsolateGroupBoundIsolate(
 #endif
 }
 
-extern "C" void* DLRT_ExitSyncCallbackTargetIsolate(
-    Thread* thread,
-    Isolate* caller_isolate,
-    IsolateGroup* caller_isolate_group) {
+extern "C" void* DLRT_ExitSyncCallbackTargetIsolate(Thread* thread,
+                                                    Thread* source_thread,
+                                                    uword source_vm_tag) {
   TRACE_RUNTIME_CALL("ExitSyncCallbackTargetIsolate%s", "");
   ASSERT(thread != nullptr);
   ASSERT(thread == Thread::Current());
@@ -5641,8 +5650,8 @@ extern "C" void* DLRT_ExitSyncCallbackTargetIsolate(
 }
 
 extern "C" void* DLRT_ExitSyncCallback(Thread* thread,
-                                       Isolate* caller_isolate,
-                                       IsolateGroup* caller_isolate_group) {
+                                       Thread* source_thread,
+                                       uword source_vm_tag) {
   ASSERT(thread != nullptr);
   ASSERT(thread == Thread::Current());
 
@@ -5667,24 +5676,34 @@ extern "C" void* DLRT_ExitTemporaryIsolate(Thread* thread) {
   TRACE_RUNTIME_CALL("ExitTemporaryIsolate%s", "");
   ASSERT(thread != nullptr);
   ASSERT(thread == Thread::Current());
-  Isolate* source_isolate =
-      reinterpret_cast<Isolate*>(thread->unboxed_int64_runtime_second_arg());
-
-  // We're either inside a temp isolate, or inside the source_isolate.
-  const bool inside_temp_isolate =
-      source_isolate == nullptr || source_isolate != thread->isolate();
-  if (inside_temp_isolate) {
+  // The native trampoline republishes these cookies after the target returns:
+  // neither compiled nor interpreted targets preserve the runtime scratch.
+  Thread* const source_thread = reinterpret_cast<Thread*>(
+      static_cast<uword>(thread->unboxed_int64_runtime_second_arg()));
+  const uword source_vm_tag = thread->unboxed_int64_runtime_arg();
+  Isolate* const source_isolate =
+      source_thread != nullptr ? source_thread->isolate() : nullptr;
+  IsolateGroup* const source_group =
+      source_thread != nullptr ? source_thread->isolate_group() : nullptr;
+  if (thread != source_thread) {
     IsolateGroup::ExitTemporaryIsolate();
-    if (source_isolate != nullptr) {
-      TRACE_RUNTIME_CALL("ExitTemporaryIsolate re-entering source isolate %p",
-                         source_isolate);
-      Thread::EnterIsolate(source_isolate);
-      Thread::Current()->set_execution_state(Thread::kThreadInNative);
-      Thread::Current()->EnterSafepoint();
+    // The temporary Thread may have been destroyed; only the retained source
+    // Thread can be accessed after shutting down the temporary isolate.
+    if (source_thread != nullptr) {
+      if (source_isolate != nullptr) {
+        Thread::EnterIsolate(source_isolate);
+      } else {
+        Thread::EnterIsolateGroupAsMutator(source_group,
+                                           /*bypass_safepoint=*/false,
+                                           source_thread);
+      }
     }
-  } else {
-    thread->set_execution_state(Thread::kThreadInNative);
-    thread->EnterSafepoint();
+  }
+  if (source_thread != nullptr) {
+    ASSERT(Thread::Current() == source_thread);
+    source_thread->set_execution_state(Thread::kThreadInNative);
+    source_thread->EnterSafepointToNative();
+    source_thread->set_vm_tag(source_vm_tag);
   }
   TRACE_RUNTIME_CALL("ExitTemporaryIsolate %s", "done");
   return nullptr;

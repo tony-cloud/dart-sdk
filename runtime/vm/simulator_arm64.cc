@@ -1833,13 +1833,13 @@ extern "C" void DoRedirectedFfiCallback(CallbackContext* ctxt,
   COMPILE_ASSERT(FfiCallbackMetadata::kDoRedirectedFfiCallback == 1);
 #if defined(DART_TARGET_OS_FUCHSIA)
   COMPILE_ASSERT(FfiCallbackMetadata::kPageSize == 4 * KB);
-  COMPILE_ASSERT(FfiCallbackMetadata::NumCallbackTrampolinesPerPage() == 483);
+  COMPILE_ASSERT(FfiCallbackMetadata::NumCallbackTrampolinesPerPage() == 476);
 #elif defined(DART_TARGET_OS_MACOS)
   COMPILE_ASSERT(FfiCallbackMetadata::kPageSize == 16 * KB);
-  COMPILE_ASSERT(FfiCallbackMetadata::NumCallbackTrampolinesPerPage() == 2013);
+  COMPILE_ASSERT(FfiCallbackMetadata::NumCallbackTrampolinesPerPage() == 2012);
 #else
   COMPILE_ASSERT(FfiCallbackMetadata::kPageSize == 64 * KB);
-  COMPILE_ASSERT(FfiCallbackMetadata::NumCallbackTrampolinesPerPage() == 8157);
+  COMPILE_ASSERT(FfiCallbackMetadata::NumCallbackTrampolinesPerPage() == 8156);
 #endif
 
   CallbackMetadata out;
@@ -1930,8 +1930,17 @@ void Simulator::DoRedirectedFfiCallback(Thread* thread,
                    6);
   }
 
-  auto epilogue = reinterpret_cast<void* (*)(Thread*)>(out->epilogue);
-  epilogue(thread);
+  if (out->type == 1) {
+    thread->set_unboxed_int64_runtime_arg(out->caller_vm_tag);
+    thread->set_unboxed_int64_runtime_second_arg(out->caller_thread);
+    auto epilogue = reinterpret_cast<void* (*)(Thread*)>(out->epilogue);
+    epilogue(thread);
+  } else {
+    auto epilogue =
+        reinterpret_cast<void* (*)(Thread*, Thread*, uword)>(out->epilogue);
+    epilogue(thread, reinterpret_cast<Thread*>(out->caller_thread),
+             out->caller_vm_tag);
+  }
 }
 
 void Simulator::ClobberVolatileRegisters() {

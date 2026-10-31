@@ -19,7 +19,8 @@ enum class InterpreterFfiCallbackPreparation {
 enum InterpreterFfiCallbackDescriptorSlot : intptr_t {
   kInterpreterFfiCallbackFunction = 0,
   kInterpreterFfiCallbackClosure = 1,
-  kInterpreterFfiCallbackSendPort = 2,
+  kInterpreterFfiCallbackSendPort =
+      2,  // Integer port for async; zero for sync.
   kInterpreterFfiCallbackFallback = 3,
   kInterpreterFfiCallbackDescriptorLength = 4,
 };

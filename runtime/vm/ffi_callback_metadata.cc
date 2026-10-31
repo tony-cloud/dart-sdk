@@ -21,6 +21,7 @@
 #include "vm/ffi/interpreter_callback.h"
 #include "vm/flag_list.h"
 #include "vm/object.h"
+#include "vm/port.h"
 #include "vm/runtime_entry.h"
 #include "vm/stub_code.h"
 
@@ -417,15 +418,37 @@ class CallbackContextRollback : public StackResource {
 
 ArrayPtr NewInterpreterCallbackDescriptor(Zone* zone,
                                           const Function& function,
-                                          const Closure& closure) {
+                                          const Closure& closure,
+                                          Dart_Port send_port = ILLEGAL_PORT) {
   const auto kind = function.GetFfiCallbackKind();
-  if ((kind == FfiCallbackKind::kIsolateLocalStaticCallback &&
-       (!closure.IsNull() ||
-        function.FfiCallbackTarget() == Function::null())) ||
-      (kind == FfiCallbackKind::kIsolateLocalClosureCallback &&
-       closure.IsNull())) {
+  bool valid = false;
+  switch (kind) {
+    case FfiCallbackKind::kIsolateLocalStaticCallback:
+    case FfiCallbackKind::kIsolateGroupBoundStaticCallback:
+      valid = closure.IsNull() &&
+              function.FfiCallbackTarget() != Function::null() &&
+              send_port == ILLEGAL_PORT;
+      break;
+    case FfiCallbackKind::kIsolateLocalClosureCallback:
+    case FfiCallbackKind::kIsolateGroupBoundClosureCallback:
+      valid = !closure.IsNull() &&
+              function.FfiCallbackTarget() == Function::null() &&
+              send_port == ILLEGAL_PORT;
+      break;
+    case FfiCallbackKind::kAsyncCallback:
+      valid = closure.IsNull() &&
+              function.FfiCallbackTarget() == Function::null() &&
+              send_port > ILLEGAL_PORT &&
+              PortMap::GetOriginId(send_port) ==
+                  Thread::Current()->isolate_group()->id();
+      break;
+    default:
+      break;
+  }
+  if (!valid) {
     Exceptions::ThrowArgumentError(String::Handle(
-        zone, String::New("Callback kind does not match its target closure.")));
+        zone, String::New("Callback kind does not match its target, closure "
+                          "or receive port.")));
   }
 
   InterpreterFfiCallbackFallback fallback;
@@ -454,7 +477,7 @@ ArrayPtr NewInterpreterCallbackDescriptor(Zone* zone,
   descriptor.SetAt(kInterpreterFfiCallbackFunction, function);
   descriptor.SetAt(kInterpreterFfiCallbackClosure, closure);
   descriptor.SetAt(kInterpreterFfiCallbackSendPort,
-                   Smi::Handle(zone, Smi::New(0)));
+                   Integer::Handle(zone, Integer::New(send_port)));
   descriptor.SetAt(kInterpreterFfiCallbackFallback, encoded_fallback);
   return descriptor.ptr();
 }
@@ -473,16 +496,32 @@ FfiCallbackMetadata::Trampoline FfiCallbackMetadata::CreateLocalFfiCallback(
       Exceptions::ThrowUnsupportedError(
           "Interpreted FFI callbacks require native ARM64 Shorebird AOT.");
     }
-    if (isolate == nullptr || isolate_group != nullptr) {
-      Exceptions::ThrowUnsupportedError(
-          "Interpreted isolate-group-bound callbacks are not implemented.");
+    const auto kind = function.GetFfiCallbackKind();
+    const bool is_local =
+        kind == FfiCallbackKind::kIsolateLocalStaticCallback ||
+        kind == FfiCallbackKind::kIsolateLocalClosureCallback;
+    const bool is_group =
+        kind == FfiCallbackKind::kIsolateGroupBoundStaticCallback ||
+        kind == FfiCallbackKind::kIsolateGroupBoundClosureCallback;
+    if (!((is_local && isolate != nullptr && isolate_group == nullptr) ||
+          (is_group && isolate == nullptr && isolate_group != nullptr))) {
+      Exceptions::ThrowArgumentError(String::Handle(
+          zone, String::New("Callback kind does not match its isolate or "
+                            "isolate-group owner.")));
+    }
+    if (kind == FfiCallbackKind::kIsolateGroupBoundClosureCallback &&
+        !closure.IsNull()) {
+      closure.EnsureDeeplyImmutable(zone);
     }
     const auto& descriptor = Array::Handle(
         zone, NewInterpreterCallbackDescriptor(zone, function, closure));
-    CallbackContextRollback context(Thread::Current(),
-                                    isolate->group()->api_state(), descriptor);
+    auto* const owner = isolate != nullptr ? isolate->group() : isolate_group;
+    CallbackContextRollback context(Thread::Current(), owner->api_state(),
+                                    descriptor);
     const auto trampoline = CreateMetadataEntry(
-        isolate, /*target_isolate_group=*/nullptr, TrampolineType::kSync,
+        isolate, isolate_group,
+        is_local ? TrampolineType::kSync
+                 : TrampolineType::kSyncIsolateGroupBound,
         InterpreterFfiCallbackEntryPoint(),
         reinterpret_cast<uint64_t>(context.handle()), list_head);
     context.Release();
@@ -555,8 +594,26 @@ FfiCallbackMetadata::Trampoline FfiCallbackMetadata::CreateAsyncFfiCallback(
     Dart_Port send_port,
     MetadataEntry** list_head) {
   if (IsRuntimeFfiCallbackFunction(send_function)) {
-    Exceptions::ThrowUnsupportedError(
-        "Interpreted NativeCallable.listener callbacks are not implemented.");
+    if (!InterpreterFfiCallbacksSupported()) {
+      Exceptions::ThrowUnsupportedError(
+          "Interpreted FFI callbacks require native ARM64 Shorebird AOT.");
+    }
+    if (send_function.GetFfiCallbackKind() != FfiCallbackKind::kAsyncCallback) {
+      Exceptions::ThrowArgumentError(String::Handle(
+          zone,
+          String::New("Listener registration requires an async callback.")));
+    }
+    const auto& descriptor = Array::Handle(
+        zone, NewInterpreterCallbackDescriptor(
+                  zone, send_function, Object::null_closure(), send_port));
+    CallbackContextRollback context(Thread::Current(),
+                                    isolate->group()->api_state(), descriptor);
+    const auto trampoline = CreateMetadataEntry(
+        isolate, /*target_isolate_group=*/nullptr, TrampolineType::kAsync,
+        InterpreterFfiCallbackEntryPoint(),
+        reinterpret_cast<uint64_t>(context.handle()), list_head);
+    context.Release();
+    return trampoline;
   }
   ASSERT(send_function.GetFfiCallbackKind() == FfiCallbackKind::kAsyncCallback);
   return CreateMetadataEntry(isolate, /*target_isolate_group=*/nullptr,

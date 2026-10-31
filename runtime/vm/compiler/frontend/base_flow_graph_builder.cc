@@ -654,8 +654,7 @@ Fragment BaseFlowGraphBuilder::StoreFieldGuarded(
 
 Fragment BaseFlowGraphBuilder::LoadStaticField(const Field& field,
                                                bool calls_initializer) {
-  const bool check_access =
-      (dart::FLAG_experimental_shared_data && !field.is_shared());
+  const bool check_access = !field.is_shared();
   const auto slow_path =
       calls_initializer
           ? SlowPathOnSentinelValue::kCallInitializer

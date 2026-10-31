@@ -262,8 +262,8 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ EnterFrame(0);
     // "8" to keep 16-byte alignment
     __ ReserveAlignedFrameSpace(8 * target::kWordSize);
-    // SP[6] CallbackMetadata.caller_isolate_group
-    // SP[5] CallbackMetadata.caller_isolate
+    // SP[6] CallbackMetadata.caller_vm_tag
+    // SP[5] CallbackMetadata.caller_thread
     // SP[4] CallbackMetadata.epilogue
     // SP[3] CallbackMetadata.is_tail
     // SP[2] CallbackMetadata.entry_point
@@ -283,9 +283,8 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
     __ movl(EAX, Address(SPREG, 2 * target::kWordSize));  // entry_point
     __ movl(ECX, Address(SPREG, 3 * target::kWordSize));  // is_tail
     __ movl(EBX, Address(SPREG, 4 * target::kWordSize));  // epilogue
-    __ movl(EDI, Address(SPREG, 5 * target::kWordSize));  // caller_isolate
-    __ movl(EDX,
-            Address(SPREG, 6 * target::kWordSize));  // caller_isolate_group
+    __ movl(EDI, Address(SPREG, 5 * target::kWordSize));  // caller_thread
+    __ movl(EDX, Address(SPREG, 6 * target::kWordSize));  // caller_vm_tag
 
     __ LeaveFrame();
   }
@@ -332,7 +331,7 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
   }
   {
     __ Bind(&call_ret4);
-    __ pushl(ECX);
+    __ pushl(EDX);
     __ call(EAX);  // entry_point
     __ popl(ECX);
 
@@ -363,9 +362,17 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
   }
   {
     __ Bind(&tail);
-    __ pushl(ECX);
+    __ pushl(EDX);
     __ call(EAX);  // entry_point
     __ popl(ECX);
+    // Republish native cookies after the target clobbered runtime scratch.
+    __ movl(Address(THR, target::Thread::unboxed_runtime_arg_offset()), ECX);
+    __ movl(Address(THR, target::Thread::unboxed_runtime_arg_offset() + 4),
+            Immediate(0));
+    __ movl(Address(THR, target::Thread::unboxed_runtime_arg_offset() + 8),
+            EDI);
+    __ movl(Address(THR, target::Thread::unboxed_runtime_arg_offset() + 12),
+            Immediate(0));
     __ movl(EAX, EBX);
     __ popl(EDI);
     __ popl(ECX);
@@ -380,9 +387,9 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
 
   // 'kNativeCallbackSharedStubSize' is an upper bound because the exact
   // instruction size can vary slightly based on OS calling conventions.
-  ASSERT_LESS_OR_EQUAL(__ CodeSize() - shared_stub_start,
-                       FfiCallbackMetadata::kNativeCallbackSharedStubSize);
-  ASSERT_LESS_OR_EQUAL(__ CodeSize(), FfiCallbackMetadata::kPageSize);
+  RELEASE_ASSERT(__ CodeSize() - shared_stub_start <=
+                 FfiCallbackMetadata::kNativeCallbackSharedStubSize);
+  RELEASE_ASSERT(__ CodeSize() <= FfiCallbackMetadata::kPageSize);
 
 #if defined(DEBUG)
   while (__ CodeSize() < FfiCallbackMetadata::kPageSize) {
