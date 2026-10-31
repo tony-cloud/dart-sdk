@@ -553,7 +553,9 @@ ObjectPtr KernelLoader::LoadProgram(bool process_pending_classes) {
         auto& library = Library::Handle(Z);
         for (intptr_t i = 0; i < libraries.Length(); ++i) {
           library ^= libraries.At(i);
-          if (!library.is_dart_scheme()) {
+          if (!library.is_dart_scheme() &&
+              !String::Handle(Z, library.url())
+                   .Equals(Symbols::vm_ffi_native_assets())) {
             if (!library.is_shorebird_full_replacement()) {
               FATAL("Incomplete full replacement baseline capability.");
             }
@@ -826,16 +828,37 @@ LibraryPtr KernelLoader::LoadLibrary(intptr_t index) {
     ProcedureAttributesMetadataHelper attributes(&helper_);
     const auto metadata =
         attributes.GetProcedureAttributes(library_kernel_offset_);
-    library.set_is_shorebird_patchable(!library.is_dart_scheme() &&
+    const bool native_assets_metadata =
+        String::Handle(Z, library.url())
+            .Equals(Symbols::vm_ffi_native_assets());
+    if (native_assets_metadata) {
+      // The frontend appends this annotations-only carrier after its profile
+      // passes. Do not allow executable declarations to hide under its URI.
+      AlternativeReadingScope scope(&helper_.reader_, library_kernel_offset_);
+      LibraryHelper carrier(&helper_);
+      carrier.ReadUntilIncluding(LibraryHelper::kAnnotations);
+      const char* const sections[] = {
+          "dependencies", "additional exports", "parts",           "typedefs",
+          "classes",      "extensions",         "extension types", "fields",
+          "procedures"};
+      for (const char* section : sections) {
+        if (helper_.ReadListLength() != 0) {
+          FATAL("Native assets metadata library cannot define %s.", section);
+        }
+      }
+    }
+    const bool mutable_library =
+        !library.is_dart_scheme() && !native_assets_metadata;
+    library.set_is_shorebird_patchable(mutable_library &&
                                        metadata.is_without_type_flow_analysis);
-    if (FLAG_shorebird_structural_patching && !library.is_dart_scheme() &&
+    if (FLAG_shorebird_structural_patching && mutable_library &&
         (!metadata.is_without_type_flow_analysis ||
          !metadata.is_shorebird_structural_patching)) {
       FATAL(
           "Structural patch snapshots require gen_kernel --aot --no-tfa "
           "--shorebird-structural-patching.");
     }
-    if (FLAG_shorebird_full_replacement && !library.is_dart_scheme() &&
+    if (FLAG_shorebird_full_replacement && mutable_library &&
         (!metadata.is_without_type_flow_analysis ||
          !metadata.is_shorebird_full_replacement)) {
       FATAL(
@@ -845,7 +868,7 @@ LibraryPtr KernelLoader::LoadLibrary(intptr_t index) {
     library.set_is_shorebird_full_replacement(
         FLAG_shorebird_full_replacement &&
         metadata.is_without_type_flow_analysis &&
-        metadata.is_shorebird_full_replacement && !library.is_dart_scheme());
+        metadata.is_shorebird_full_replacement && mutable_library);
     if (FLAG_shorebird_full_replacement) {
       ShorebirdReplacementMetadataHelper replacement(&helper_);
       const auto& descriptor = TypedData::Handle(
@@ -861,7 +884,7 @@ LibraryPtr KernelLoader::LoadLibrary(intptr_t index) {
     library.set_is_shorebird_structural_patchable(
         FLAG_shorebird_structural_patching &&
         metadata.is_without_type_flow_analysis &&
-        metadata.is_shorebird_structural_patching && !library.is_dart_scheme());
+        metadata.is_shorebird_structural_patching && mutable_library);
   }
 #endif
 

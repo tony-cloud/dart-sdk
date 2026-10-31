@@ -2065,15 +2065,20 @@ void BytecodeReaderHelper::ReadAnnotations(const Class& cls,
       reader_.ReadUInt() + bytecode_component_->GetAnnotationsOffset();
   ASSERT(annotations_offset > 0);
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
-  if (FLAG_enable_mirrors || has_pragma) {
+#if defined(DART_PRECOMPILED_RUNTIME)
+  const bool read_annotations = has_pragma;
+#else
+  const bool read_annotations = FLAG_enable_mirrors || has_pragma;
+#endif
+  if (read_annotations) {
     AlternativeReadingScope alt(&reader_, annotations_offset);
     const auto& metadata = Object::Handle(Z, ReadObject());
-    ASSERT(metadata.IsArray());
+    if (!metadata.IsArray()) {
+      RejectBytecodePatch("Bytecode annotations must be an evaluated array.");
+    }
     const auto& library = Library::Handle(Z, cls.library());
     library.AddMetadata(declaration, metadata);
   }
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 }
 
 void BytecodeReaderHelper::ReadMembers(const Class& cls, bool discard_fields) {
@@ -3138,8 +3143,22 @@ void BytecodeReaderHelper::ReadFullReplacement(intptr_t num_libraries) {
     library ^= old_libraries.At(i);
     if (library.is_dart_scheme()) published.Add(library);
   }
+  auto& old_library = Library::Handle(Z);
   for (intptr_t i = 0; i < staged.Length(); ++i) {
     library ^= staged.At(i);
+    if (!library.is_dart_scheme()) {
+      // These C callbacks belong to the live embedder, not the bytecode or
+      // snapshot. The active lookup table still contains baseline identities.
+      // Transfer only matching-URI callbacks; a newly added URI stays null.
+      uri = library.url();
+      old_library = Library::LookupLibrary(thread_, uri);
+      if (!old_library.IsNull()) {
+        library.set_native_entry_resolver(old_library.native_entry_resolver());
+        library.set_native_entry_symbol_resolver(
+            old_library.native_entry_symbol_resolver());
+        library.set_ffi_native_resolver(old_library.ffi_native_resolver());
+      }
+    }
     library.set_index(published.Length());
     published.Add(library);
   }

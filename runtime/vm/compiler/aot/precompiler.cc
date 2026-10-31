@@ -98,6 +98,41 @@ DECLARE_FLAG(bool, print_instruction_stats);
 
 Precompiler* Precompiler::singleton_ = nullptr;
 
+#if defined(DART_SHOREBIRD_INTERPRETER) && defined(DART_PRECOMPILER) && \
+    !defined(TARGET_ARCH_IA32)
+// Retain evaluated metadata only for snapshots that admit bytecode patches.
+// Merely building the snapshot compiler with interpreter support must not
+// change ordinary AOT snapshots (including the SDK tools).
+static bool NeedsInterpreterMetadata(ObjectStore* store) {
+  const auto& root = Library::Handle(store->root_library());
+  return !root.IsNull() && root.is_shorebird_patchable();
+}
+
+static ArrayPtr InterpreterFfiMetadata(const Object& metadata) {
+  auto* zone = Thread::Current()->zone();
+  if (!metadata.IsArray()) return Object::empty_array().ptr();
+  const auto& pragma_class =
+      Class::Handle(zone, IsolateGroup::Current()->object_store()->pragma_class());
+  const auto& name_field = Field::Handle(
+      zone, IsolateGroup::Current()->object_store()->pragma_name());
+  const auto& retained = GrowableObjectArray::Handle(
+      zone, GrowableObjectArray::New(Heap::kOld));
+  auto& annotation = Object::Handle(zone);
+  auto& name = Object::Handle(zone);
+  const auto& annotations = Array::Cast(metadata);
+  for (intptr_t i = 0; i < annotations.Length(); ++i) {
+    annotation = annotations.At(i);
+    if (annotation.clazz() != pragma_class.ptr()) continue;
+    name = Instance::Cast(annotation).GetField(name_field);
+    if (name.ptr() == Symbols::vm_ffi_abi_specific_mapping().ptr() ||
+        name.ptr() == Symbols::vm_ffi_struct_fields().ptr()) {
+      retained.Add(annotation);
+    }
+  }
+  return Array::MakeFixedLength(retained);
+}
+#endif  // defined(DART_SHOREBIRD_INTERPRETER) && defined(DART_PRECOMPILER)
+
 #if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
 
 // Reasons for retaining a given object.
@@ -594,9 +629,14 @@ void Precompiler::DoCompileAll() {
         Class& null_class = Class::Handle(Z);
         Function& null_function = Function::Handle(Z);
         Field& null_field = Field::Handle(Z);
-        IG->object_store()->set_pragma_class(null_class);
-        IG->object_store()->set_pragma_name(null_field);
-        IG->object_store()->set_pragma_options(null_field);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+        if (!NeedsInterpreterMetadata(IG->object_store()))
+#endif
+        {
+          IG->object_store()->set_pragma_class(null_class);
+          IG->object_store()->set_pragma_name(null_field);
+          IG->object_store()->set_pragma_options(null_field);
+        }
         IG->object_store()->set_compiletime_error_class(null_class);
         IG->object_store()->set_growable_list_factory(null_function);
         IG->object_store()->set_simple_instance_of_function(null_function);
@@ -720,6 +760,54 @@ void Precompiler::AddRoots() {
     Jump(Error::Handle(Z, ApiError::New(msg)));
     UNREACHABLE();
   }
+
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (NeedsInterpreterMetadata(IG->object_store())) {
+    const auto& pragma = Class::Handle(Z, IG->object_store()->pragma_class());
+    AddInstantiatedClass(pragma);
+    AddApiUse(pragma);
+    for (const auto ptr : {IG->object_store()->pragma_name(),
+                           IG->object_store()->pragma_options()}) {
+      const auto& field = Field::Handle(Z, ptr);
+      AddField(field);
+      AddApiUse(field);
+    }
+
+    const auto& ffi = Library::Handle(Z, Library::FfiLibrary());
+    auto& cls = Class::Handle(Z);
+    auto& metadata = Array::Handle(Z);
+    ClassDictionaryIterator it(ffi, ClassDictionaryIterator::kIteratePrivate);
+    while (it.HasNext()) {
+      cls = it.GetNextClass();
+      if (!cls.has_pragma()) continue;
+      metadata = InterpreterFfiMetadata(Object::Handle(Z, ffi.GetMetadata(cls)));
+      if (metadata.Length() == 0) continue;
+      AddTypesOf(cls);
+      AddApiUse(cls);
+      for (intptr_t i = 0; i < metadata.Length(); ++i) {
+        AddConstObject(Instance::Handle(Z, Instance::RawCast(metadata.At(i))));
+      }
+    }
+
+    // Bytecode constants resolve their serialized fields by name; FfiIsLeaf
+    // also looks up isLeaf. Keep just these annotation layouts, including for
+    // signatures first introduced by a patch. AddField alone does not prevent
+    // PRODUCT dictionary pruning.
+    for (const char* name : {"Native", "_FfiCall"}) {
+      cls = ffi.LookupClassAllowPrivate(String::Handle(Z, Symbols::New(T, name)));
+      ASSERT(!cls.IsNull());
+      AddInstantiatedClass(cls);
+      AddApiUse(cls);
+      const auto& fields = Array::Handle(Z, cls.fields());
+      for (intptr_t i = 0; i < fields.Length(); ++i) {
+        const auto& field = Field::Handle(Z, Field::RawCast(fields.At(i)));
+        if (field.is_static()) continue;
+        AddField(field);
+        AddApiUse(field);
+      }
+    }
+  }
+#endif  // defined(DART_SHOREBIRD_INTERPRETER)
 
   const String& name = Symbols::main();
   Function& main = Function::Handle(lib.LookupFunctionAllowPrivate(name));
@@ -2744,6 +2832,27 @@ void Precompiler::DropMetadata() {
   Library& lib = Library::Handle(Z);
   for (intptr_t i = 0; i < libraries_.Length(); i++) {
     lib ^= libraries_.At(i);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    if (NeedsInterpreterMetadata(IG->object_store()) &&
+        lib.ptr() == Library::FfiLibrary()) {
+      MetadataMap old_map(lib.metadata());
+      MetadataMap retained(HashTables::New<MetadataMap>(4, Heap::kOld));
+      MetadataMap::Iterator it(&old_map);
+      auto& declaration = Object::Handle(Z);
+      auto& metadata = Array::Handle(Z);
+      while (it.MoveNext()) {
+        const intptr_t entry = it.Current();
+        declaration = old_map.GetKey(entry);
+        if (!declaration.IsClass()) continue;
+        metadata = InterpreterFfiMetadata(
+            Object::Handle(Z, old_map.GetPayload(entry, 0)));
+        if (metadata.Length() > 0) retained.UpdateOrInsert(declaration, metadata);
+      }
+      lib.set_metadata(retained.Release());
+      old_map.Release();
+      continue;
+    }
+#endif  // defined(DART_SHOREBIRD_INTERPRETER)
     lib.set_metadata(Array::null_array());
   }
 }

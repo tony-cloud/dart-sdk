@@ -8,12 +8,10 @@
 #include "platform/assert.h"
 #include "platform/globals.h"
 #include "vm/allocation.h"
+#include "vm/compiler/ffi/range.h"
 #include "vm/constants_base.h"
 #include "vm/growable_array.h"
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
-#include "vm/compiler/ffi/range.h"
-#endif
 #if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
 #include "vm/compiler/backend/locations.h"
 #endif
@@ -103,12 +101,10 @@ class NativeType : public ZoneObject {
   // The alignment in bytes of this representation as member of a composite.
   virtual intptr_t AlignmentInBytesField() const = 0;
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
   // Returns true iff a range within this type contains only floats.
   //
   // Useful for determining whether struct is passed in FP registers on x64.
   virtual bool ContainsOnlyFloats(Range range) const = 0;
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
   // True iff any members are misaligned recursively due to packing.
   virtual bool ContainsUnalignedMembers(intptr_t offset = 0) const = 0;
@@ -236,9 +232,7 @@ class NativePrimitiveType : public NativeType {
   virtual intptr_t AlignmentInBytesStack(bool is_vararg = false) const;
   virtual intptr_t AlignmentInBytesField() const;
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
   virtual bool ContainsOnlyFloats(Range range) const;
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
   virtual bool ContainsUnalignedMembers(intptr_t offset = 0) const;
 
@@ -290,9 +284,7 @@ class NativeArrayType : public NativeType {
     return element_type_.AlignmentInBytesStack();
   }
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
   virtual bool ContainsOnlyFloats(Range range) const;
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
   virtual bool ContainsUnalignedMembers(intptr_t offset = 0) const;
 
@@ -334,7 +326,6 @@ class NativeCompoundType : public NativeType {
                        bool multi_line = false,
                        bool verbose = true) const;
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
   virtual bool ContainsOnlyFloats(Range range) const = 0;
 
   // Returns how many word-sized chunks _only_ contain floats.
@@ -346,7 +337,6 @@ class NativeCompoundType : public NativeType {
   //
   // Useful for determining whether struct is passed in FP registers on x64.
   intptr_t NumberOfWordSizeChunksNotOnlyFloat() const;
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
   virtual bool ContainsUnalignedMembers(intptr_t offset = 0) const = 0;
 
@@ -402,9 +392,7 @@ class NativeStructType : public NativeCompoundType {
     return alignment_stack_;
   }
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
   virtual bool ContainsOnlyFloats(Range range) const;
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
   virtual bool ContainsUnalignedMembers(intptr_t offset = 0) const;
 
@@ -436,9 +424,7 @@ class NativeUnionType : public NativeCompoundType {
   static NativeUnionType& FromNativeTypes(Zone* zone,
                                           const NativeTypes& members);
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
   virtual bool ContainsOnlyFloats(Range range) const;
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
   virtual bool ContainsUnalignedMembers(intptr_t offset = 0) const;
 
@@ -491,6 +477,16 @@ class NativeFunctionType : public ZoneObject {
   // If no variadic arguments, then kNoVariadicArguments.
   const intptr_t variadic_arguments_index_;
 };
+
+#if !defined(FFI_UNIT_TESTS)
+// Inspects the function signature and transitively any class and field
+// definitions and annotations. Parameter #0 is the function pointer; VarArgs
+// record fields are flattened into native arguments.
+const NativeFunctionType* NativeFunctionTypeFromFunctionType(
+    Zone* zone,
+    const FunctionType& c_signature,
+    const char** error);
+#endif
 
 }  // namespace ffi
 

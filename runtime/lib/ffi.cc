@@ -8,6 +8,7 @@
 #include "include/internal/dart_api_dl_impl.h"
 #include "platform/globals.h"
 #include "vm/bootstrap_natives.h"
+#include "vm/compiler/ffi/native_type.h"
 #include "vm/exceptions.h"
 #include "vm/flags.h"
 #include "vm/heap/gc_shared.h"
@@ -23,7 +24,6 @@
 #include "vm/compiler/assembler/assembler.h"
 #include "vm/compiler/ffi/callback.h"
 #include "vm/compiler/ffi/marshaller.h"
-#include "vm/compiler/ffi/native_type.h"
 #include "vm/compiler/jit/compiler.h"
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
@@ -194,7 +194,11 @@ static ObjectPtr LoadStoreAbiSpecificInt(Zone* zone,
                                          NativeArguments* arguments,
                                          bool is_load,
                                          bool at_index) {
-#if defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)
+#if (defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)) || \
+    (defined(DART_PRECOMPILED_RUNTIME) &&                                   \
+     defined(DART_SHOREBIRD_INTERPRETER) && defined(HOST_ARCH_ARM64) &&     \
+     defined(TARGET_ARCH_ARM64) && !defined(DART_HOST_OS_WINDOWS) &&        \
+     !defined(DART_TARGET_OS_WINDOWS))
   const auto& type_args =
       TypeArguments::Handle(zone, arguments->NativeTypeArgs());
   const auto& base = Instance::CheckedHandle(zone, arguments->NativeArgAt(0));
@@ -209,10 +213,10 @@ static ObjectPtr LoadStoreAbiSpecificInt(Zone* zone,
   const auto* native_type =
       compiler::ffi::NativeType::FromAbstractType(zone, type_argument, &error);
   if (error != nullptr) {
-    const auto& language_error = Error::Handle(
-        LanguageError::New(String::Handle(String::New(error, Heap::kOld)),
-                           Report::kError, Heap::kOld));
-    Report::LongJump(language_error);
+    // This validation runs during Dart execution, without a compiler
+    // long-jump scope. Reject the operation before accessing native memory.
+    Exceptions::ThrowArgumentError(
+        String::Handle(zone, String::New(error, Heap::kOld)));
   }
 
   if (at_index) {
@@ -303,7 +307,7 @@ static ObjectPtr LoadStoreAbiSpecificInt(Zone* zone,
   return is_load ? Integer::New(value) : Object::null();
 #else
   UNIMPLEMENTED();
-#endif  // defined(DART_DYNAMIC_MODULES) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // Dynamic modules or supported Shorebird AOT interpreter.
 }
 
 DEFINE_NATIVE_ENTRY(Ffi_loadAbiSpecificInt, 1, 2) {

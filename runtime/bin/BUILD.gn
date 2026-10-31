@@ -1170,10 +1170,57 @@ executable("process_test") {
   sources = [ "process_test.cc" ]
 }
 
+if (dart_enable_shorebird_interpreter) {
+  executable("product_metadata_test") {
+    testonly = true
+    configs += [
+      "..:dart_aotruntime_config",
+      "..:dart_arch_config",
+      "..:dart_config",
+      "..:dart_os_config",
+      "..:dart_product_config",
+    ]
+    include_dirs = [
+      "..",
+      "../engine",
+      "//third_party",
+    ]
+    sources = [ "product_metadata_test.cc" ]
+    deps = [ "../engine:engine_aot_product_set" ]
+    if (is_mac) {
+      inputs = [ "../tools/entitlements/product_metadata_test.plist" ]
+    }
+  }
+}
+
 executable("abstract_socket_test") {
   configs += [ "..:dart_arch_config" ]
   sources = [ "abstract_socket_test.cc" ]
   include_dirs = [ ".." ]
+}
+
+if (dart_enable_shorebird_interpreter && (is_mac || is_linux) &&
+    current_cpu == "arm64" && dart_target_arch == "arm64") {
+  executable("product_ffi_test") {
+    testonly = true
+    configs += [
+      "..:dart_aotruntime_config",
+      "..:dart_arch_config",
+      "..:dart_config",
+      "..:dart_os_config",
+      "..:dart_product_config",
+      ":export_api_symbols",
+    ]
+    include_dirs = [
+      "..",
+      "../engine",
+    ]
+    sources = [ "product_ffi_test.cc" ]
+    deps = [ "../engine:engine_aot_product_set" ]
+    if (is_mac) {
+      inputs = [ "../tools/entitlements/product_ffi_test.plist" ]
+    }
+  }
 }
 
 executable("create_process_test_helper") {

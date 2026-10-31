@@ -6177,7 +6177,9 @@ Dart_ReloadBytecodePatch(const uint8_t* bytecode_buffer,
     auto& library = Library::Handle(Z);
     for (intptr_t i = 0; i < libraries.Length(); ++i) {
       library ^= libraries.At(i);
-      if (!library.is_dart_scheme()) {
+      if (!library.is_dart_scheme() &&
+          !String::Handle(Z, library.url())
+               .Equals(Symbols::vm_ffi_native_assets())) {
         if (!library.is_shorebird_full_replacement()) {
           return Api::NewError(
               "Incomplete full replacement baseline capability.");
@@ -6395,6 +6397,30 @@ Dart_DeferredLoadCompleteError(intptr_t loading_unit_id,
                               error_message, transient);
 }
 
+// Embedder callbacks may be registered on the active baseline before its
+// replacement is installed, unlike application execution/declaration access.
+static bool IsShorebirdResolverLibrary(Thread* thread, const Library& library) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  return thread->isolate_group()
+                 ->object_store()
+                 ->shorebird_replacement_descriptor() != TypedData::null() &&
+         !library.is_dart_scheme();
+#else
+  return false;
+#endif
+}
+
+// The caller holds the program lock through validation and callback access.
+static bool IsInactiveShorebirdResolverLibrary(Thread* thread,
+                                               const Library& library) {
+  const auto state = thread->isolate_group()
+                         ->object_store()
+                         ->shorebird_replacement_installation_state();
+  if (state != Smi::null() && state != Smi::New(2)) return true;
+  const auto& uri = String::Handle(thread->zone(), library.url());
+  return Library::LookupLibrary(thread, uri) != library.ptr();
+}
+
 DART_EXPORT Dart_Handle
 Dart_SetNativeResolver(Dart_Handle library,
                        Dart_NativeEntryResolver resolver,
@@ -6404,8 +6430,18 @@ Dart_SetNativeResolver(Dart_Handle library,
   if (lib.IsNull()) {
     RETURN_TYPE_ERROR(Z, library, Library);
   }
-  lib.set_native_entry_resolver(resolver);
-  lib.set_native_entry_symbol_resolver(symbol);
+  if (IsShorebirdResolverLibrary(T, lib)) {
+    SafepointWriteRwLocker lock(T, T->isolate_group()->program_lock());
+    if (IsInactiveShorebirdResolverLibrary(T, lib)) {
+      return Api::NewError("%s: Inactive full replacement library handle.",
+                           CURRENT_FUNC);
+    }
+    lib.set_native_entry_resolver(resolver);
+    lib.set_native_entry_symbol_resolver(symbol);
+  } else {
+    lib.set_native_entry_resolver(resolver);
+    lib.set_native_entry_symbol_resolver(symbol);
+  }
   return Api::Success();
 }
 
@@ -6421,7 +6457,16 @@ Dart_GetNativeResolver(Dart_Handle library,
   if (lib.IsNull()) {
     RETURN_TYPE_ERROR(Z, library, Library);
   }
-  *resolver = lib.native_entry_resolver();
+  if (IsShorebirdResolverLibrary(T, lib)) {
+    SafepointReadRwLocker lock(T, T->isolate_group()->program_lock());
+    if (IsInactiveShorebirdResolverLibrary(T, lib)) {
+      return Api::NewError("%s: Inactive full replacement library handle.",
+                           CURRENT_FUNC);
+    }
+    *resolver = lib.native_entry_resolver();
+  } else {
+    *resolver = lib.native_entry_resolver();
+  }
   return Api::Success();
 }
 
@@ -6436,7 +6481,16 @@ DART_EXPORT Dart_Handle Dart_GetNativeSymbol(Dart_Handle library,
   if (lib.IsNull()) {
     RETURN_TYPE_ERROR(Z, library, Library);
   }
-  *resolver = lib.native_entry_symbol_resolver();
+  if (IsShorebirdResolverLibrary(T, lib)) {
+    SafepointReadRwLocker lock(T, T->isolate_group()->program_lock());
+    if (IsInactiveShorebirdResolverLibrary(T, lib)) {
+      return Api::NewError("%s: Inactive full replacement library handle.",
+                           CURRENT_FUNC);
+    }
+    *resolver = lib.native_entry_symbol_resolver();
+  } else {
+    *resolver = lib.native_entry_symbol_resolver();
+  }
   return Api::Success();
 }
 
@@ -6448,7 +6502,16 @@ Dart_SetFfiNativeResolver(Dart_Handle library,
   if (lib.IsNull()) {
     RETURN_TYPE_ERROR(Z, library, Library);
   }
-  lib.set_ffi_native_resolver(resolver);
+  if (IsShorebirdResolverLibrary(T, lib)) {
+    SafepointWriteRwLocker lock(T, T->isolate_group()->program_lock());
+    if (IsInactiveShorebirdResolverLibrary(T, lib)) {
+      return Api::NewError("%s: Inactive full replacement library handle.",
+                           CURRENT_FUNC);
+    }
+    lib.set_ffi_native_resolver(resolver);
+  } else {
+    lib.set_ffi_native_resolver(resolver);
+  }
   return Api::Success();
 }
 

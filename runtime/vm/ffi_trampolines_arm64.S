@@ -12,11 +12,21 @@
 #define LOCAL_SYMBOL(x) .L##x
 #endif
 
-#if defined(__aarch64__) && (defined(SIMULATOR_FFI) || (defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)))
+// Native ARM64 Shorebird AOT call-outs execute only release-linked code.
+// The simulator's separate call-out and callback region keeps its old guard.
+#if defined(DART_BYTECODE_INTERPRETER) &&                                    \
+    (!defined(DART_PRECOMPILED_RUNTIME) ||                                   \
+     (defined(DART_SHOREBIRD_INTERPRETER) && defined(TARGET_ARCH_ARM64) &&   \
+      !defined(DART_TARGET_OS_WINDOWS) && !defined(_WIN32)))
+#define INTERPRETER_FFI_CALLOUT 1
+#endif
+
+#if defined(__aarch64__) && \
+    (defined(SIMULATOR_FFI) || defined(INTERPRETER_FFI_CALLOUT))
 
 .text
 
-#if defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(INTERPRETER_FFI_CALLOUT)
 
 #if defined(__APPLE__)
 .globl _FfiCallTrampoline
@@ -37,11 +47,14 @@ FfiCallTrampoline:
   // Copy top frame from Dart stack to C stack
   ldr x0, [x19, #0]  // FfiCallArguments.stack_area
   ldr x1, [x19, #8]  // FfiCallArguments.stack_area_end
+  cmp x1, x0
+  b.eq LOCAL_SYMBOL(copy1_done)
 LOCAL_SYMBOL(copy1):
   ldp x2, x3, [x1, #-16]!  // From stack_area
   stp x2, x3, [sp, #-16]!  // To C SP
   cmp x1, x0
   b.gt LOCAL_SYMBOL(copy1)
+LOCAL_SYMBOL(copy1_done):
 
   // Load the ABI argument registers. Note that Dart FFI does not support
   // full 128-bit SIMD arguments, so we don't need to set the full V
@@ -73,7 +86,7 @@ LOCAL_SYMBOL(copy1):
 .size FfiCallTrampoline,.-FfiCallTrampoline
 #endif
 
-#endif  // defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // defined(INTERPRETER_FFI_CALLOUT)
 
 #if defined(SIMULATOR_FFI)
 
@@ -222,4 +235,4 @@ SimulatorFfiCallbackTrampolineEnd:
 
 #endif  // defined(SIMULATOR_FFI)
 
-#endif  // defined(__aarch64__) && (defined(SIMULATOR_FFI) || (defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)))
+#endif  // __aarch64__ && (SIMULATOR_FFI || INTERPRETER_FFI_CALLOUT)

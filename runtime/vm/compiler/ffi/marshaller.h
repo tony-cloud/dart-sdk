@@ -27,13 +27,6 @@ namespace ffi {
 // Values below 0 index result (result might be multiple if composite).
 const intptr_t kResultIndex = -1;
 
-// Inspects the function signature and transitively any class and field
-// definitions and annotations.
-const NativeFunctionType* NativeFunctionTypeFromFunctionType(
-    Zone* zone,
-    const FunctionType& c_signature,
-    const char** error);
-
 // Provides the mapping from the native calling convention to the Dart calling
 // convention.
 //

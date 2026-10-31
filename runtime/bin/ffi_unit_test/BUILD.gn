@@ -33,6 +33,16 @@ template("build_run_ffi_unit_tests") {
   }
 }
 
+# Exercise the same data-only ABI engine used by the shipping runtime, with
+# compiler backend adapters excluded. These tests execute on the host while
+# calculating the requested target ABI.
+config("define_product_aot_runtime") {
+  defines = [
+    "PRODUCT",
+    "DART_PRECOMPILED_RUNTIME",
+  ]
+}
+
 config("define_target_arch_arm") {
   defines = [ "TARGET_ARCH_ARM" ]
 }
@@ -193,11 +203,28 @@ build_run_ffi_unit_tests("run_ffi_unit_tests_riscv64_linux") {
   ]
 }
 
+build_run_ffi_unit_tests("run_ffi_unit_tests_arm64_ios_product_aot") {
+  extra_configs = [
+    ":define_target_arch_arm64",
+    ":define_target_os_ios",
+    ":define_product_aot_runtime",
+  ]
+}
+
+build_run_ffi_unit_tests("run_ffi_unit_tests_x64_linux_product_aot") {
+  extra_configs = [
+    ":define_target_arch_x64",
+    ":define_target_os_linux",
+    ":define_product_aot_runtime",
+  ]
+}
+
 group("run_ffi_unit_tests") {
   deps = [
     ":run_ffi_unit_tests_arm64_android",
     ":run_ffi_unit_tests_arm64_fuchsia",
     ":run_ffi_unit_tests_arm64_ios",  # No other test coverage.
+    ":run_ffi_unit_tests_arm64_ios_product_aot",
     ":run_ffi_unit_tests_arm64_linux",
     ":run_ffi_unit_tests_arm64_macos",
     ":run_ffi_unit_tests_arm64_win",
@@ -209,6 +236,7 @@ group("run_ffi_unit_tests") {
     ":run_ffi_unit_tests_x64_fuchsia",
     ":run_ffi_unit_tests_x64_ios",  # Simulator, no other test coverage.
     ":run_ffi_unit_tests_x64_linux",
+    ":run_ffi_unit_tests_x64_linux_product_aot",
     ":run_ffi_unit_tests_x64_macos",
     ":run_ffi_unit_tests_x64_win",
   ]

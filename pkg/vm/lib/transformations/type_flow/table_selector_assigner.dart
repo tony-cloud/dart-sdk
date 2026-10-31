@@ -8,6 +8,7 @@ import 'utils.dart' show UnionFind;
 import '../../metadata/procedure_attributes.dart';
 import '../../metadata/table_selector.dart';
 import '../../metadata/unboxing_info.dart';
+import '../../native_assets/metadata.dart';
 
 /// Supplies the dispatch metadata required by AOT when TFA is disabled.
 /// Without a closed-world analysis every selector must conservatively remain
@@ -21,6 +22,7 @@ void annotateWithoutTypeFlow(
   final attributes = ProcedureAttributesMetadataRepository();
   final unboxing = UnboxingInfoMetadataRepository();
   for (final library in component.libraries) {
+    if (isNativeAssetsMetadataLibrary(library)) continue;
     attributes.mapping[library] = ProcedureAttributesMetadata(
       isWithoutTypeFlowAnalysis: true,
       isShorebirdStructuralPatching: shorebirdStructuralPatching,

@@ -17,6 +17,7 @@ import 'package:front_end/src/api_unstable/vm.dart'
         resolveInputUri;
 import 'package:kernel/ast.dart' show Component;
 import 'package:vm/bytecode/full_replacement.dart';
+import 'package:vm/native_assets/metadata.dart';
 import 'package:vm/target_os.dart';
 import 'package:vm/kernel_front_end.dart'
     show
@@ -442,7 +443,11 @@ Future<int> runCompilerWithOptions({
   }
   if (shorebirdFullReplacement) {
     try {
-      validateShorebirdReplacementLibraries(component.libraries);
+      validateShorebirdReplacementLibraries(
+        component.libraries.where(
+          (library) => !isNativeAssetsMetadataLibrary(library),
+        ),
+      );
     } on FormatException catch (error) {
       printMessage(error.message);
       return compileTimeErrorExitCode;
@@ -455,7 +460,8 @@ Future<int> runCompilerWithOptions({
     libraries: component.libraries
         .where(
           (lib) => shorebirdFullReplacement
-              ? lib.importUri.scheme != 'dart'
+              ? lib.importUri.scheme != 'dart' &&
+                    !isNativeAssetsMetadataLibrary(lib)
               : !results.loadedLibraries.contains(lib),
         )
         .toList(),

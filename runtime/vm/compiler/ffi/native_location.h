@@ -5,17 +5,13 @@
 #ifndef RUNTIME_VM_COMPILER_FFI_NATIVE_LOCATION_H_
 #define RUNTIME_VM_COMPILER_FFI_NATIVE_LOCATION_H_
 
-#if defined(DART_PRECOMPILED_RUNTIME)
-#error "AOT runtime should not use compiler sources (including header files)"
-#endif  // defined(DART_PRECOMPILED_RUNTIME)
-
 #include "platform/assert.h"
 #include "vm/compiler/ffi/native_type.h"
 #include "vm/compiler/runtime_api.h"
 #include "vm/constants.h"
 #include "vm/growable_array.h"
 
-#if !defined(FFI_UNIT_TESTS)
+#if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
 #include "vm/compiler/backend/locations.h"
 #endif
 
@@ -35,7 +31,9 @@ class PointerToMemoryLocation;
 class BothNativeLocations;
 
 // NativeLocation objects are used in the FFI to describe argument and return
-// value locations in all native ABIs that the FFI supports.
+// value locations in all native ABIs that the FFI supports. The data-only
+// descriptions are shared with the AOT runtime; compiler Location and Address
+// conversions are excluded from that runtime.
 //
 // NativeLocations contain two NativeTypes.
 // * The payload type.
@@ -62,7 +60,7 @@ class BothNativeLocations;
 // inequality cannot be used to determine disjointness.
 class NativeLocation : public ZoneObject {
  public:
-#if !defined(FFI_UNIT_TESTS)
+#if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
   static bool LocationCanBeExpressed(Location loc, Representation rep);
   static NativeLocation& FromLocation(Zone* zone,
                                       Location loc,
@@ -104,7 +102,7 @@ class NativeLocation : public ZoneObject {
   virtual bool IsBoth() const { return false; }
 
   virtual bool IsExpressibleAsLocation() const { return false; }
-#if !defined(FFI_UNIT_TESTS)
+#if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
   virtual Location AsLocation() const {
     ASSERT(IsExpressibleAsLocation());
     UNREACHABLE_THIS();
@@ -194,7 +192,7 @@ class NativeRegistersLocation : public NativeLocation {
   virtual bool IsExpressibleAsLocation() const {
     return num_regs() == 1 || num_regs() == 2;
   }
-#if !defined(FFI_UNIT_TESTS)
+#if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
   virtual Location AsLocation() const;
 #endif
   intptr_t num_regs() const { return regs_->length(); }
@@ -265,7 +263,7 @@ class NativeFpuRegistersLocation : public NativeLocation {
   virtual bool IsExpressibleAsLocation() const {
     return fpu_reg_kind_ == kQuadFpuReg;
   }
-#if !defined(FFI_UNIT_TESTS)
+#if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
   virtual Location AsLocation() const {
     ASSERT(IsExpressibleAsLocation());
     return Location::FpuRegisterLocation(fpu_reg());
@@ -329,7 +327,7 @@ class NativeStackLocation : public NativeLocation {
            (size_slots == 1 || size_slots == 2);
   }
 
-#if !defined(FFI_UNIT_TESTS)
+#if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
   virtual Location AsLocation() const;
 
   // ConstantInstr expects DoubleStackSlot for doubles, even on 64-bit systems.
@@ -500,7 +498,7 @@ class BothNativeLocations : public NativeLocation {
   DISALLOW_COPY_AND_ASSIGN(BothNativeLocations);
 };
 
-#if !defined(FFI_UNIT_TESTS)
+#if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
 // Return a memory operand for stack slot locations.
 compiler::Address NativeLocationToStackSlotAddress(
     const NativeStackLocation& loc);

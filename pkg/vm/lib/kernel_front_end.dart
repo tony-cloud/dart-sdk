@@ -52,6 +52,7 @@ import 'modular/target/install.dart' show installAdditionalTargets;
 import 'modular/transformations/call_site_annotator.dart'
     as call_site_annotator;
 import 'native_assets/synthesizer.dart';
+import 'native_assets/metadata.dart';
 import 'target_os.dart';
 import 'transformations/deferred_loading.dart' as deferred_loading;
 import 'transformations/devirtualization.dart'
@@ -779,7 +780,11 @@ Future<KernelCompilationResults> compileToKernel(
       final manifest = bundle.manifest;
       final uris = canonicalReplacementUris(
         component.libraries
-            .where((library) => library.importUri.scheme != 'dart')
+            .where(
+              (library) =>
+                  library.importUri.scheme != 'dart' &&
+                  !isNativeAssetsMetadataLibrary(library),
+            )
             .map((library) => library.importUri.toString()),
       );
       final hostAbi = parseShorebirdHostAbi(args.shorebirdHostAbi!);

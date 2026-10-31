@@ -7,8 +7,6 @@
 #include "platform/assert.h"
 #include "platform/globals.h"
 #include "platform/utils.h"
-#include "vm/object.h"
-#include "vm/os.h"
 #include "vm/zone.h"
 
 namespace dart {

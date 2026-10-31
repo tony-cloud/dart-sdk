@@ -4,6 +4,7 @@
 
 #include "vm/runtime_entry.h"
 
+#include <cstddef>
 #include <memory>
 
 #include "platform/address_sanitizer.h"
@@ -22,6 +23,7 @@
 #include "vm/debugger.h"
 #include "vm/double_conversion.h"
 #include "vm/exceptions.h"
+#include "vm/ffi/interpreter_call_plan.h"
 #include "vm/ffi_callback_metadata.h"
 #include "vm/flags.h"
 #include "vm/heap/verifier.h"
@@ -42,8 +44,6 @@
 #include "vm/zone_text_buffer.h"
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
-#include "vm/compiler/backend/locations.h"
-#include "vm/compiler/ffi/marshaller.h"
 #include "vm/deopt_instructions.h"
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
@@ -1249,7 +1249,10 @@ DEFINE_RUNTIME_ENTRY(ResolveExternalCall, 2) {
 
 #if defined(DART_BYTECODE_INTERPRETER)
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
+#if !defined(DART_PRECOMPILED_RUNTIME) ||                                    \
+    (defined(DART_SHOREBIRD_INTERPRETER) && defined(HOST_ARCH_ARM64) &&      \
+     defined(TARGET_ARCH_ARM64) && !defined(DART_HOST_OS_WINDOWS) &&        \
+     !defined(DART_TARGET_OS_WINDOWS))
 
 struct FfiCallArguments {
   uword stack_area;
@@ -1287,6 +1290,15 @@ struct FfiCallArguments {
     return buffer.buffer();
   }
 };
+
+#if defined(HOST_ARCH_ARM64) && defined(TARGET_ARCH_ARM64)
+// Keep the release-linked call-out trampoline's argument block in sync.
+static_assert(offsetof(FfiCallArguments, stack_area) == 0);
+static_assert(offsetof(FfiCallArguments, stack_area_end) == 8);
+static_assert(offsetof(FfiCallArguments, cpu_registers) == 16);
+static_assert(offsetof(FfiCallArguments, fpu_registers) == 272);
+static_assert(offsetof(FfiCallArguments, target) == 528);
+#endif
 
 #if defined(HOST_ARCH_ARM64)
 extern "C" void FfiCallTrampoline(FfiCallArguments* args);
@@ -1374,7 +1386,7 @@ static void PassFfiCallCompoundArgumentPortion(
       UNIMPLEMENTED();
     }
     ASSERT(size <= kWordSize);
-    uword value;
+    uword value = 0;
     {
       NoSafepointScope scope;
       auto* const src = GetDataAddress(compound_contents, offset_in_bytes);
@@ -1397,7 +1409,7 @@ static void PassFfiCallCompoundArgumentPortion(
 
 static void PassFfiCallArguments(
     Thread* thread,
-    const compiler::ffi::CallMarshaller& marshaller,
+    const InterpreterFfiCallPlan& call_plan,
     ObjectPtr* argv,
     FfiCallArguments* args,
     bool is_leaf) {
@@ -1413,17 +1425,17 @@ static void PassFfiCallArguments(
       Field::Handle(zone, object_store->compound_offset_in_bytes_field());
   auto& compound_contents = Instance::Handle(zone);
   auto& arg = Object::Handle(zone);
-  for (intptr_t i = 0; i < marshaller.num_args(); ++i) {
+  for (intptr_t i = 0; i < call_plan.num_args(); ++i) {
     arg = argv[i];
-    const auto& loc = marshaller.Location(i);
-    if (marshaller.IsCompoundCType(i)) {
+    const auto& loc = call_plan.Location(i);
+    if (call_plan.IsCompoundCType(i)) {
       compound_contents ^= Instance::Cast(arg).GetField(typed_data_field);
       intptr_t offset_in_bytes = Smi::Value(
           Smi::RawCast(Instance::Cast(arg).GetField(offset_in_bytes_field)));
       if (loc.IsPointerToMemory()) {
         const auto& arg_loc = loc.AsPointerToMemory();
         auto const size = arg_loc.payload_type().SizeInBytes();
-        auto* const dst = stack_top + marshaller.PassByPointerStackOffset(i);
+        auto* const dst = stack_top + call_plan.PassByPointerStackOffset(i);
         ASSERT(stack_top <= dst && dst + size <= stack_end);
         // First copy the contents of the struct to the stack area.
         {
@@ -1459,17 +1471,17 @@ static void PassFfiCallArguments(
       }
       ASSERT(loc.payload_type().SizeInBytes() <= kWordSize);
       uword value;
-      if (marshaller.IsHandleCType(i)) {
+      if (call_plan.IsHandleCType(i)) {
         LocalHandle* handle = scope->local_handles()->AllocateHandle();
         handle->set_ptr(arg.ptr());
         value = reinterpret_cast<uword>(handle);
-      } else if (marshaller.IsPointerPointer(i)) {
+      } else if (call_plan.IsPointerPointer(i)) {
         value = Pointer::Cast(arg).NativeAddress();
-      } else if (marshaller.IsTypedDataPointer(i) ||
-                 marshaller.IsCompoundPointer(i)) {
+      } else if (call_plan.IsTypedDataPointer(i) ||
+                 call_plan.IsCompoundPointer(i)) {
         compound_contents ^= arg.ptr();
         intptr_t offset_in_bytes = 0;
-        if (marshaller.IsCompoundPointer(i)) {
+        if (call_plan.IsCompoundPointer(i)) {
           offset_in_bytes = Smi::Value(
               Smi::RawCast(compound_contents.GetField(offset_in_bytes_field)));
           compound_contents ^= compound_contents.GetField(typed_data_field);
@@ -1481,19 +1493,19 @@ static void PassFfiCallArguments(
         // NoSafepointScope if TypedData is a possibility here (the leaf case).
         value = reinterpret_cast<uword>(
             GetDataAddress(compound_contents, offset_in_bytes));
-      } else if (marshaller.IsBool(i)) {
+      } else if (call_plan.IsBool(i)) {
         value = static_cast<uword>(Bool::Cast(arg).value());
       } else {
-        ASSERT(!marshaller.IsVoid(i));
-        const auto rep = marshaller.RepInDart(i);
-        if (RepresentationUtils::IsUnboxedInteger(rep)) {
+        ASSERT(!call_plan.IsVoid(i));
+        const auto& type = loc.payload_type();
+        if (type.IsInt()) {
           value =
               TruncateFfiInt(Integer::Cast(arg).Value(),
                              loc.payload_type().AsPrimitive().representation(),
                              /*is_return=*/false);
-        } else if (rep == kUnboxedDouble) {
+        } else if (type.AsPrimitive().representation() == compiler::ffi::kDouble) {
           value = bit_cast<uint64_t, double>(Double::Cast(arg).value());
-        } else if (rep == kUnboxedFloat) {
+        } else if (type.AsPrimitive().representation() == compiler::ffi::kFloat) {
           value = bit_cast<uint32_t, float>(
               static_cast<float>(Double::Cast(arg).value()));
         } else {
@@ -1511,14 +1523,17 @@ static void PassFfiCallArguments(
         args->fpu_registers[dst_reg] = value;
       } else if (loc.IsStack()) {
         auto* const dst = stack_top + loc.AsStack().offset_in_bytes();
-        ASSERT((stack_top <= dst) && (dst + kWordSize <= stack_end));
-        *reinterpret_cast<uword*>(dst) = value;
+        const intptr_t size = loc.container_type().SizeInBytes();
+        ASSERT(size <= kWordSize);
+        ASSERT((stack_top <= dst) && (dst + size <= stack_end));
+        // Darwin ARM64 packs narrow stack arguments without word alignment.
+        memcpy(dst, &value, size);  // NOLINT
       }
     }
   }
 
 #if defined(TARGET_ARCH_X64)
-  if (marshaller.contains_varargs() &&
+  if (call_plan.contains_varargs() &&
       CallingConventions::kVarArgFpuRegisterCount != kNoRegister) {
     // TODO(http://dartbug.com/38578): Use the number of used FPU registers.
     args->cpu_registers[CallingConventions::kVarArgFpuRegisterCount] =
@@ -1526,9 +1541,9 @@ static void PassFfiCallArguments(
   }
 #endif  // defined(TARGET_ARCH_X64)
 
-  if (marshaller.ReturnsCompound()) {
-    const intptr_t arg_index = compiler::ffi::kResultIndex;
-    const auto& loc = marshaller.Location(arg_index);
+  if (call_plan.ReturnsCompound()) {
+    const intptr_t arg_index = InterpreterFfiCallPlan::kResultIndex;
+    const auto& loc = call_plan.Location(arg_index);
     if (loc.IsPointerToMemory()) {
       // Pass a pointer to the space allocated in stack_area to native code.
       const auto& pointer_loc = loc.AsPointerToMemory().pointer_location();
@@ -1538,7 +1553,7 @@ static void PassFfiCallArguments(
       ASSERT_EQUAL(pointer_loc.AsRegisters().num_regs(), 1);
       const Register reg = pointer_loc.AsRegisters().reg_at(0);
       ASSERT((reg >= 0) && (reg < kNumberOfCpuRegisters));
-      const intptr_t offset = marshaller.PassByPointerStackOffset(arg_index);
+      const intptr_t offset = call_plan.PassByPointerStackOffset(arg_index);
       ASSERT((offset >= 0) &&
              (args->stack_area + offset + loc.payload_type().SizeInBytes() <=
               args->stack_area_end));
@@ -1549,18 +1564,18 @@ static void PassFfiCallArguments(
 
 static ObjectPtr ReceiveFfiCallResult(
     Thread* thread,
-    const compiler::ffi::CallMarshaller& marshaller,
+    const InterpreterFfiCallPlan& call_plan,
     const FfiCallArguments& args) {
-  const intptr_t arg_index = compiler::ffi::kResultIndex;
-  if (marshaller.IsCompoundCType(arg_index)) {
+  const intptr_t arg_index = InterpreterFfiCallPlan::kResultIndex;
+  if (call_plan.IsCompoundCType(arg_index)) {
     auto* const zone = thread->zone();
-    const auto& loc = marshaller.Location(arg_index);
+    const auto& loc = call_plan.Location(arg_index);
     const auto& compound_contents = TypedData::Handle(
         zone, TypedData::New(kTypedDataUint8ArrayCid,
-                             marshaller.CompoundReturnSizeInBytes()));
+                             call_plan.CompoundReturnSizeInBytes()));
     if (loc.IsPointerToMemory()) {
       auto const size = loc.payload_type().SizeInBytes();
-      const intptr_t offset = marshaller.PassByPointerStackOffset(arg_index);
+      const intptr_t offset = call_plan.PassByPointerStackOffset(arg_index);
       ASSERT((offset >= 0) &&
              (args.stack_area + offset + size <= args.stack_area_end));
       auto* const src = reinterpret_cast<const void*>(args.stack_area + offset);
@@ -1609,7 +1624,7 @@ static ObjectPtr ReceiveFfiCallResult(
         Field::Handle(zone, object_store->compound_offset_in_bytes_field());
 
     const auto& compound_type =
-        AbstractType::Handle(zone, marshaller.CType(arg_index));
+        AbstractType::Handle(zone, call_plan.CType(arg_index));
     const auto& compound_sub_class =
         Class::Handle(zone, compound_type.type_class());
     compound_sub_class.EnsureIsFinalized(thread);
@@ -1620,43 +1635,43 @@ static ObjectPtr ReceiveFfiCallResult(
     wrapper.SetField(offset_in_bytes_field, Smi::Handle(Smi::New(0)));
 
     return wrapper.ptr();
-  } else if (marshaller.IsPointerPointer(arg_index)) {
+  } else if (call_plan.IsPointerPointer(arg_index)) {
     uword value = args.cpu_registers[CallingConventions::kReturnReg];
     return Pointer::New(value);
-  } else if (marshaller.IsTypedDataPointer(arg_index)) {
+  } else if (call_plan.IsTypedDataPointer(arg_index)) {
     UNREACHABLE();  // Only supported for FFI call arguments.
-  } else if (marshaller.IsCompoundPointer(arg_index)) {
+  } else if (call_plan.IsCompoundPointer(arg_index)) {
     UNREACHABLE();  // Only supported for FFI call arguments.
-  } else if (marshaller.IsHandleCType(arg_index)) {
+  } else if (call_plan.IsHandleCType(arg_index)) {
     uword value = args.cpu_registers[CallingConventions::kReturnReg];
     return reinterpret_cast<LocalHandle*>(value)->ptr();
-  } else if (marshaller.IsVoid(arg_index)) {
+  } else if (call_plan.IsVoid(arg_index)) {
     return Object::null();
-  } else if (marshaller.IsBool(arg_index)) {
+  } else if (call_plan.IsBool(arg_index)) {
     int64_t value =
         TruncateFfiInt(args.cpu_registers[CallingConventions::kReturnReg],
-                       marshaller.Location(arg_index)
+                       call_plan.Location(arg_index)
                            .payload_type()
                            .AsPrimitive()
                            .representation(),
                        /*is_return=*/true);
     return Bool::Get(value != 0).ptr();
   } else {
-    const auto rep = marshaller.RepInDart(arg_index);
-    if (RepresentationUtils::IsUnboxedInteger(rep)) {
+    const auto& type = call_plan.Location(arg_index).payload_type();
+    if (type.IsInt()) {
       const int64_t value =
           TruncateFfiInt(args.cpu_registers[CallingConventions::kReturnReg],
-                         marshaller.Location(arg_index)
+                         call_plan.Location(arg_index)
                              .payload_type()
                              .AsPrimitive()
                              .representation(),
                          /*is_return=*/true);
       return Integer::New(value);
-    } else if (rep == kUnboxedDouble) {
+    } else if (type.AsPrimitive().representation() == compiler::ffi::kDouble) {
       double value = bit_cast<double, uint64_t>(
           args.fpu_registers[CallingConventions::kReturnFpuReg]);
       return Double::New(value);
-    } else if (rep == kUnboxedFloat) {
+    } else if (type.AsPrimitive().representation() == compiler::ffi::kFloat) {
       float value = bit_cast<float, uint32_t>(static_cast<uint32_t>(
           args.fpu_registers[CallingConventions::kReturnFpuReg]));
       return Double::New(static_cast<double>(value));
@@ -1709,7 +1724,7 @@ static uword ResolveFfiNativeTarget(Thread* thread, const Instance& native) {
                                native_type.ToCString(), address);
   return address;
 }
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // Interpreter FFI call-outs.
 #endif  // defined(DART_BYTECODE_INTERPRETER)
 
 // Resolve a native function from the interpreter.
@@ -1720,7 +1735,11 @@ static uword ResolveFfiNativeTarget(Thread* thread, const Instance& native) {
 // This method does not return anything, but instead caches the resolved
 // entry point in the object pool entry.
 DEFINE_RUNTIME_ENTRY(ResolveNativeFunction, 3) {
-#if defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_BYTECODE_INTERPRETER) &&                                  \
+    (!defined(DART_PRECOMPILED_RUNTIME) ||                                   \
+     (defined(DART_SHOREBIRD_INTERPRETER) && defined(HOST_ARCH_ARM64) &&     \
+      defined(TARGET_ARCH_ARM64) && !defined(DART_HOST_OS_WINDOWS) &&       \
+      !defined(DART_TARGET_OS_WINDOWS)))
   const auto& instance = Instance::CheckedHandle(zone, arguments.ArgAt(0));
   const auto& function = Function::CheckedZoneHandle(zone, arguments.ArgAt(1));
   const intptr_t pool_index =
@@ -1736,14 +1755,18 @@ DEFINE_RUNTIME_ENTRY(ResolveNativeFunction, 3) {
   pool.SetRawValueAt(pool_index, target);
 #else
   UNREACHABLE();
-#endif  // defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // Interpreter FFI call-outs.
 }
 
 // Perform FFI call from the interpreter.
 // Arg0: function.
 // Arg1: constant pool index to store resolved target.
 DEFINE_RUNTIME_ENTRY(FfiCall, 2) {
-#if defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_BYTECODE_INTERPRETER) &&                                  \
+    (!defined(DART_PRECOMPILED_RUNTIME) ||                                   \
+     (defined(DART_SHOREBIRD_INTERPRETER) && defined(HOST_ARCH_ARM64) &&     \
+      defined(TARGET_ARCH_ARM64) && !defined(DART_HOST_OS_WINDOWS) &&       \
+      !defined(DART_TARGET_OS_WINDOWS)))
   const auto& function = Function::CheckedZoneHandle(zone, arguments.ArgAt(0));
   const intptr_t pool_index =
       Smi::CheckedHandle(zone, arguments.ArgAt(1)).Value();
@@ -1791,20 +1814,20 @@ DEFINE_RUNTIME_ENTRY(FfiCall, 2) {
   const bool is_leaf = function.FfiIsLeaf();
 
   const char* error = nullptr;
-  const auto marshaller_ptr = compiler::ffi::CallMarshaller::FromFunction(
+  const auto call_plan_ptr = InterpreterFfiCallPlan::FromFunction(
       zone, function, first_argument_parameter_offset, c_signature, &error);
   // AbiSpecificTypes can have an incomplete mapping.
   if (error != nullptr) {
-    const auto& language_error = Error::Handle(
-        LanguageError::New(String::Handle(String::New(error, Heap::kOld)),
-                           Report::kError, Heap::kOld));
-    Report::LongJump(language_error);
+    // This validation runs during Dart execution, without a compiler
+    // long-jump scope. Reject the operation before calling native code.
+    Exceptions::ThrowArgumentError(
+        String::Handle(zone, String::New(error, Heap::kOld)));
   }
 
-  RELEASE_ASSERT(marshaller_ptr != nullptr);
-  const auto& marshaller = *marshaller_ptr;
+  RELEASE_ASSERT(call_plan_ptr != nullptr);
+  const auto& call_plan = *call_plan_ptr;
   const intptr_t stack_area_size =
-      Utils::RoundUp(marshaller.RequiredStackSpaceInBytes(), kWordSize * 2);
+      Utils::RoundUp(call_plan.RequiredStackSpaceInBytes(), kWordSize * 2);
   uint8_t* stack_area = zone->Alloc<uint8_t>(stack_area_size);
 
   FfiCallArguments args;
@@ -1813,27 +1836,27 @@ DEFINE_RUNTIME_ENTRY(FfiCall, 2) {
   args.stack_area_end = reinterpret_cast<uword>(stack_area + stack_area_size);
   args.target = target;
 
-  argv = argv - first_argument_parameter_offset - marshaller.num_args();
+  argv = argv - first_argument_parameter_offset - call_plan.num_args();
 
   PRINT_IF_TRACING_INTERPRETER("calling native entry point %#" Px "\n", target);
   if (is_leaf) {
     NoSafepointScope no_safepoint;
-    PassFfiCallArguments(thread, marshaller, argv, &args, is_leaf);
+    PassFfiCallArguments(thread, call_plan, argv, &args, is_leaf);
     FfiCallTrampoline(&args);
   } else {
-    PassFfiCallArguments(thread, marshaller, argv, &args, is_leaf);
+    PassFfiCallArguments(thread, call_plan, argv, &args, is_leaf);
     TransitionVMToNative transition(thread);
     FfiCallTrampoline(&args);
   }
   PRINT_IF_TRACING_INTERPRETER("returned from native entry point %#" Px "\n",
                                target);
   const auto& result =
-      Object::Handle(zone, ReceiveFfiCallResult(thread, marshaller, args));
+      Object::Handle(zone, ReceiveFfiCallResult(thread, call_plan, args));
   ThrowIfError(result);
   arguments.SetReturn(result);
 #else
   UNREACHABLE();
-#endif  // defined(DART_BYTECODE_INTERPRETER) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // Interpreter FFI call-outs.
 }
 
 // Check that argument types are valid for the given function.

@@ -21,6 +21,7 @@ import 'package:kernel/type_environment.dart'
 
 import 'package:vm/bytecode/full_replacement.dart';
 import 'package:vm/modular/transformations/pragma.dart';
+import 'package:vm/native_assets/metadata.dart';
 
 import 'assembler.dart';
 import 'bytecode_serialization.dart'
@@ -77,6 +78,9 @@ void generateBytecode(
   Timeline.timeSync("generateBytecode", () {
     verifyBytecodeInstructionDeclarations();
     if (options.shorebirdFullReplacement) {
+      libraries = libraries
+          .where((library) => !isNativeAssetsMetadataLibrary(library))
+          .toList();
       validateShorebirdReplacementLibraries(libraries);
     }
     final typeEnvironment = TypeEnvironment(coreTypes, hierarchy);

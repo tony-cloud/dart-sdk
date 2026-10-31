@@ -3978,7 +3978,7 @@ bool FindPragmaInMetadata(Thread* T,
   if (metadata_obj.IsNull() || metadata_obj.IsLanguageError()) {
     return false;
   }
-  ASSERT(metadata_obj.IsArray());
+  if (!metadata_obj.IsArray()) return false;
 
   auto& metadata = Array::Cast(metadata_obj);
   auto& pragma_class = Class::Handle(Z, IG->object_store()->pragma_class());
@@ -14290,12 +14290,22 @@ void Library::AddMetadata(const Object& declaration,
 
 void Library::AddMetadata(const Object& declaration,
                           const Object& metadata_value) const {
-#if defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_PRECOMPILED_RUNTIME) && !defined(DART_BYTECODE_INTERPRETER)
   UNREACHABLE();
 #else
+#if defined(DART_PRECOMPILED_RUNTIME)
+  // Runtime bytecode carries evaluated constants, never kernel offsets.
+  RELEASE_ASSERT(metadata_value.IsArray() || metadata_value.IsLanguageError());
+#endif
   Thread* thread = Thread::Current();
   ASSERT(thread->isolate_group()->program_lock()->IsCurrentThreadWriter());
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+  if (metadata() == Array::null()) {
+    set_metadata(Array::Handle(thread->zone(),
+                               HashTables::New<MetadataMap>(4, Heap::kOld)));
+  }
+#endif
   MetadataMap map(metadata());
   map.UpdateOrInsert(declaration, metadata_value);
   set_metadata(map.Release());
@@ -14303,7 +14313,7 @@ void Library::AddMetadata(const Object& declaration,
 }
 
 ObjectPtr Library::GetMetadata(const Object& declaration) const {
-#if defined(DART_PRECOMPILED_RUNTIME)
+#if defined(DART_PRECOMPILED_RUNTIME) && !defined(DART_BYTECODE_INTERPRETER)
   return Object::empty_array().ptr();
 #else
   RELEASE_ASSERT(declaration.IsClass() || declaration.IsField() ||
@@ -14313,6 +14323,7 @@ ObjectPtr Library::GetMetadata(const Object& declaration) const {
   auto thread = Thread::Current();
   auto zone = thread->zone();
 
+#if !defined(DART_PRECOMPILED_RUNTIME)
   if (declaration.IsLibrary()) {
     // Ensure top-level class is loaded as it may contain annotations of
     // a library.
@@ -14321,9 +14332,11 @@ ObjectPtr Library::GetMetadata(const Object& declaration) const {
       cls.EnsureDeclarationLoaded();
     }
   }
+#endif
   Object& value = Object::Handle(zone);
   {
     SafepointReadRwLocker ml(thread, thread->isolate_group()->program_lock());
+    if (metadata() == Array::null()) return Object::empty_array().ptr();
     MetadataMap map(metadata());
     value = map.GetOrNull(declaration);
     set_metadata(map.Release());
@@ -14332,6 +14345,13 @@ ObjectPtr Library::GetMetadata(const Object& declaration) const {
     // There is no metadata for this object.
     return Object::empty_array().ptr();
   }
+#if defined(DART_PRECOMPILED_RUNTIME)
+  // AOT has no kernel evaluator. In particular, a stale offset must not be
+  // mistaken for evaluated metadata, even in a runtime with the interpreter.
+  return value.IsArray() || value.IsLanguageError()
+             ? value.ptr()
+             : Object::empty_array().ptr();
+#else
   if (!value.IsSmi()) {
     // Metadata is already evaluated.
     ASSERT(value.IsArray() || value.IsLanguageError());
@@ -14358,6 +14378,7 @@ ObjectPtr Library::GetMetadata(const Object& declaration) const {
     set_metadata(map.Release());
   }
   return evaluated_value.ptr();
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 #endif  // defined(DART_PRECOMPILED_RUNTIME)
 }
 

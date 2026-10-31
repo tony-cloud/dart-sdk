@@ -5,6 +5,8 @@
 # This file contains the sources for FFI shared between the lib and
 # (pre-)compiler.
 ffi_sources = [
+  "interpreter_call_plan.cc",
+  "interpreter_call_plan.h",
   "native_assets.cc",
   "native_assets.h",
 ]

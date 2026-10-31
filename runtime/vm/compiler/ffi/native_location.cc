@@ -12,7 +12,7 @@ namespace compiler {
 
 namespace ffi {
 
-#if !defined(FFI_UNIT_TESTS)
+#if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
 bool NativeLocation::LocationCanBeExpressed(Location loc, Representation rep) {
   switch (loc.kind()) {
     case Location::Kind::kRegister:
@@ -102,7 +102,7 @@ const BothNativeLocations& NativeLocation::AsBoth() const {
   return static_cast<const BothNativeLocations&>(*this);
 }
 
-#if !defined(FFI_UNIT_TESTS)
+#if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
 Location NativeRegistersLocation::AsLocation() const {
   ASSERT(IsExpressibleAsLocation());
   switch (num_regs()) {
@@ -267,7 +267,7 @@ bool PointerToMemoryLocation::Equals(const NativeLocation& other) const {
   return other_pointer.payload_type().Equals(payload_type());
 }
 
-#if !defined(FFI_UNIT_TESTS)
+#if !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
 compiler::Address NativeLocationToStackSlotAddress(
     const NativeStackLocation& loc) {
   return compiler::Address(loc.base_register(), loc.offset_in_bytes());

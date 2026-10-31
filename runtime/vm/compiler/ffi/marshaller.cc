@@ -29,64 +29,6 @@ namespace ffi {
 // Argument #0 is the function pointer.
 const intptr_t kNativeParamsStartAt = 1;
 
-// Representations of the arguments and return value of a C signature function.
-const NativeFunctionType* NativeFunctionTypeFromFunctionType(
-    Zone* zone,
-    const FunctionType& c_signature,
-    const char** error) {
-  ASSERT(c_signature.NumOptionalParameters() == 0);
-  ASSERT(c_signature.NumOptionalPositionalParameters() == 0);
-  ObjectStore* object_store = IsolateGroup::Current()->object_store();
-
-  const intptr_t num_arguments =
-      c_signature.num_fixed_parameters() - kNativeParamsStartAt;
-  auto& argument_representations =
-      *new ZoneGrowableArray<const NativeType*>(zone, num_arguments);
-  AbstractType& arg_type = AbstractType::Handle(zone);
-  intptr_t variadic_arguments_index = NativeFunctionType::kNoVariadicArguments;
-  for (intptr_t i = 0; i < num_arguments; i++) {
-    arg_type = c_signature.ParameterTypeAt(i + kNativeParamsStartAt);
-    const bool varargs =
-        arg_type.type_class() == object_store->ffi_varargs_class();
-    if (varargs) {
-      arg_type = TypeArguments::Handle(zone, Type::Cast(arg_type).arguments())
-                     .TypeAt(0);
-      variadic_arguments_index = i;
-      ASSERT(arg_type.IsRecordType());
-      const auto& record_type = RecordType::Cast(arg_type);
-      const intptr_t num_fields = record_type.NumFields();
-      auto& field_type = AbstractType::Handle(zone);
-      for (intptr_t i = 0; i < num_fields; i++) {
-        field_type ^= record_type.FieldTypeAt(i);
-        const auto rep = NativeType::FromAbstractType(zone, field_type, error);
-        if (*error != nullptr) {
-          return nullptr;
-        }
-        argument_representations.Add(rep);
-      }
-    } else {
-      const auto rep = NativeType::FromAbstractType(zone, arg_type, error);
-      if (*error != nullptr) {
-        return nullptr;
-      }
-      argument_representations.Add(rep);
-    }
-  }
-
-  const auto& result_type =
-      AbstractType::Handle(zone, c_signature.result_type());
-  const auto result_representation =
-      NativeType::FromAbstractType(zone, result_type, error);
-  if (*error != nullptr) {
-    return nullptr;
-  }
-
-  const auto result = new (zone)
-      NativeFunctionType(argument_representations, *result_representation,
-                         variadic_arguments_index);
-  return result;
-}
-
 CallMarshaller* CallMarshaller::FromFunction(Zone* zone,
                                              const Function& function,
                                              intptr_t function_params_start_at,

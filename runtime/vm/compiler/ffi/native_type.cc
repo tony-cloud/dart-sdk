@@ -17,6 +17,7 @@
 #endif  // !defined(DART_PRECOMPILED_RUNTIME) && !defined(FFI_UNIT_TESTS)
 
 #if !defined(FFI_UNIT_TESTS)
+#include "vm/object_store.h"
 #include "vm/symbols.h"
 #endif
 
@@ -440,6 +441,66 @@ const NativeType& NativeType::FromTypedDataClassId(Zone* zone,
 }
 
 #if !defined(FFI_UNIT_TESTS)
+// Representations of the arguments and return value of a C signature function.
+const NativeFunctionType* NativeFunctionTypeFromFunctionType(
+    Zone* zone,
+    const FunctionType& c_signature,
+    const char** error) {
+  // Argument #0 is the function pointer.
+  const intptr_t kNativeParamsStartAt = 1;
+  ASSERT(c_signature.NumOptionalParameters() == 0);
+  ASSERT(c_signature.NumOptionalPositionalParameters() == 0);
+  ObjectStore* object_store = IsolateGroup::Current()->object_store();
+
+  const intptr_t num_arguments =
+      c_signature.num_fixed_parameters() - kNativeParamsStartAt;
+  auto& argument_representations =
+      *new ZoneGrowableArray<const NativeType*>(zone, num_arguments);
+  AbstractType& arg_type = AbstractType::Handle(zone);
+  intptr_t variadic_arguments_index = NativeFunctionType::kNoVariadicArguments;
+  for (intptr_t i = 0; i < num_arguments; i++) {
+    arg_type = c_signature.ParameterTypeAt(i + kNativeParamsStartAt);
+    const bool varargs =
+        arg_type.type_class() == object_store->ffi_varargs_class();
+    if (varargs) {
+      arg_type = TypeArguments::Handle(zone, Type::Cast(arg_type).arguments())
+                     .TypeAt(0);
+      variadic_arguments_index = i;
+      ASSERT(arg_type.IsRecordType());
+      const auto& record_type = RecordType::Cast(arg_type);
+      const intptr_t num_fields = record_type.NumFields();
+      auto& field_type = AbstractType::Handle(zone);
+      for (intptr_t i = 0; i < num_fields; i++) {
+        field_type ^= record_type.FieldTypeAt(i);
+        const auto rep = NativeType::FromAbstractType(zone, field_type, error);
+        if (*error != nullptr) {
+          return nullptr;
+        }
+        argument_representations.Add(rep);
+      }
+    } else {
+      const auto rep = NativeType::FromAbstractType(zone, arg_type, error);
+      if (*error != nullptr) {
+        return nullptr;
+      }
+      argument_representations.Add(rep);
+    }
+  }
+
+  const auto& result_type =
+      AbstractType::Handle(zone, c_signature.result_type());
+  const auto result_representation =
+      NativeType::FromAbstractType(zone, result_type, error);
+  if (*error != nullptr) {
+    return nullptr;
+  }
+
+  const auto result = new (zone)
+      NativeFunctionType(argument_representations, *result_representation,
+                         variadic_arguments_index);
+  return result;
+}
+
 static const NativeType* CompoundFromPragma(Zone* zone,
                                             const Instance& pragma,
                                             bool is_struct,
@@ -884,7 +945,6 @@ intptr_t NativeCompoundType::PrimitivePairMembers(
   return offset_in_members;
 }
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
 bool NativePrimitiveType::ContainsOnlyFloats(Range range) const {
   const auto this_range = Range::StartAndEnd(0, SizeInBytes());
   ASSERT(this_range.Contains(range));
@@ -1000,7 +1060,6 @@ intptr_t NativeCompoundType::NumberOfWordSizeChunksNotOnlyFloat() const {
       compiler::target::kWordSize;
   return total_chunks - NumberOfWordSizeChunksOnlyFloat();
 }
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
 bool NativePrimitiveType::ContainsUnalignedMembers(intptr_t offset) const {
   return offset % AlignmentInBytesField() != 0;
