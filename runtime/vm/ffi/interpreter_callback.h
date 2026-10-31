@@ -31,7 +31,9 @@ struct InterpreterFfiCallbackNativeResult {
 
 struct InterpreterFfiCallbackFallback {
   InterpreterFfiCallbackNativeResult registers;
+  // Exact bytes zeroed at captured x8 only after an indirect-result failure.
   uint64_t indirect_result_size;
+  // Handle results reserve one LocalHandle in the caller's current API scope.
   uint64_t flags;
 };
 
@@ -60,8 +62,8 @@ InterpreterFfiCallbackPreparation PrepareInterpreterFfiCallback(
 
 // Assembly entry address only: its arguments have the callback's native ABI.
 extern "C" void InterpreterFfiCallbackEntry();
-extern "C" void DLRT_InterpreterFfiCallback(
-    Thread* thread, InterpreterFfiCallbackFrame* frame);
+extern "C" void DLRT_InterpreterFfiCallback(Thread* thread,
+                                            InterpreterFfiCallbackFrame* frame);
 
 }  // namespace dart
 

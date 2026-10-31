@@ -7,7 +7,7 @@
 A structural native baseline has no application callbacks or FFI. A new URI
 ordinary bytecode library introduces its targets/signatures. Separate compiled
 controls and child termination runs use the same signed native consumers. This
-establishes no full-domain admission, listener/Handle/aggregate runtime callback,
+establishes no full-domain admission or listener/group-bound runtime callback,
 iOS, ARM64e, or transient executable permission/write-audit claim.
 """
 import argparse
@@ -68,7 +68,7 @@ def main():
     with workspace as directory:
         work = Path(directory)
 
-        def run(*command, log=None, required=()):
+        def run(*command, log=None, required=(), expect_failure=False):
             print('+', *command, flush=True)
             result = subprocess.run([str(part) for part in command], cwd=root,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -76,7 +76,11 @@ def main():
             if log is not None:
                 log.write_text(result.stdout)
             print(result.stdout, end='', flush=True)
-            result.check_returncode()
+            if expect_failure:
+                if result.returncode == 0:
+                    raise AssertionError('Expected subprocess death did not occur')
+            else:
+                result.check_returncode()
             for marker in required:
                 if marker not in result.stdout:
                     raise AssertionError(f'Missing acceptance marker: {marker}')
@@ -103,7 +107,8 @@ def main():
                 shutil.copyfile(source, work / source.name)
         library = work / ('libcallback_fixture.dylib' if sys.platform == 'darwin' else 'libcallback_fixture.so')
         run(compiler, '-shared', '-fPIC', '-O0', '-fno-omit-frame-pointer',
-            work / 'fixture.c', '-o', library,
+            '-I', root / 'runtime/include', work / 'fixture.c',
+            work / 'aggregate_fixture.c', work / 'aggregate_fixture.S', '-o', library,
             *(['-ldl'] if sys.platform == 'linux' else []))
         if sys.platform == 'darwin':
             run('codesign', '--force', '--sign', '-', library)
@@ -117,7 +122,7 @@ def main():
         baseline = work / 'baseline.snapshot'
         kernel(work / 'baseline.dart', work / 'baseline.dill', structural=True)
         snapshot(work / 'baseline.dill', baseline, structural=True)
-        for source in ('callbacks', 'kill'):
+        for source in ('callbacks', 'kill', 'aggregates', 'handle_unwind'):
             run(dart, root / 'pkg/dart2bytecode/bin/dart2bytecode.dart',
                 '-Ddart.vm.product=true', f'--platform={platform_file}',
                 '-o', work / f'{source}.bytecode', work / f'{source}.dart')
@@ -134,6 +139,27 @@ def main():
                 'PRODUCT interpreted static/capture scalar/pointer/VarArgs, GC, nesting, self-close, growth/reuse, rejection cleanup and owned-isolate callback checks passed',
                 'Callback source/alias byte identity and RX/RW checkpoints passed',
             ))
+        run(harness, baseline, work / 'aggregates.bytecode', library,
+            (work / 'aggregates.dart').as_uri(), *proof, 'aggregate',
+            log=work / 'aggregates.log', required=(
+                'PRODUCT callback aggregate layouts/copy/aliases/offsets/guard pages/zero fallbacks passed',
+                'PRODUCT callback Handle caller-scope/error/GC/nesting checks passed with embedding scope',
+                'PRODUCT callback Handle caller-scope/error/GC/nesting checks passed with no embedding scope',
+                'PRODUCT callback Handle+aggregate descriptor/ownership/direct-scope/cleanup checks passed',
+                'Callback source/alias byte identity and RX/RW checkpoints passed',
+            ))
+        missing = run(harness, baseline, work / 'aggregates.bytecode', library,
+                      (work / 'aggregates.dart').as_uri(), *proof, 'missing-scope',
+                      log=work / 'missing-handle-scope.log', expect_failure=True,
+                      required=('A Handle-returning native callback expects a current API scope',))
+        if 'FORBIDDEN_HANDLE_TARGET_WITHOUT_SCOPE' in missing:
+            raise AssertionError('Handle-result callback target executed without an owning scope')
+        handle_unwind = run(harness, baseline, work / 'handle_unwind.bytecode', library,
+                            (work / 'handle_unwind.dart').as_uri(), *proof, 'handle-result-kill',
+                            log=work / 'handle-result-unwind.log',
+                            required=('NATIVE_HANDLE_RESULT_UNWIND_EPILOGUE', 'API_UNWIND_OBSERVED'))
+        if 'FORBIDDEN_OUTER_DART_AFTER_KILL' in handle_unwind:
+            raise AssertionError('Handle-result callback resumed killed outer Dart continuation')
         run(harness, compiled, '-', library, '-', *proof, 'control',
             log=work / 'compiled-controls.log', required=(
                 'Compiled static/capture/Handle/aggregate/listener/group-bound callback controls passed',
@@ -147,8 +173,8 @@ def main():
                          required=(marker, 'API_UNWIND_OBSERVED'))
             if 'FORBIDDEN_OUTER_DART_AFTER_KILL' in output:
                 raise AssertionError('Killed callback resumed the outer Dart continuation')
-        print('PRODUCT runtime-created callback first-slice acceptance passed; '
-              'full admission, runtime Handle/aggregate/listener/group-bound callbacks, '
+        print('PRODUCT runtime-created synchronous callback Handle/aggregate acceptance passed; '
+              'full admission, runtime listener/group-bound callbacks, recoverable OOM injection, '
               'transient instruction/permission audit and devices remain outside this proof')
 
 

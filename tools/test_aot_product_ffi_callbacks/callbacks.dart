@@ -333,12 +333,9 @@ int rejectCase(int which) {
   var caught = false;
   try {
     switch (which) {
-      case 0: NativeCallable<HandleCallback>.isolateLocal(handleTarget); break;
-      case 1: Pointer.fromFunction<BoxCallback>(boxTarget); break;
       case 2: NativeCallable<V0>.listener((int value) {}); break;
       case 3: NativeCallable<I64>.isolateGroupBound((int a, int b) => a + b, exceptionalReturn: -1); break;
       case 4: Pointer.fromFunction<MissingCallback>(missingTarget, -11); break;
-      case 5: NativeCallable<UnionCallback>.isolateLocal(unionTarget); break;
       case 6: NativeCallable<MissingCallback>.isolateLocal(missingTarget, exceptionalReturn: -11); break;
       default: throw StateError('unknown rejection case');
     }
