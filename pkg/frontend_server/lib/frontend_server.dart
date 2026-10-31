@@ -36,6 +36,7 @@ import 'package:kernel/target/targets.dart' show targets, TargetFlags;
 import 'package:package_config/package_config.dart';
 import 'package:vm/incremental_compiler.dart' show IncrementalCompiler;
 import 'package:vm/kernel_front_end.dart';
+import 'package:vm/native_assets/shorebird_descriptor.dart';
 import 'package:vm/target_os.dart'; // For possible --target-os values.
 import 'package:vm/transformations/record_use/record_use.dart' as record_use;
 
@@ -314,6 +315,8 @@ ArgParser argParser = new ArgParser(allowTrailingOptions: true)
   )
   ..addOption('shorebird-host-abi')
   ..addOption('shorebird-replacement-base')
+  ..addOption('shorebird-native-assets-descriptor')
+  ..addOption('shorebird-native-assets-target')
   ..addOption(
     'dump-detailed-dynamic-interface',
     help: 'Path to output detailed dynamic interface.',
@@ -673,6 +676,7 @@ class FrontendCompiler implements CompilerInterface {
     IncrementalCompiler? generator,
   }) async {
     _options = options;
+    if (!await _prepareShorebirdNativeAssetsDescriptor(options)) return false;
     _fileSystem = createFrontEndFileSystem(
       options['filesystem-scheme'],
       options['filesystem-root'],
@@ -938,6 +942,21 @@ class FrontendCompiler implements CompilerInterface {
     if (results!.component != null) {
       transformer?.transform(results.component!);
 
+      String? nativeAssetsDescriptor;
+      if (options['shorebird-native-assets-descriptor'] != null &&
+          errors.isEmpty) {
+        // Full replacement excludes incremental/import-dill/minimal modes, so
+        // writeDillFile cannot filter component libraries here. Its standalone
+        // native-assets component is also serialized without a library filter.
+        nativeAssetsDescriptor = jsonEncode(
+          shorebirdNativeAssetsDescriptor(
+            results.component!,
+            nativeAssetsLibrary: results.nativeAssetsLibrary,
+            target: options['shorebird-native-assets-target'],
+          ),
+        );
+      }
+
       if (_compilerOptions.target!.name == 'dartdevc') {
         List<String>? extraDdcOptions = options.wasParsed('extra-ddc-options')
             ? options.multiOption('extra-ddc-options')
@@ -961,12 +980,10 @@ class FrontendCompiler implements CompilerInterface {
         incrementalSerializer: incrementalSerializer,
       );
 
-      _outputStream.writeln(boundaryKey);
-      final Iterable<Uri> compiledSources = results.compiledSources!;
-      await _outputDependenciesDelta(compiledSources);
-      _outputStream.writeln(
-        '$boundaryKey $_kernelBinaryFilename ${errors.length}',
-      );
+      final Iterable<Uri> compiledSources = {
+        ...results.compiledSources!,
+        if (_nativeAssets != null) _nativeAssets!,
+      };
       final String? depfile = options['depfile'];
       if (depfile != null) {
         await writeDepfile(
@@ -976,7 +993,28 @@ class FrontendCompiler implements CompilerInterface {
           depfile,
         );
       }
+      if (nativeAssetsDescriptor != null) {
+        final file = File(options['shorebird-native-assets-descriptor']);
+        try {
+          await file.writeAsString('$nativeAssetsDescriptor\n', flush: true);
+        } catch (error) {
+          // A failed write must not leave even a partial provenance document.
+          if (await file.exists()) await file.delete();
+          final message =
+              'Error: Failed to write Shorebird native-assets descriptor '
+              '${file.path}: $error';
+          errors.add(message);
+          _outputStream.writeln(message);
+        }
+      }
 
+      // Artifact failures must be known before reporting successful completion.
+      // Keep diagnostics before the dependency boundary and delta protocol.
+      _outputStream.writeln(boundaryKey);
+      await _outputDependenciesDelta(compiledSources);
+      _outputStream.writeln(
+        '$boundaryKey $_kernelBinaryFilename ${errors.length}',
+      );
       _kernelBinaryFilename = _kernelBinaryFilenameIncremental;
     } else {
       _outputStream.writeln(boundaryKey);
@@ -985,11 +1023,39 @@ class FrontendCompiler implements CompilerInterface {
     return errors.isEmpty;
   }
 
+  Future<bool> _prepareShorebirdNativeAssetsDescriptor(
+    ArgResults options,
+  ) async {
+    final String? descriptor = options['shorebird-native-assets-descriptor'];
+    final String? target = options['shorebird-native-assets-target'];
+    // Invalidate provenance before compilation, including invalid options.
+    // A failed compile must never retain old evidence.
+    if (descriptor != null) {
+      final file = File(descriptor);
+      if (await file.exists()) await file.delete();
+    }
+    if (descriptor == null && target == null) return true;
+    if (descriptor == null ||
+        descriptor.isEmpty ||
+        target != 'ios_arm64' ||
+        !options['shorebird-full-replacement'] ||
+        options['native-assets-only']) {
+      print(
+        'Error: --shorebird-native-assets-descriptor and '
+        '--shorebird-native-assets-target=ios_arm64 must be paired and require '
+        'full replacement compilation.',
+      );
+      return false;
+    }
+    return true;
+  }
+
   @override
   Future<bool> compileNativeAssetsOnly(
     ArgResults options, {
     IncrementalCompiler? generator,
   }) async {
+    if (!await _prepareShorebirdNativeAssetsDescriptor(options)) return false;
     _fileSystem = createFrontEndFileSystem(
       options['filesystem-scheme'],
       options['filesystem-root'],
