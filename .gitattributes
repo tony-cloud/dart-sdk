@@ -6,6 +6,9 @@
 *.dart text eol=lf
 *.sh text eol=lf
 
+# FFI golden files are read as binary and compared to LF-formatted output.
+runtime/vm/compiler/ffi/unit_tests/**/*.expect text eol=lf
+
 # Explicitly declare text files we want to be normalized.
 *.gyp text
 *.gypi text
