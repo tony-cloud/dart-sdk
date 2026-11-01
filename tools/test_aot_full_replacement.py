@@ -59,9 +59,25 @@ void clearCache() { held = null; }
 int messageResult = 0;
 void startMessage() {}
 int readMessage() => messageResult;
+// Keep the native baseline synchronous; only the replacement adds async code.
+void startAsync() {}
+int readAsync() => 0;
+int readAsyncFinallyRuns() => 0;
+int readAsyncUnexpectedErrors() => 0;
+int generatorSequence() => 0;
+int readGeneratorFinallyRuns() => 0;
+void startStream() {}
+void releaseStreamCleanup() {}
+int readStream() => 0;
+int readStreamValueCount() => 0;
+int readStreamFinallyStarts() => 0;
+int readStreamFinallyRuns() => 0;
+int readStreamAfterCancelRuns() => 0;
+int readStreamUnexpectedErrors() => 0;
 '''
 
 UPDATED = r'''
+import 'dart:async';
 import 'dart:isolate';
 import 'added.dart';
 
@@ -144,6 +160,123 @@ void startMessage() {
   Isolate.spawn(child, <Object>[port.sendPort, const Existing<int>(7)]);
 }
 int readMessage() => messageResult;
+int asyncResult = 0;
+int asyncFinallyRuns = 0;
+int asyncUnexpectedErrors = 0;
+Future<void> runAsyncProbe() async {
+  final value = Existing<int>(7);
+  final mutable = Mutable()..old = 17;
+  final expectedError = StateError('updated async failure');
+  var successfulAwait = false;
+  var caughtStateError = false;
+  try {
+    await Future<void>.microtask(() {});
+    successfulAwait = value.read() == 48 && mutable.old == 17;
+    mutable.old += 5;
+    await Future<void>.microtask(() {
+      throw expectedError;
+    });
+  } on StateError catch (error) {
+    if (identical(error, expectedError)) {
+      caughtStateError = true;
+    } else {
+      ++asyncUnexpectedErrors;
+    }
+  } catch (_) {
+    ++asyncUnexpectedErrors;
+  } finally {
+    ++asyncFinallyRuns;
+  }
+  asyncResult = successfulAwait && caughtStateError && asyncFinallyRuns == 1 &&
+      mutable.old + mutable.added + mutable.lazy == 49
+      ? value.read() + 41 : -1;
+}
+void startAsync() { runAsyncProbe(); }
+int readAsync() => asyncResult;
+int readAsyncFinallyRuns() => asyncFinallyRuns;
+int readAsyncUnexpectedErrors() => asyncUnexpectedErrors;
+int generatorFinallyRuns = 0;
+Iterable<T> generatedValues<T>(T first, T second) sync* {
+  try {
+    yield first;
+    yield* <T>[second, first];
+  } finally {
+    ++generatorFinallyRuns;
+  }
+}
+int generatorSequence() {
+  final first = Mutable()..old = 17;
+  final second = Mutable()..old = 18;
+  final iterator = generatedValues<Mutable>(first, second).iterator;
+  var count = 0;
+  var sequence = 0;
+  while (iterator.moveNext()) {
+    final value = iterator.current;
+    if (count > 2 || !identical(value, count == 1 ? second : first)) return -1;
+    sequence = sequence * 100 + value.old + value.added + value.lazy;
+    if (count == 0) first.old += 2;
+    ++count;
+  }
+  return count == 3 && generatorFinallyRuns == 1 ? sequence : -1;
+}
+int readGeneratorFinallyRuns() => generatorFinallyRuns;
+int streamResult = 0;
+int streamValueCount = 0;
+int streamFinallyStarts = 0;
+int streamFinallyRuns = 0;
+int streamAfterCancelRuns = 0;
+int streamUnexpectedErrors = 0;
+final streamCleanupGate = Completer<void>();
+Stream<int> generatedStream() async* {
+  final value = Mutable()..old = 17;
+  try {
+    yield value.old + value.added + value.lazy;
+    ++value.old;
+    yield value.old + value.added + value.lazy;
+    // Cancellation at the second yield must skip this continuation entirely.
+    ++streamAfterCancelRuns;
+    yield 99;
+  } finally {
+    ++streamFinallyStarts;
+    await streamCleanupGate.future;
+    if (value.old != 18 || value.added != 13 || value.lazy != 14) {
+      ++streamUnexpectedErrors;
+    }
+    ++streamFinallyRuns;
+  }
+}
+Future<void> consumeGeneratedStream() async {
+  var sequence = 0;
+  try {
+    await for (final value in generatedStream()) {
+      ++streamValueCount;
+      sequence = sequence * 100 + value;
+      if (streamValueCount == 2) break;
+    }
+    // Breaking must await cancellation, including the async finally block.
+    streamResult = streamValueCount == 2 && sequence == 4445 &&
+        streamFinallyStarts == 1 && streamFinallyRuns == 1 &&
+        streamAfterCancelRuns == 0 && streamUnexpectedErrors == 0
+        ? sequence : -1;
+  } catch (_) {
+    ++streamUnexpectedErrors;
+    streamResult = -1;
+  }
+}
+void startStream() { consumeGeneratedStream(); }
+void releaseStreamCleanup() {
+  // These embedder hooks drain microtasks after a message; wake the next loop.
+  final port = RawReceivePort();
+  port.handler = (Object? message) { port.close(); };
+  streamCleanupGate.complete();
+  port.sendPort.send(null);
+}
+int readStream() => streamResult;
+int readStreamValueCount() => streamValueCount;
+int readStreamFinallyStarts() => streamFinallyStarts;
+int readStreamFinallyRuns() => streamFinallyRuns;
+int readStreamAfterCancelRuns() => streamAfterCancelRuns;
+int readStreamUnexpectedErrors() => streamUnexpectedErrors;
 '''
 
 # This consumer remains byte-for-byte unchanged across the replacement. In
@@ -162,6 +295,20 @@ import 'export_only.dart';
 @pragma('vm:entry-point') void releaseHeld() => clearCache();
 @pragma('vm:entry-point') void probeMessage() => startMessage();
 @pragma('vm:entry-point') int probeMessageResult() => readMessage();
+@pragma('vm:entry-point') void probeAsync() => startAsync();
+@pragma('vm:entry-point') int probeAsyncResult() => readAsync();
+@pragma('vm:entry-point') int probeAsyncFinallyRuns() => readAsyncFinallyRuns();
+@pragma('vm:entry-point') int probeAsyncUnexpectedErrors() => readAsyncUnexpectedErrors();
+@pragma('vm:entry-point') int probeGenerator() => generatorSequence();
+@pragma('vm:entry-point') int probeGeneratorFinallyRuns() => readGeneratorFinallyRuns();
+@pragma('vm:entry-point') void probeStream() => startStream();
+@pragma('vm:entry-point') void releaseStream() => releaseStreamCleanup();
+@pragma('vm:entry-point') int probeStreamResult() => readStream();
+@pragma('vm:entry-point') int probeStreamValueCount() => readStreamValueCount();
+@pragma('vm:entry-point') int probeStreamFinallyStarts() => readStreamFinallyStarts();
+@pragma('vm:entry-point') int probeStreamFinallyRuns() => readStreamFinallyRuns();
+@pragma('vm:entry-point') int probeStreamAfterCancelRuns() => readStreamAfterCancelRuns();
+@pragma('vm:entry-point') int probeStreamUnexpectedErrors() => readStreamUnexpectedErrors();
 @pragma('vm:entry-point', 'call') int callOnly() => 99;
 int entrypointRuns = 0;
 @pragma('vm:entry-point') int probeEntrypointRuns() => entrypointRuns;
@@ -535,9 +682,45 @@ int main(int argc, char** argv) {
     Expect("probeCache", 1);
     Dart_NotifyDestroyed();
     Expect("probeCached", 65);
+    // The retained SDK's async machinery must resume interpreted code with a
+    // new-domain object across both successful and failing awaits.
+    Invoke("probeAsync");
+    Expect("probeAsyncResult", 0);
+    Expect("probeAsyncFinallyRuns", 0);
+    Expect("probeAsyncUnexpectedErrors", 0);
+    // Generic sync* and async* use retained SDK iterator/stream callbacks into
+    // updated Dart code, without adding any generators to the native baseline.
+    Expect("probeGenerator", 444546);
+    Expect("probeGeneratorFinallyRuns", 1);
+    Invoke("probeStream");
+    Expect("probeStreamResult", 0);
+    Expect("probeStreamValueCount", 0);
+    Expect("probeStreamFinallyStarts", 0);
+    Expect("probeStreamFinallyRuns", 0);
+    Expect("probeStreamAfterCancelRuns", 0);
+    Expect("probeStreamUnexpectedErrors", 0);
     Invoke("probeMessage");
     Check(Dart_RunLoop());
     Expect("probeMessageResult", 198);
+    Expect("probeAsyncResult", 89);
+    Expect("probeAsyncFinallyRuns", 1);
+    Expect("probeAsyncUnexpectedErrors", 0);
+    // No event can release cleanup yet. The consumer must still be suspended
+    // on cancellation after the generator has entered its finally block.
+    Expect("probeStreamResult", 0);
+    Expect("probeStreamValueCount", 2);
+    Expect("probeStreamFinallyStarts", 1);
+    Expect("probeStreamFinallyRuns", 0);
+    Expect("probeStreamAfterCancelRuns", 0);
+    Expect("probeStreamUnexpectedErrors", 0);
+    Invoke("releaseStream");
+    Check(Dart_RunLoop());
+    Expect("probeStreamResult", 4445);
+    Expect("probeStreamValueCount", 2);
+    Expect("probeStreamFinallyStarts", 1);
+    Expect("probeStreamFinallyRuns", 1);
+    Expect("probeStreamAfterCancelRuns", 0);
+    Expect("probeStreamUnexpectedErrors", 0);
     Invoke("releaseHeld");
     Dart_NotifyDestroyed();
   }

@@ -18,6 +18,10 @@ import 'package:vm/native_assets/synthesizer.dart';
 
 import 'frontend_server_test.dart' show computePlatformBinariesLocation;
 
+String _platformOption(Uri sdkRoot) =>
+    // FrontendCompiler resolves this as a URI; a Windows path becomes scheme d:.
+    '--platform=${sdkRoot.resolve('vm_platform.dill')}';
+
 Library carrier(Map<String, Object> targets) =>
     NativeAssetsSynthesizer.synthesizeLibrary({'native-assets': targets});
 
@@ -73,6 +77,23 @@ class _RemoveDescriptorDirectory implements ProgramTransformer {
 }
 
 void main() {
+  test('platform option preserves Windows file URI', () {
+    final sdkRoot = Uri.directory(
+      r'D:\native assets # sdk\lib\_internal\',
+      windows: true,
+    );
+    final options = argParser.parse([_platformOption(sdkRoot)]);
+    final platformOption = options['platform'] as String;
+    expect(Uri.parse(platformOption).scheme, 'file');
+    // FrontendCompiler resolves this option against sdkRoot as a URI.
+    final platformUri = sdkRoot.resolve(platformOption);
+    expect(platformUri, sdkRoot.resolve('vm_platform.dill'));
+    expect(
+      platformUri.toFilePath(windows: true),
+      r'D:\native assets # sdk\lib\_internal\vm_platform.dill',
+    );
+  });
+
   group('compiled native-assets descriptor', () {
     test('absent differs from present empty and missing target', () {
       expect(describe(Component()), {
@@ -262,7 +283,7 @@ void main() {
       source.path,
       argParser.parse([
         '--sdk-root=${sdkRoot.toFilePath()}',
-        '--platform=${sdkRoot.resolve('vm_platform.dill').toFilePath()}',
+        _platformOption(sdkRoot),
         '--aot',
         '--no-tfa',
         '--target-os=ios',
