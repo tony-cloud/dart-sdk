@@ -11028,6 +11028,9 @@ TEST_CASE(Dart_SetFfiNativeResolver_DoesNotResolve) {
   EXPECT_ERROR(result, "Couldn't resolve function: 'DoesNotResolve'");
 }
 
+#endif  // !PRODUCT
+
+// Envelope validation and reload admission also apply to PRODUCT embedders.
 #if defined(DART_ENABLE_AOT_PATCHING)
 #if defined(DART_DYNAMIC_MODULES)
 #error DART_ENABLE_AOT_PATCHING must not require DART_DYNAMIC_MODULES.
@@ -11463,6 +11466,8 @@ TEST_CASE(DartAPI_BytecodePatchReloadConfiguration) {
   EXPECT_ERROR(result, "Dart bytecode patch reload is not enabled");
 #endif
 }
+
+#ifndef PRODUCT
 
 TEST_CASE(Dart_NativeAssetsMissingAssetFallsBackForNative) {
   const char* kScriptChars = R"(
