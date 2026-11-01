@@ -71,6 +71,47 @@ python3 tools/test_aot_full_replacement_ffi.py \
   --envelope-producer /ABS/REAL/full_replacement_envelope_producer.dart
 ```
 
+### Strict hardened macOS host mode
+
+On native macOS ARM64, add `--macos-signing-identity IDENTITY` to that command
+to use a Developer ID Application identity. Use a fresh work directory outside
+the build directory. This optional mode copies `product_full_ffi_test` into
+`WORK/strict-signing/` and signs only that private copy, the once-released native
+fixture, and both generated native snapshots with the same identity. Every
+signature uses `--options runtime --timestamp=none` and an explicit **empty**
+entitlement dictionary. `--force-library-entitlements` preserves that empty
+dictionary on macOS versions that otherwise omit entitlements from dylibs;
+it grants no exception.
+
+The driver requires `codesign --verify --strict`, the hardened runtime flag,
+Developer ID authority, an actual empty entitlement plist, and matching
+TeamIdentifier and leaf certificate SHA-1 for all four images. A supplied
+40-character identity fingerprint must also match that leaf certificate.
+Any entitlement, including library-validation, JIT, unsigned executable memory
+or debugger exceptions, fails validation. `otool -L` dependencies and the
+signature/entitlement output are retained under `WORK/strict-signing/`.
+Verification repeats after the suite and requires the executed image hashes
+to remain unchanged. The host ABI hashes the **private signed harness**.
+`original-build-artifacts.json` records before/after hashes of the original
+harness, Dart executable, snapshot compiler and platform dill, even on failure.
+The success record and message are published only after those checks complete;
+changed or unreadable original inputs cannot leave a success record.
+No original build image is signed or rewritten. Without this flag the existing
+isolated host mode and its library-validation entitlement remain unchanged.
+
+Fail-closed parser controls can be run without signing or building:
+
+```sh
+python3 -m unittest discover -s tools \
+  -p test_aot_full_replacement_ffi_signing_test.py -v
+```
+
+This mode establishes bounded **host** behavior under strict macOS signing.
+It does not run Flutter or establish a macOS release/updater integration. The
+real producer and installer fixture still use `target_os=ios`, so successful
+encrypted host installation does not establish macOS authentication metadata
+or server signature verification. Physical iOS remains a separate gate.
+
 The producer contract is exactly the existing full-replacement test contract:
 `producer BASE_SBR PAYLOAD_SBR OUTPUT_DIRECTORY`; output `valid.json`,
 `tampered.json`, and `expired.json`. It must use the real CLI encryption and

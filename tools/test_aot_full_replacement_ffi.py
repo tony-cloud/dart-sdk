@@ -16,16 +16,96 @@ no-JIT/device acceptance remain independent gates.
 
 import argparse
 import contextlib
+import hashlib
 import json
 from pathlib import Path
 import platform
+import plistlib
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+from xml.parsers.expat import ExpatError
 
 from test_aot_full_replacement import digest_artifact, host_abi
+
+
+def parse_strict_macos_signature(details, entitlements):
+    """Fail closed on absent/malformed signing evidence or any entitlement."""
+    flags = re.search(r'\bflags=0x([0-9a-fA-F]+)\(', details)
+    team = re.search(r'^TeamIdentifier=([A-Za-z0-9]+)$', details, re.MULTILINE)
+    if flags is None or not int(flags.group(1), 16) & 0x10000:
+        raise ValueError('Strict macOS signature requires hardened runtime')
+    if team is None or team.group(1) == 'not':
+        raise ValueError('Strict macOS signature requires a TeamIdentifier')
+    if not re.search(r'^Authority=Developer ID Application: .+$', details,
+                     re.MULTILINE):
+        raise ValueError('Strict macOS signature requires Developer ID Application')
+    # codesign writes an Executable= diagnostic before the XML in the combined
+    # output. Require an actual complete plist, rather than interpreting missing
+    # entitlement output as an empty dictionary.
+    start = entitlements.find('<?xml')
+    end = entitlements.find('</plist>', start)
+    if start < 0 or end < 0:
+        raise ValueError('Missing explicit macOS entitlement plist')
+    try:
+        parsed = plistlib.loads(entitlements[start:end + len('</plist>')].encode())
+    except (ValueError, plistlib.InvalidFileException, ExpatError) as error:
+        raise ValueError('Malformed macOS entitlement plist') from error
+    if not isinstance(parsed, dict) or parsed:
+        raise ValueError('Strict macOS signature requires EMPTY entitlements')
+    return {'team_identifier': team.group(1), 'entitlements': parsed,
+            'hardened_runtime': True}
+
+
+def verify_strict_macos_signature(artifact, run, evidence, expected=None):
+    """Check actual signed bytes, certificate, entitlements and dependencies."""
+    run('codesign', '--verify', '--strict', '--verbose=4', artifact,
+        log=evidence / f'{artifact.name}-verify.log')
+    details = run('codesign', '--display', '--verbose=4', artifact,
+                  log=evidence / f'{artifact.name}-signature.log')
+    entitlements = run('codesign', '--display', '--entitlements', ':-', artifact,
+                       log=evidence / f'{artifact.name}-entitlements.log')
+    report = parse_strict_macos_signature(details, entitlements)
+    certificate_prefix = evidence / f'{artifact.name}-certificate-'
+    run('codesign', '--display', f'--extract-certificates={certificate_prefix}', artifact)
+    certificate = Path(str(certificate_prefix) + '0')
+    report['certificate_sha1'] = hashlib.sha1(certificate.read_bytes()).hexdigest().upper()
+    if expected is not None:
+        for key in ('team_identifier', 'certificate_sha1'):
+            if report[key] != expected[key]:
+                raise AssertionError(f'Strict macOS {key} mismatch: {artifact}')
+    dependencies = run('otool', '-L', artifact,
+                       log=evidence / f'{artifact.name}-dependencies.log')
+    report.update(path=str(artifact), sha256=digest_artifact(artifact),
+                  dependencies=dependencies.splitlines()[1:])
+    return report
+
+
+@contextlib.contextmanager
+def preserve_original_artifacts(artifacts, evidence):
+    """Record unchanged original build inputs, including when execution fails."""
+    before = {str(path): digest_artifact(path) for path in artifacts}
+    report = {'before_sha256': before}
+    destination = evidence / 'original-build-artifacts.json'
+    destination.write_text(json.dumps(report, indent=2) + '\n')
+    try:
+        yield
+    finally:
+        after = {str(path): digest_artifact(path) for path in artifacts}
+        report.update(after_sha256=after, unchanged=before == after)
+        destination.write_text(json.dumps(report, indent=2) + '\n')
+        if before != after:
+            raise AssertionError('Original build artifacts changed during strict host test')
+
+
+def publish_host_acceptance(work, acceptance, guards):
+    """Publish success only after all original-artifact checks have completed."""
+    destination = work / 'host-acceptance.json'
+    destination.unlink(missing_ok=True)
+    guards.close()
+    destination.write_text(json.dumps(acceptance, indent=2) + '\n')
 
 
 def load_mutation_manifest(path):
@@ -108,6 +188,9 @@ def main():
     parser.add_argument('--envelope-producer', type=Path)
     parser.add_argument('--envelope-dart', type=Path)
     parser.add_argument('--envelope-packages', type=Path)
+    parser.add_argument('--macos-signing-identity',
+                        help='Optional Developer ID Application identity: sign only a '
+                        'private harness copy/fixtures with runtime and EMPTY entitlements')
     parser.add_argument('--check-fixtures', action='store_true',
                         help='Only check source consistency; requires no SDK build')
     args = parser.parse_args()
@@ -120,6 +203,8 @@ def main():
         parser.error('Execution requires native ARM64 macOS/Linux, never simulator/x64')
     if args.build_dir is None:
         parser.error('--build-dir is required for execution')
+    if args.macos_signing_identity and sys.platform != 'darwin':
+        parser.error('--macos-signing-identity requires macOS')
     for name in ('envelope_producer', 'envelope_dart', 'envelope_packages'):
         value = getattr(args, name)
         if value is None or not value.resolve().is_file():
@@ -165,8 +250,41 @@ def main():
         args.work_dir.mkdir(parents=True, exist_ok=True)
     workspace = (contextlib.nullcontext(str(args.work_dir.resolve()))
                  if args.work_dir else tempfile.TemporaryDirectory(prefix='full-ffi-'))
-    with workspace as directory:
+    with workspace as directory, contextlib.ExitStack() as guards:
         work = Path(directory)
+        strict_signatures = []
+        if args.macos_signing_identity:
+            if work == build or build in work.parents:
+                parser.error('Strict host work directory must be outside original build outputs')
+            if any(work.iterdir()):
+                parser.error('Strict host mode requires a fresh EMPTY work directory')
+            signing_evidence = work / 'strict-signing'
+            # A new private directory also prevents an existing link from
+            # redirecting codesign writes into the original build outputs.
+            signing_evidence.mkdir()
+            guards.enter_context(preserve_original_artifacts(
+                (dart, platform_file, gen_snapshot, harness), signing_evidence))
+            private_harness = signing_evidence / harness.name
+            shutil.copy2(harness, private_harness)
+            harness = private_harness
+            empty_entitlements = signing_evidence / 'empty-entitlements.plist'
+            empty_entitlements.write_bytes(plistlib.dumps({}))
+
+            def sign_strict(artifact):
+                run('codesign', '--force', '--sign', args.macos_signing_identity,
+                    '--options', 'runtime', '--timestamp=none', '--entitlements',
+                    empty_entitlements, '--force-library-entitlements', artifact)
+                report = verify_strict_macos_signature(
+                    artifact, run, signing_evidence,
+                    strict_signatures[0] if strict_signatures else None)
+                if (re.fullmatch(r'[A-Fa-f0-9]{40}', args.macos_signing_identity) and
+                        report['certificate_sha1'] != args.macos_signing_identity.upper()):
+                    raise AssertionError('Signed certificate does not match requested identity')
+                strict_signatures.append(report)
+                (signing_evidence / 'signatures.json').write_text(
+                    json.dumps(strict_signatures, indent=2) + '\n')
+
+            sign_strict(harness)
         plugin = work / 'full_ffi_plugin/lib'
         plugin.mkdir(parents=True, exist_ok=True)
         for source in (fixtures / 'base').glob('*.dart'):
@@ -186,16 +304,19 @@ def main():
             '-I', root / 'runtime/include', fixtures / 'released_fixture.c',
             '-pthread', '-o', native, *(['-ldl'] if sys.platform == 'linux' else []))
         if sys.platform == 'darwin':
-            run('codesign', '--force', '--sign', '-', native)
-            entitlements = run('codesign', '-d', '--entitlements', ':-', harness)
-            if 'com.apple.security.cs.disable-library-validation' not in entitlements:
-                raise AssertionError('Use isolated host-test library-validation entitlement')
-            for forbidden in ('com.apple.security.cs.allow-jit',
-                              'com.apple.security.cs.allow-unsigned-executable-memory',
-                              'get-task-allow'):
-                if forbidden in entitlements:
-                    raise AssertionError(f'Forbidden harness entitlement: {forbidden}')
-            run('codesign', '--verify', '--strict', harness)
+            if args.macos_signing_identity:
+                sign_strict(native)
+            else:
+                run('codesign', '--force', '--sign', '-', native)
+                entitlements = run('codesign', '-d', '--entitlements', ':-', harness)
+                if 'com.apple.security.cs.disable-library-validation' not in entitlements:
+                    raise AssertionError('Use isolated host-test library-validation entitlement')
+                for forbidden in ('com.apple.security.cs.allow-jit',
+                                  'com.apple.security.cs.allow-unsigned-executable-memory',
+                                  'get-task-allow'):
+                    if forbidden in entitlements:
+                        raise AssertionError(f'Forbidden harness entitlement: {forbidden}')
+                run('codesign', '--verify', '--strict', harness)
         released_hash = digest_artifact(native)
         assets = work / 'released-native-assets.json'
         assets.write_text(json.dumps({'format-version': [1, 0, 0], 'native-assets': {
@@ -222,7 +343,10 @@ def main():
             if sys.platform == 'darwin':
                 run(gen_snapshot, '--snapshot-kind=app-aot-macho-dylib',
                     '--shorebird-full-replacement', f'--macho={snapshot}', input_kernel)
-                run('codesign', '--force', '--sign', '-', snapshot)
+                if args.macos_signing_identity:
+                    sign_strict(snapshot)
+                else:
+                    run('codesign', '--force', '--sign', '-', snapshot)
             else:
                 run(gen_snapshot, '--snapshot-kind=app-aot-elf',
                     '--shorebird-full-replacement', f'--elf={snapshot}', input_kernel)
@@ -298,7 +422,7 @@ def main():
                     log=work / f'{label}-{payload_name}.log')
                 if digest_artifact(native) != released_hash:
                     raise AssertionError('Released native plugin binary changed')
-        (work / 'host-acceptance.json').write_text(json.dumps({
+        acceptance = {
             'profile': 'PRODUCT full replacement', 'host_abi': abi,
             'released_native_sha256': released_hash,
             'base_sha256': digest_artifact(base), 'update_sha256': digest_artifact(update),
@@ -308,7 +432,22 @@ def main():
             'status': 'host_execution_passed', 'physical_ios': 'not_exercised',
             'cli_archive_differ': 'not_exercised',
             'server_signature_verification': 'not_exercised_by_this_host_harness',
-        }, indent=2) + '\n')
+        }
+        if args.macos_signing_identity:
+            # Check the exact executed images again after the full suite.
+            for signature in strict_signatures:
+                artifact = Path(signature['path'])
+                current = verify_strict_macos_signature(
+                    artifact, run, signing_evidence, strict_signatures[0])
+                if current != signature:
+                    raise AssertionError(f'Strict signed image changed: {artifact}')
+            acceptance.update(
+                macos_signing_mode='hardened_runtime_empty_entitlements',
+                signed_images=strict_signatures, host_runtime_sha256=digest_artifact(harness),
+                actual_macos_flutter='not_exercised',
+                envelope_target_os='ios',
+                macos_authentication_metadata='not_exercised')
+        publish_host_acceptance(work, acceptance, guards)
         print('PRODUCT full N→B/N→U FFI host fixture passed; physical iOS, '
               'CLI archive comparison and server signature gates remain separate.')
 
