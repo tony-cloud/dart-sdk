@@ -11043,6 +11043,41 @@ static bool TestAotPatchKeyCallback(const char* key_id,
   *key_length = 32;
   return true;
 }
+
+static bool TestAotPatchRefusedKeyCallback(const char* key_id,
+                                           uint8_t* key_buffer,
+                                           intptr_t key_buffer_length,
+                                           intptr_t* key_length) {
+  TestAotPatchKeyCallback(key_id, key_buffer, key_buffer_length, key_length);
+  return false;
+}
+
+static bool TestAotPatchShortKeyCallback(const char* key_id,
+                                         uint8_t* key_buffer,
+                                         intptr_t key_buffer_length,
+                                         intptr_t* key_length) {
+  TestAotPatchKeyCallback(key_id, key_buffer, key_buffer_length, key_length);
+  *key_length = 31;
+  return true;
+}
+
+static bool TestAotPatchLongKeyCallback(const char* key_id,
+                                        uint8_t* key_buffer,
+                                        intptr_t key_buffer_length,
+                                        intptr_t* key_length) {
+  TestAotPatchKeyCallback(key_id, key_buffer, key_buffer_length, key_length);
+  *key_length = 33;
+  return true;
+}
+
+static bool TestAotPatchWrongKeyCallback(const char* key_id,
+                                         uint8_t* key_buffer,
+                                         intptr_t key_buffer_length,
+                                         intptr_t* key_length) {
+  TestAotPatchKeyCallback(key_id, key_buffer, key_buffer_length, key_length);
+  memset(key_buffer, 0x43, 32);
+  return true;
+}
 #endif  // defined(DART_ENABLE_AOT_PATCHING)
 
 TEST_CASE(DartAPI_AotPatchingConfiguration) {
@@ -11073,6 +11108,7 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
     "aad_sha256": "1a0c6003fec49bbc26fbaaf0a6dfcd557061b4ae5f22e4b1114afe3b1a8d9796"
   }
 })json";
+#if defined(DART_ENABLE_AOT_PATCHING)
   const char ios_native_patch[] = R"json({
   "format": "open-aot-vmcode-encrypted-v1",
   "metadata": {
@@ -11107,6 +11143,7 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
   },
   "payload_kind": "binary-diff-v1"
 })json";
+#endif
   Dart_AotPatchInstallOptions options = {};
   options.app_id = "app.test";
   options.app_build_id = "1";
@@ -11124,6 +11161,7 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
 
   uint8_t* patch_payload = nullptr;
   intptr_t patch_payload_length = 0;
+  Dart_AotPatchInstallStatus status = kDartAotPatchInstallSuccess;
 #if defined(DART_ENABLE_AOT_PATCHING)
   EXPECT(Dart_AotPatchingEnabled());
   Dart_SetAotPatchKeyCallback(TestAotPatchKeyCallback);
@@ -11134,6 +11172,146 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
   EXPECT_EQ(13, patch_payload_length);
   EXPECT_EQ(0, memcmp("patch-payload", patch_payload, patch_payload_length));
   Dart_FreeAotPatchPayload(patch_payload);
+
+  const auto install_with_status =
+      [&](const std::string& artifact,
+          const Dart_AotPatchInstallOptions& opts) {
+        // Every failure must overwrite a stale success and expose no payload.
+        status = kDartAotPatchInstallSuccess;
+        patch_payload = reinterpret_cast<uint8_t*>(1);
+        patch_payload_length = -1;
+        return Dart_InstallAotPatchWithStatus(
+            reinterpret_cast<const uint8_t*>(artifact.data()), artifact.size(),
+            &opts, &patch_payload, &patch_payload_length, &status);
+      };
+  const struct {
+    Dart_AotPatchKeyCallback callback;
+    Dart_AotPatchInstallStatus expected_status;
+    const char* error;
+  } key_cases[] = {
+      {nullptr, kDartAotPatchInstallKeyUnavailable, "No AOT patch AES key"},
+      {TestAotPatchRefusedKeyCallback, kDartAotPatchInstallKeyUnavailable,
+       "failed to provide a 32-byte key"},
+      {TestAotPatchShortKeyCallback, kDartAotPatchInstallKeyUnavailable,
+       "failed to provide a 32-byte key"},
+      {TestAotPatchLongKeyCallback, kDartAotPatchInstallKeyUnavailable,
+       "failed to provide a 32-byte key"},
+      {TestAotPatchWrongKeyCallback, kDartAotPatchInstallAuthenticationFailed,
+       "AES-GCM decryption failed"},
+  };
+  for (const auto& test : key_cases) {
+    Dart_SetAotPatchKeyCallback(test.callback);
+    result = install_with_status(patch, options);
+    EXPECT_ERROR(result, test.error);
+    EXPECT_EQ(test.expected_status, status);
+    EXPECT(patch_payload == nullptr);
+    EXPECT_EQ(0, patch_payload_length);
+
+    // The same envelope remains installable when the correct key returns.
+    Dart_SetAotPatchKeyCallback(TestAotPatchKeyCallback);
+    status = kDartAotPatchInstallRejected;
+    result = Dart_InstallAotPatchWithStatus(
+        reinterpret_cast<const uint8_t*>(patch), strlen(patch), &options,
+        &patch_payload, &patch_payload_length, &status);
+    EXPECT_VALID(result);
+    EXPECT_EQ(kDartAotPatchInstallSuccess, status);
+    EXPECT_EQ(13, patch_payload_length);
+    EXPECT_EQ(0, memcmp("patch-payload", patch_payload, patch_payload_length));
+    Dart_FreeAotPatchPayload(patch_payload);
+  }
+
+  // Legacy callers still receive the same error and no unauthenticated bytes.
+  Dart_SetAotPatchKeyCallback(TestAotPatchWrongKeyCallback);
+  result = Dart_InstallAotPatch(reinterpret_cast<const uint8_t*>(patch),
+                                strlen(patch), &options, &patch_payload,
+                                &patch_payload_length);
+  EXPECT_ERROR(result, "AES-GCM decryption failed");
+  EXPECT(patch_payload == nullptr);
+  EXPECT_EQ(0, patch_payload_length);
+
+  // Permanent validation must win even when key material is unavailable.
+  Dart_SetAotPatchKeyCallback(nullptr);
+  Dart_AotPatchInstallOptions mismatched = options;
+  mismatched.app_id = "different.app";
+  result = install_with_status(patch, mismatched);
+  EXPECT_ERROR(result, "app_id");
+  EXPECT_EQ(kDartAotPatchInstallRejected, status);
+  EXPECT(patch_payload == nullptr);
+  EXPECT_EQ(0, patch_payload_length);
+  result = install_with_status("{}", options);
+  EXPECT_ERROR(result, "format");
+  EXPECT_EQ(kDartAotPatchInstallRejected, status);
+  EXPECT(patch_payload == nullptr);
+  EXPECT_EQ(0, patch_payload_length);
+
+  const struct {
+    const char* from;
+    const char* to;
+    Dart_AotPatchInstallStatus expected_status;
+    const char* error;
+    bool rejects_without_key;
+  } invalid_envelope_cases[] = {
+      {"W8uOg/f+g2SS3Ahxfaeuyg==", "!", kDartAotPatchInstallRejected, "base64",
+       true},
+      {"W8uOg/f+g2SS3Ahxfaeuyg==", "AAAAAAAAAAAAAAAAAAAA",
+       kDartAotPatchInstallRejected, "tag must be 16 bytes", true},
+      {"W8uOg/f+g2SS3Ahxfaeuyg==", "AAAAAAAAAAAAAAAAAAAAAA==",
+       kDartAotPatchInstallAuthenticationFailed, "AES-GCM decryption failed",
+       false},
+      {"1a0c6003fec49bbc26fbaaf0a6dfcd557061b4ae5f22e4b1114afe3b1a8d9796",
+       "0000000000000000000000000000000000000000000000000000000000000000",
+       kDartAotPatchInstallRejected, "metadata AAD hash mismatch", true},
+      {"\"payload_sha256\": "
+       "\"05d9426b9dd03e5cc3404aab6c7c45ac24e0b90e840f4bd6da83c342430533dc\"",
+       "\"payload_sha256\": "
+       "\"0000000000000000000000000000000000000000000000000000000000000000\"",
+       kDartAotPatchInstallRejected, "decrypted payload hash mismatch", false},
+  };
+  Dart_SetAotPatchKeyCallback(TestAotPatchKeyCallback);
+  for (const auto& test : invalid_envelope_cases) {
+    std::string artifact(patch);
+    const auto offset = artifact.find(test.from);
+    RELEASE_ASSERT(offset != std::string::npos);
+    artifact.replace(offset, strlen(test.from), test.to);
+    result = install_with_status(artifact, options);
+    EXPECT_ERROR(result, test.error);
+    EXPECT_EQ(test.expected_status, status);
+    EXPECT(patch_payload == nullptr);
+    EXPECT_EQ(0, patch_payload_length);
+    if (test.rejects_without_key) {
+      Dart_SetAotPatchKeyCallback(nullptr);
+      result = install_with_status(artifact, options);
+      EXPECT_ERROR(result, test.error);
+      EXPECT_EQ(kDartAotPatchInstallRejected, status);
+      EXPECT(patch_payload == nullptr);
+      EXPECT_EQ(0, patch_payload_length);
+      Dart_SetAotPatchKeyCallback(TestAotPatchKeyCallback);
+    }
+  }
+
+  // Success also overwrites a stale rejection status.
+  status = kDartAotPatchInstallRejected;
+  result = Dart_InstallAotPatchWithStatus(
+      reinterpret_cast<const uint8_t*>(patch), strlen(patch), &options,
+      &patch_payload, &patch_payload_length, &status);
+  EXPECT_VALID(result);
+  EXPECT_EQ(kDartAotPatchInstallSuccess, status);
+  EXPECT_EQ(13, patch_payload_length);
+  EXPECT_EQ(0, memcmp("patch-payload", patch_payload, patch_payload_length));
+  Dart_FreeAotPatchPayload(patch_payload);
+
+  result = Dart_InstallAotPatchWithStatus(
+      reinterpret_cast<const uint8_t*>(patch), strlen(patch), &options,
+      &patch_payload, &patch_payload_length, nullptr);
+  EXPECT_VALID(result);
+  EXPECT_EQ(13, patch_payload_length);
+  Dart_FreeAotPatchPayload(patch_payload);
+
+  status = kDartAotPatchInstallSuccess;
+  result = Dart_InstallAotPatchWithStatus(nullptr, 0, &options, &patch_payload,
+                                          &patch_payload_length, &status);
+  EXPECT_ERROR(result, "patch_buffer");
+  EXPECT_EQ(kDartAotPatchInstallRejected, status);
 
   // Fixed AES-GCM vectors generated with the same authenticated metadata as
   // above, adding offline_expires_at. Both acceptance and rejection therefore
@@ -11182,15 +11360,15 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
     replace("W8uOg/f+g2SS3Ahxfaeuyg==", test.tag);
     replace("1a0c6003fec49bbc26fbaaf0a6dfcd557061b4ae5f22e4b1114afe3b1a8d9796",
             test.aad_hash);
-    result = Dart_InstallAotPatch(
-        reinterpret_cast<const uint8_t*>(artifact.data()), artifact.size(),
-        &options, &patch_payload, &patch_payload_length);
+    result = install_with_status(artifact, options);
     if (test.error != nullptr) {
       EXPECT_ERROR(result, test.error);
+      EXPECT_EQ(kDartAotPatchInstallRejected, status);
       EXPECT(patch_payload == nullptr);
       EXPECT_EQ(0, patch_payload_length);
     } else {
       EXPECT_VALID(result);
+      EXPECT_EQ(kDartAotPatchInstallSuccess, status);
       EXPECT_EQ(13, patch_payload_length);
       Dart_FreeAotPatchPayload(patch_payload);
     }
@@ -11201,10 +11379,9 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
         "\"app_id\": \"app.test\","}) {
     std::string artifact(patch);
     artifact.insert(artifact.find("\"app_id\""), invalid_field);
-    result = Dart_InstallAotPatch(
-        reinterpret_cast<const uint8_t*>(artifact.data()), artifact.size(),
-        &options, &patch_payload, &patch_payload_length);
+    result = install_with_status(artifact, options);
     EXPECT_ERROR(result, "Malformed AOT patch JSON envelope");
+    EXPECT_EQ(kDartAotPatchInstallRejected, status);
     EXPECT(patch_payload == nullptr);
     EXPECT_EQ(0, patch_payload_length);
   }
@@ -11225,10 +11402,9 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
     replace("W8uOg/f+g2SS3Ahxfaeuyg==", "sfAxMdYYQ0UhJH4DKuIgFA==");
     replace("1a0c6003fec49bbc26fbaaf0a6dfcd557061b4ae5f22e4b1114afe3b1a8d9796",
             "bba4190d6451b9033d846f87f61c19cb44832fcbabb475b9ba1051fd10a52459");
-    result = Dart_InstallAotPatch(
-        reinterpret_cast<const uint8_t*>(artifact.data()), artifact.size(),
-        &inconsistent, &patch_payload, &patch_payload_length);
+    result = install_with_status(artifact, inconsistent);
     EXPECT_ERROR(result, "snapshot hash");
+    EXPECT_EQ(kDartAotPatchInstallRejected, status);
     EXPECT(patch_payload == nullptr);
     EXPECT_EQ(0, patch_payload_length);
   }
@@ -11237,30 +11413,26 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
   ios_options.target_os = "ios";
   ios_options.target_arch = "arm64";
   ios_options.runtime_mode = "native-aot";
-  result =
-      Dart_InstallAotPatch(reinterpret_cast<const uint8_t*>(ios_native_patch),
-                           strlen(ios_native_patch), &ios_options,
-                           &patch_payload, &patch_payload_length);
+  result = install_with_status(ios_native_patch, ios_options);
   EXPECT_ERROR(result,
                "iOS AOT patches must use the no-DDM interpreter runtime mode");
+  EXPECT_EQ(kDartAotPatchInstallRejected, status);
 
   Dart_AotPatchInstallOptions ios_interpreter_options = ios_options;
   ios_interpreter_options.runtime_mode = "dart-bytecode-interpreter";
-  result = Dart_InstallAotPatch(
-      reinterpret_cast<const uint8_t*>(ios_interpreter_compact_patch),
-      strlen(ios_interpreter_compact_patch), &ios_interpreter_options,
-      &patch_payload, &patch_payload_length);
+  result = install_with_status(ios_interpreter_compact_patch,
+                               ios_interpreter_options);
   EXPECT_ERROR(result,
                "Dart bytecode interpreter AOT patches must use payload_kind "
                "\"full-snapshot\"");
+  EXPECT_EQ(kDartAotPatchInstallRejected, status);
 
   Dart_AotPatchInstallOptions dynamic_modules_options = options;
   dynamic_modules_options.runtime_mode = "dart-dynamic-modules";
-  result = Dart_InstallAotPatch(reinterpret_cast<const uint8_t*>(patch),
-                                strlen(patch), &dynamic_modules_options,
-                                &patch_payload, &patch_payload_length);
+  result = install_with_status(patch, dynamic_modules_options);
   EXPECT_ERROR(result,
                "DART_DYNAMIC_MODULES is not supported for AOT patch artifacts");
+  EXPECT_EQ(kDartAotPatchInstallRejected, status);
   Dart_SetAotPatchKeyCallback(nullptr);
 #else
   EXPECT(!Dart_AotPatchingEnabled());
@@ -11268,6 +11440,11 @@ TEST_CASE(DartAPI_AotPatchingConfiguration) {
       reinterpret_cast<const uint8_t*>(patch), strlen(patch), &options,
       &patch_payload, &patch_payload_length);
   EXPECT_ERROR(result, "Compact AOT patching is not enabled");
+  result = Dart_InstallAotPatchWithStatus(
+      reinterpret_cast<const uint8_t*>(patch), strlen(patch), &options,
+      &patch_payload, &patch_payload_length, &status);
+  EXPECT_ERROR(result, "Compact AOT patching is not enabled");
+  EXPECT_EQ(kDartAotPatchInstallRejected, status);
 #endif
 }
 

@@ -161,6 +161,7 @@ main() {
     "Dart_Initialize",
     "Dart_InitializeNativeAssetsResolver",
     "Dart_InstallAotPatch",
+    "Dart_InstallAotPatchWithStatus",
     "Dart_InstanceGetType",
     "Dart_IntegerFitsIntoInt64",
     "Dart_IntegerFitsIntoUint64",

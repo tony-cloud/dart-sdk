@@ -8174,6 +8174,19 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
                      const Dart_AotPatchInstallOptions* options,
                      uint8_t** patch_payload_buffer,
                      intptr_t* patch_payload_length) {
+  return Dart_InstallAotPatchWithStatus(patch_buffer, patch_buffer_length,
+                                        options, patch_payload_buffer,
+                                        patch_payload_length, nullptr);
+}
+
+DART_EXPORT Dart_Handle
+Dart_InstallAotPatchWithStatus(const uint8_t* patch_buffer,
+                               intptr_t patch_buffer_length,
+                               const Dart_AotPatchInstallOptions* options,
+                               uint8_t** patch_payload_buffer,
+                               intptr_t* patch_payload_length,
+                               Dart_AotPatchInstallStatus* status) {
+  if (status != nullptr) *status = kDartAotPatchInstallRejected;
 #if !defined(DART_ENABLE_AOT_PATCHING)
   return Api::NewError(
       "Compact AOT patching is not enabled in this VM. Rebuild with "
@@ -8207,10 +8220,6 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
       options->target_os == nullptr || options->target_arch == nullptr) {
     return Api::NewError("AOT patch install options are incomplete.");
   }
-  if (g_aot_patch_key_callback == nullptr) {
-    return Api::NewError("No AOT patch AES key callback has been configured.");
-  }
-
   const char* json = reinterpret_cast<const char*>(patch_buffer);
   intptr_t json_end = 0;
   if (!ValidateAotPatchJsonObject(json, patch_buffer_length, &json_end, 0)) {
@@ -8339,6 +8348,11 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
     return Api::NewError("AOT patch artifact metadata AAD hash mismatch.");
   }
 
+  // Reject invalid envelopes before classifying key availability as retryable.
+  if (g_aot_patch_key_callback == nullptr) {
+    if (status != nullptr) *status = kDartAotPatchInstallKeyUnavailable;
+    return Api::NewError("No AOT patch AES key callback has been configured.");
+  }
   uint8_t key_buffer[32] = {};
   struct ScopedKeyWipe {
     uint8_t* data;
@@ -8350,6 +8364,7 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
                                key_buffer, sizeof(key_buffer), &key_length);
   if (!key_ok || key_length != 32) {
     memset(key_buffer, 0, sizeof(key_buffer));
+    if (status != nullptr) *status = kDartAotPatchInstallKeyUnavailable;
     return Api::NewError(
         "AOT patch AES key callback failed to provide a 32-byte key.");
   }
@@ -8390,6 +8405,7 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
   EVP_AEAD_CTX_cleanup(&ctx);
   memset(key_buffer, 0, sizeof(key_buffer));
   if (decrypt_ok != 1) {
+    if (status != nullptr) *status = kDartAotPatchInstallAuthenticationFailed;
     return Api::NewError("AOT patch AES-GCM decryption failed.");
   }
   decrypted_payload_buffer.length = decrypted_length;
@@ -8424,6 +8440,7 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
   // the base isolate is entered, before running app code.
   *patch_payload_buffer = decrypted_payload_buffer.Release();
   *patch_payload_length = static_cast<intptr_t>(decrypted_length);
+  if (status != nullptr) *status = kDartAotPatchInstallSuccess;
   return Api::Success();
 #endif
 }

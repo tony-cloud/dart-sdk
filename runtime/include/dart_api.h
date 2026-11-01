@@ -4378,6 +4378,13 @@ typedef struct {
   const char* runtime_mode;
 } Dart_AotPatchInstallOptions;
 
+typedef enum {
+  kDartAotPatchInstallSuccess = 0,
+  kDartAotPatchInstallKeyUnavailable = 1,
+  kDartAotPatchInstallAuthenticationFailed = 2,
+  kDartAotPatchInstallRejected = 3,
+} Dart_AotPatchInstallStatus;
+
 typedef bool (*Dart_AotPatchKeyCallback)(const char* key_id,
                                          uint8_t* key_buffer,
                                          intptr_t key_buffer_length,
@@ -4415,6 +4422,28 @@ Dart_InstallAotPatch(const uint8_t* patch_buffer,
                      const Dart_AotPatchInstallOptions* options,
                      uint8_t** patch_payload_buffer,
                      intptr_t* patch_payload_length);
+
+/**
+ * Like Dart_InstallAotPatch, additionally reporting a typed install status.
+ *
+ * If non-NULL, status is initialized to kDartAotPatchInstallRejected, including
+ * when patching is disabled or arguments are invalid. KeyUnavailable means no
+ * key callback was configured, or it refused or failed to supply a 32-byte key.
+ * AuthenticationFailed means AES-GCM authentication failed; this cannot
+ * distinguish an incorrect key from modified ciphertext or an incorrect tag.
+ * Other validation failures are Rejected. No failure exposes payload bytes.
+ *
+ * Success accepts only the envelope and payload. A subsequent embedder install
+ * or Dart_ReloadBytecodePatch can still fail independently of this status.
+ * Passing NULL for status is equivalent to Dart_InstallAotPatch.
+ */
+DART_EXPORT DART_API_WARN_UNUSED_RESULT Dart_Handle
+Dart_InstallAotPatchWithStatus(const uint8_t* patch_buffer,
+                               intptr_t patch_buffer_length,
+                               const Dart_AotPatchInstallOptions* options,
+                               uint8_t** patch_payload_buffer,
+                               intptr_t* patch_payload_length,
+                               Dart_AotPatchInstallStatus* status);
 
 /**
  * Frees the buffer returned by Dart_InstallAotPatch.
