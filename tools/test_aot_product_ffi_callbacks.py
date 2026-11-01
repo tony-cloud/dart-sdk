@@ -18,9 +18,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from native_ffi_test_support import (
+    add_prepared_options, handle_prepared_options, prepared_compile_flags,
+    preparation_host, capture_original_inputs, defer_product, write_prepared_manifest,
+    StrictMacosSigning, is_macos_x64, require_native_macos_x64)
 
-from native_ffi_test_support import (StrictMacosSigning, is_macos_x64,
-                                     require_native_macos_x64)
 
 
 def common_entry_range(binary):
@@ -46,12 +48,16 @@ def common_entry_range(binary):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--build-dir', required=True, type=Path)
+    parser.add_argument('--build-dir', type=Path)
     parser.add_argument('--work-dir', type=Path)
     parser.add_argument('--transitions-only', action='store_true', help='Generate fixtures and run all eight mandatory isolated compiled/interpreted transition children')
     parser.add_argument('--macos-signing-identity', help='Developer ID Application identity for private hardened, empty-entitlement test images; required on x64')
+    add_prepared_options(parser)
     args = parser.parse_args()
-    require_native_macos_x64()
+    if handle_prepared_options(args, parser, 'callbacks'):
+        return
+    if not args.prepare_only:
+        require_native_macos_x64()
     if is_macos_x64() and not args.macos_signing_identity:
         parser.error('Native x64 execution requires --macos-signing-identity and EMPTY entitlements')
     if args.macos_signing_identity and sys.platform != 'darwin':
@@ -61,6 +67,8 @@ def main():
         parser.error('Native ARM64 macOS/Linux or macOS x64 required')
     root = Path(__file__).resolve().parents[1]
     fixtures = root / 'tools/test_aot_product_ffi_callbacks'
+    if args.build_dir is None:
+        parser.error('--build-dir is required')
     build = args.build_dir.resolve()
     dart = build / 'dart'
     gen_snapshot = build / 'gen_snapshot_product'
@@ -72,6 +80,9 @@ def main():
     for required in (dart, gen_snapshot, platform_file, harness):
         if not required.is_file():
             parser.error(f'Missing artifact: {required}')
+    original_artifacts = (dart, platform_file, gen_snapshot, harness)
+    prepared_host = preparation_host(original_artifacts) if args.prepare_only else None
+    deferred = []
     if args.work_dir:
         args.work_dir.mkdir(parents=True, exist_ok=True)
     workspace = (contextlib.nullcontext(str(args.work_dir.resolve()))
@@ -81,6 +92,8 @@ def main():
         strict_signing = None
 
         def run(*command, log=None, required=(), expect_failure=False):
+            if defer_product(args, command, harness, deferred):
+                return ''
             print('+', *command, flush=True)
             try:
                 result = subprocess.run([str(part) for part in command], cwd=root,
@@ -113,6 +126,8 @@ def main():
                 work, build, (dart, platform_file, gen_snapshot, harness),
                 args.macos_signing_identity, run))
             harness = strict_signing.copy_harness(harness)
+        if args.prepare_only:
+            prepared_originals = capture_original_inputs(work, original_artifacts)
 
         def snapshot(kernel, output, structural=False, shared=False):
             profile = ['--shorebird-structural-patching'] if structural else []
@@ -139,7 +154,7 @@ def main():
             if source.is_file():
                 shutil.copyfile(source, work / source.name)
         library = work / ('libcallback_fixture.dylib' if sys.platform == 'darwin' else 'libcallback_fixture.so')
-        run(compiler, '-shared', '-fPIC', '-O0', '-fno-omit-frame-pointer',
+        run(compiler, *prepared_compile_flags(args), '-shared', '-fPIC', '-O0', '-fno-omit-frame-pointer',
             '-I', root / 'runtime/include', work / 'fixture.c',
             work / 'aggregate_fixture.c', work / 'aggregate_fixture.S',
             work / 'async_group_fixture.c', '-pthread', '-o', library,
@@ -214,7 +229,8 @@ def main():
                     failures.append(f'{mode}: {error}')
         if failures:
             raise AssertionError('Mandatory callback transition preflight failed:\n' + '\n'.join(failures))
-        print('All eight isolated compiled/interpreted callback transition children passed')
+        if not args.prepare_only:
+            print('All eight isolated compiled/interpreted callback transition children passed')
         if args.transitions_only:
             guards.close()
             return
@@ -283,6 +299,10 @@ def main():
             if 'FORBIDDEN_OUTER_DART_AFTER_KILL' in output:
                 raise AssertionError('Killed callback resumed the outer Dart continuation')
         guards.close()
+        if args.prepare_only:
+            write_prepared_manifest('callbacks', work, prepared_originals, prepared_host,
+                                    deferred, args.macos_deployment_target)
+            return
         print('PRODUCT runtime-created callback listener/group and local Handle/aggregate acceptance passed; '
               'full admission, deterministic allocation/OOM injection, '
               'transient instruction/permission audit and devices remain outside this proof')

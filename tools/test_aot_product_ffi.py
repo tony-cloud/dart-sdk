@@ -21,9 +21,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from native_ffi_test_support import (
+    add_prepared_options, handle_prepared_options, prepared_compile_flags,
+    preparation_host, capture_original_inputs, defer_product, write_prepared_manifest,
+    StrictMacosSigning, is_macos_x64, require_native_macos_x64)
 
-from native_ffi_test_support import (StrictMacosSigning, is_macos_x64,
-                                     require_native_macos_x64)
 
 from test_interpreter_ffi_calls import NATIVE, DART, interpreter_entry_range
 
@@ -363,7 +365,7 @@ def symbol_range(binary, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--build-dir', required=True, type=Path)
+    parser.add_argument('--build-dir', type=Path)
     parser.add_argument('--work-dir', type=Path)
     parser.add_argument('--baseline-only', action='store_true')
     parser.add_argument('--body-profile', action='store_true',
@@ -371,8 +373,12 @@ def main():
     parser.add_argument('--full-assets-only', action='store_true',
                         help='Run release-map publication checks without raw call-outs')
     parser.add_argument('--macos-signing-identity', help='Developer ID Application identity for private hardened, empty-entitlement test images; required on x64')
+    add_prepared_options(parser)
     args = parser.parse_args()
-    require_native_macos_x64()
+    if handle_prepared_options(args, parser, 'callouts'):
+        return
+    if not args.prepare_only:
+        require_native_macos_x64()
     if is_macos_x64() and not args.macos_signing_identity:
         parser.error('Native x64 execution requires --macos-signing-identity and EMPTY entitlements')
     if args.macos_signing_identity and sys.platform != 'darwin':
@@ -381,6 +387,8 @@ def main():
             or (platform.machine().lower() in ('x86_64', 'amd64') and sys.platform == 'darwin')):
         parser.error('This first PRODUCT call-out test requires native ARM64 macOS/Linux or macOS x64')
     root = Path(__file__).resolve().parents[1]
+    if args.build_dir is None:
+        parser.error('--build-dir is required')
     build = args.build_dir.resolve()
     dart = build / 'dart'
     platform_file = build / 'vm_platform_product.dill'
@@ -394,6 +402,8 @@ def main():
             parser.error(f'Missing required artifact: {artifact}')
 
     def run(*command, log=None, expect_error=None):
+        if defer_product(args, command, test, deferred):
+            return ''
         print('+', *command, flush=True)
         result = subprocess.run([str(part) for part in command], cwd=root,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -421,6 +431,9 @@ def main():
             run(gen_snapshot, '--snapshot-kind=app-aot-elf', *profile,
                 f'--elf={output}', kernel)
 
+    original_artifacts = (dart, platform_file, gen_snapshot, test)
+    prepared_host = preparation_host(original_artifacts) if args.prepare_only else None
+    deferred = []
     if args.work_dir:
         args.work_dir.mkdir(parents=True, exist_ok=True)
     workspace = (contextlib.nullcontext(str(args.work_dir.resolve()))
@@ -433,6 +446,8 @@ def main():
                 work, build, (dart, platform_file, gen_snapshot, test),
                 args.macos_signing_identity, run))
             test = strict_signing.copy_harness(test)
+        if args.prepare_only:
+            prepared_originals = capture_original_inputs(work, original_artifacts)
         baseline = work / 'baseline.dart'
         baseline.write_text('void main() {}\n')
         library = work / ('libfixture.dylib' if sys.platform == 'darwin' else 'libfixture.so')
@@ -440,7 +455,7 @@ def main():
         native_assets.write_text(json.dumps({
             'format-version': [1, 0, 0],
             'native-assets': {
-                (('macos_x64' if platform.machine().lower() in ('x86_64', 'amd64') else 'macos_arm64') if sys.platform == 'darwin' else 'linux_arm64'): {
+                (('macos_x64' if args.prepare_only or platform.machine().lower() in ('x86_64', 'amd64') else 'macos_arm64') if sys.platform == 'darwin' else 'linux_arm64'): {
                     'product-release-asset': ['absolute', str(library)],
                 },
             },
@@ -503,7 +518,7 @@ def main():
         dart_fixture = DART.replace('// OVERFLOW_CALL', overflow).replace(
             'void main(List<String> args)', 'void runBaseFixture(List<String> args)')
         source.write_text(dart_fixture + DART_EXTRA)
-        run(compiler, '-shared', '-fPIC', '-O0', '-fno-omit-frame-pointer',
+        run(compiler, *prepared_compile_flags(args), '-shared', '-fPIC', '-O0', '-fno-omit-frame-pointer',
             '-I', root / 'runtime/include', native, '-o', library,
             *(['-ldl'] if sys.platform == 'linux' else []))
         if sys.platform == 'darwin':
@@ -515,7 +530,7 @@ def main():
             run(dart, root / 'pkg/dart2bytecode/bin/dart2bytecode.dart',
                 '-Ddart.vm.product=true', f'--platform={platform_file}', '-o', bytecode, source)
             drt_start, drt_end, image_base = interpreter_entry_range(test)
-            trampoline_start, trampoline_end = ((0, 0) if is_macos_x64() else symbol_range(test, 'FfiCallTrampoline'))
+            trampoline_start, trampoline_end = ((0, 0) if args.prepare_only or is_macos_x64() else symbol_range(test, 'FfiCallTrampoline'))
         required = [
             'Handle arguments/results and 21 nonleaf native GC calls passed',
             'leaf TypedData.address/view/element and Dart/native Struct.address passed',
@@ -536,7 +551,7 @@ def main():
             output = run(test, work / f'{mode}.snapshot', bytecode, library, source.as_uri(),
                          drt_start, drt_end, image_base, trampoline_start, trampoline_end,
                          log=work / f'{mode}-execution.log')
-            for marker in required:
+            for marker in (() if args.prepare_only else required):
                 if marker not in output:
                     raise AssertionError(f'{mode} did not complete: {marker}')
 
@@ -586,6 +601,10 @@ def main():
             run(test, native_snapshot, full_update, library, plugin_uri, '--full-assets', 2,
                 log=work / f'full-{label}-update.log')
         guards.close()
+        if args.prepare_only:
+            write_prepared_manifest('callouts', work, prepared_originals, prepared_host,
+                                    deferred, args.macos_deployment_target)
+            return
         if args.full_assets_only:
             print('PRODUCT release-map publication checks passed; raw call-outs skipped')
         else:

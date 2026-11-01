@@ -100,14 +100,14 @@ class HostAcceptancePublicationTest(unittest.TestCase):
 
 class NativeIntelSigningGateTest(unittest.TestCase):
     def test_rosetta_rejected(self):
-        translated = type('Result', (), {'returncode': 0, 'stdout': '1\n'})()
+        translated = type('Result', (), {'returncode': 0, 'stdout': '1\n', 'stderr': ''})()
         with mock.patch('native_ffi_test_support.is_macos_x64', return_value=True), \
              mock.patch('native_ffi_test_support.subprocess.run', return_value=translated):
             with self.assertRaisesRegex(RuntimeError, 'native Intel'):
                 require_native_macos_x64()
 
     def test_native_intel_not_rejected(self):
-        native = type('Result', (), {'returncode': 1, 'stdout': ''})()
+        native = type('Result', (), {'returncode': 1, 'stdout': '', 'stderr': 'sysctl: unknown oid'})()
         with mock.patch('native_ffi_test_support.is_macos_x64', return_value=True), \
              mock.patch('native_ffi_test_support.subprocess.run', return_value=native):
             require_native_macos_x64()

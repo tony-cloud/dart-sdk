@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shorebird-native-ffi-prepared-v1",
+  "title": "Immutable native Intel FFI preparation manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "status", "suite", "target", "canonical_root", "proof_root", "sdk_source_commit", "driver_source_sha256", "preparation_host", "deployment_target", "original_artifacts", "signed_runtime_inputs", "host_abi", "symbol_ranges", "test_cases", "inputs"],
+  "properties": {
+    "format_version": {"const": 1},
+    "status": {"const": "prepared_runtime_pending"},
+    "suite": {"enum": ["callouts", "callbacks", "full"]},
+    "target": {"const": {"os": "macos", "arch": "x64", "machine": "x86_64"}},
+    "canonical_root": {"type": "string", "pattern": "^/private/tmp/shorebird-macos-x64-proof-[A-Za-z0-9_-]+/(callouts|callbacks|full)$"},
+    "proof_root": {"type": "string", "pattern": "^/private/tmp/shorebird-macos-x64-proof-[A-Za-z0-9_-]+$"},
+    "sdk_source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "driver_source_sha256": {"$ref": "#/$defs/hashes"},
+    "preparation_host": {
+      "type": "object",
+      "required": ["system", "machine", "python", "x64_translation_probe", "tools"],
+      "properties": {
+        "system": {"const": "darwin"}, "machine": {"type": "string"}, "python": {"type": "string"},
+        "x64_translation_probe": {"type": "object", "required": ["argv", "returncode", "stdout", "stderr"]},
+        "tools": {"type": "object", "required": ["dart", "gen_snapshot", "harness"]}
+      }
+    },
+    "deployment_target": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+    "original_artifacts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dart", "platform", "gen_snapshot", "harness"],
+      "properties": {
+        "dart": {"$ref": "#/$defs/original"}, "platform": {"$ref": "#/$defs/original"},
+        "gen_snapshot": {"$ref": "#/$defs/original"}, "harness": {"$ref": "#/$defs/original"}
+      }
+    },
+    "signed_runtime_inputs": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/signed"}},
+    "host_abi": {"type": "object", "additionalProperties": false, "required": ["values", "digest"],
+      "properties": {"values": {"type": "array", "minItems": 8, "maxItems": 8, "items": {"type": "string"}}, "digest": {"$ref": "#/$defs/sha"}}},
+    "symbol_ranges": {"type": "object", "additionalProperties": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "integer", "minimum": 0}}},
+    "test_cases": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/case"}},
+    "inputs": {"$ref": "#/$defs/hashes"}
+  },
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "hashes": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/sha"}},
+    "original": {"type": "object", "additionalProperties": false, "required": ["path", "sha256", "usage"],
+      "properties": {"path": {"type": "string", "pattern": "^original-inputs/(dart|platform|gen_snapshot|harness)$"}, "sha256": {"$ref": "#/$defs/sha"}, "usage": {"const": "provenance-only-never-executed"}}},
+    "signed": {"type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "machine", "team_identifier", "certificate_sha1", "entitlements", "hardened_runtime", "dependencies"],
+      "properties": {"path": {"type": "string"}, "sha256": {"$ref": "#/$defs/sha"}, "machine": {"const": "x86_64"},
+        "team_identifier": {"type": "string", "minLength": 1}, "certificate_sha1": {"type": "string", "pattern": "^[0-9A-F]{40}$"},
+        "entitlements": {"const": {}}, "hardened_runtime": {"const": true}, "dependencies": {"type": "array", "items": {"type": "string"}}}},
+    "case": {"type": "object", "additionalProperties": false,
+      "required": ["id", "argv", "expected_exit", "required_markers", "forbidden_markers", "timeout_seconds"],
+      "properties": {"id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"}, "argv": {"type": "array", "minItems": 2, "items": {"type": "string"}},
+        "expected_exit": {"enum": [0, "nonzero"]}, "required_markers": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "forbidden_markers": {"type": "array", "items": {"type": "string"}}, "timeout_seconds": {"const": 600}}}
+  }
+}

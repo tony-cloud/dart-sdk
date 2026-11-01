@@ -27,6 +27,10 @@ import subprocess
 import sys
 import tempfile
 from xml.parsers.expat import ExpatError
+from native_ffi_test_support import (
+    add_prepared_options, handle_prepared_options, prepared_compile_flags,
+    preparation_host, capture_original_inputs, defer_product, write_prepared_manifest)
+
 
 from test_aot_full_replacement import digest_artifact, host_abi
 
@@ -193,7 +197,10 @@ def main():
                         'private harness copy/fixtures with runtime and EMPTY entitlements')
     parser.add_argument('--check-fixtures', action='store_true',
                         help='Only check source consistency; requires no SDK build')
+    add_prepared_options(parser)
     args = parser.parse_args()
+    if handle_prepared_options(args, parser, 'full'):
+        return
     root = Path(__file__).resolve().parents[1]
     fixtures = root / 'tools/test_aot_full_replacement_ffi'
     check_fixtures(fixtures)
@@ -201,8 +208,8 @@ def main():
         return
     if not ((platform.machine().lower() in ('arm64', 'aarch64') and sys.platform in ('darwin', 'linux'))
             or (platform.machine().lower() in ('x86_64', 'amd64') and sys.platform == 'darwin')):
-        parser.error('Execution requires native ARM64 macOS/Linux or macOS x64, never simulator/x64')
-    if sys.platform == 'darwin' and platform.machine().lower() in ('x86_64', 'amd64'):
+        parser.error('Execution requires native ARM64 macOS/Linux or macOS x64')
+    if not args.prepare_only and sys.platform == 'darwin' and platform.machine().lower() in ('x86_64', 'amd64'):
         from native_ffi_test_support import require_native_macos_x64
         require_native_macos_x64()
         if not args.macos_signing_identity:
@@ -228,6 +235,8 @@ def main():
             parser.error(f'Missing artifact: {artifact}; wire/build harness separately')
 
     def run(*command, log=None, markers=(), reject=None):
+        if defer_product(args, command, harness, deferred):
+            return ''
         print('+', *command, flush=True)
         try:
             result = subprocess.run([str(value) for value in command], cwd=root,
@@ -252,6 +261,9 @@ def main():
                 raise AssertionError(f'Missing acceptance marker: {marker}')
         return result.stdout
 
+    original_artifacts = (dart, platform_file, gen_snapshot, harness)
+    prepared_host = preparation_host(original_artifacts) if args.prepare_only else None
+    deferred = []
     if args.work_dir:
         args.work_dir.mkdir(parents=True, exist_ok=True)
     workspace = (contextlib.nullcontext(str(args.work_dir.resolve()))
@@ -291,6 +303,8 @@ def main():
                     json.dumps(strict_signatures, indent=2) + '\n')
 
             sign_strict(harness)
+        if args.prepare_only:
+            prepared_originals = capture_original_inputs(work, original_artifacts)
         plugin = work / 'full_ffi_plugin/lib'
         plugin.mkdir(parents=True, exist_ok=True)
         for source in (fixtures / 'base').glob('*.dart'):
@@ -306,7 +320,7 @@ def main():
                          else 'libreleased_full_ffi.so')
         # All exports/callback consumers exist before B/N, including update-only
         # bindings. Never rebuild/replace this native binary after compiling N.
-        run(compiler, '-shared', '-fPIC', '-O0', '-fno-omit-frame-pointer',
+        run(compiler, *prepared_compile_flags(args), '-shared', '-fPIC', '-O0', '-fno-omit-frame-pointer',
             '-I', root / 'runtime/include', fixtures / 'released_fixture.c',
             '-pthread', '-o', native, *(['-ldl'] if sys.platform == 'linux' else []))
         if sys.platform == 'darwin':
@@ -326,11 +340,12 @@ def main():
         released_hash = digest_artifact(native)
         assets = work / 'released-native-assets.json'
         assets.write_text(json.dumps({'format-version': [1, 0, 0], 'native-assets': {
-            ('macos_x64' if platform.machine().lower() in ('x86_64', 'amd64') else 'macos_arm64') if sys.platform == 'darwin' else 'linux_arm64': {
+            ('macos_x64' if args.prepare_only or platform.machine().lower() in ('x86_64', 'amd64') else 'macos_arm64') if sys.platform == 'darwin' else 'linux_arm64': {
                 'full-release-asset': ['absolute', str(native)],
             },
         }}))
-        abi = host_abi(harness, gen_snapshot, platform_file, True)
+        abi = host_abi(harness, gen_snapshot, platform_file, True,
+                       target_machine='x86_64' if args.prepare_only else None)
         profile = ['--shorebird-full-replacement', f'--shorebird-host-abi={abi}']
         common = [f'--packages={packages}', '-Ddart.vm.product=true',
                   f'--platform={platform_file}', *profile]
@@ -415,7 +430,7 @@ def main():
                 f'--packages={args.envelope_packages.resolve()}',
                 args.envelope_producer.resolve(), base, payload, envelopes,
                 *(['--target-os=macos', '--target-arch=x64']
-                  if sys.platform == 'darwin' and platform.machine().lower() in ('x86_64', 'amd64') else []))
+                  if args.prepare_only or (sys.platform == 'darwin' and platform.machine().lower() in ('x86_64', 'amd64')) else []))
             for name in ('valid.json', 'tampered.json', 'expired.json'):
                 if not (envelopes / name).is_file():
                     raise AssertionError(f'Envelope producer omitted {name}')
@@ -430,6 +445,11 @@ def main():
                     log=work / f'{label}-{payload_name}.log')
                 if digest_artifact(native) != released_hash:
                     raise AssertionError('Released native plugin binary changed')
+        if args.prepare_only:
+            guards.close()
+            write_prepared_manifest('full', work, prepared_originals, prepared_host,
+                                    deferred, args.macos_deployment_target)
+            return
         acceptance = {
             'profile': 'PRODUCT full replacement', 'host_abi': abi,
             'released_native_sha256': released_hash,

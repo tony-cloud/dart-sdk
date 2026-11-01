@@ -772,9 +772,9 @@ def digest_artifact(path):
     return digest.hexdigest()
 
 
-def host_abi(runtime, snapshot_compiler, platform, product):
+def host_abi(runtime, snapshot_compiler, platform, product, target_machine=None):
     # A reproducible, length-prefixed descriptor avoids concatenation ambiguity.
-    values = ['shorebird-host-abi-v1', sys.platform, host_platform.machine(),
+    values = ['shorebird-host-abi-v1', sys.platform, target_machine or host_platform.machine(),
               'PRODUCT' if product else 'non-PRODUCT', 'full-replacement-v1',
               digest_artifact(runtime), digest_artifact(snapshot_compiler),
               digest_artifact(platform)]
