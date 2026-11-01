@@ -6,6 +6,9 @@
 
 #if defined(DART_HOST_OS_ANDROID) || defined(DART_HOST_OS_LINUX)
 #include <sys/prctl.h>
+#if defined(HOST_ARCH_ARM64)
+#include <sys/auxv.h>
+#endif
 #elif defined(DART_HOST_OS_MACOS)
 #if __has_include(<os/security_config.h>)
 #include <os/security_config.h>
@@ -21,6 +24,7 @@
 #include "vm/heap/heap.h"
 #include "vm/os.h"
 #include "vm/virtual_memory.h"
+#include "vm/zone_memory_tagging.h"
 
 namespace dart {
 
@@ -71,37 +75,11 @@ void Zone::Init() {
 #if defined(HOST_ARCH_ARM64) &&                                                \
     (defined(DART_HOST_OS_ANDROID) || defined(DART_HOST_OS_LINUX))
 
-#if !defined(PR_SET_TAGGED_ADDR_CTRL)
-#define PR_SET_TAGGED_ADDR_CTRL 55
-#endif
-#if !defined(PR_GET_TAGGED_ADDR_CTRL)
-#define PR_GET_TAGGED_ADDR_CTRL 56
-#endif
-#if !defined(PR_TAGGED_ADDR_ENABLE)
-#define PR_TAGGED_ADDR_ENABLE (1UL << 0)
-#endif
-#if !defined(PR_MTE_TCF_SYNC)
-#define PR_MTE_TCF_SYNC (1UL << 1)
-#endif
-#if !defined(PR_MTE_TCF_ASYNC)
-#define PR_MTE_TCF_ASYNC (1UL << 2)
-#endif
-#if !defined(PR_MTE_TAG_SHIFT)
-#define PR_MTE_TAG_SHIFT 3
-#endif
-
-  // Enable memory tagging, with either sync or async failures, with random tag
-  // generation creating any value except 0.
-  prctl(PR_SET_TAGGED_ADDR_CTRL,
-        PR_TAGGED_ADDR_ENABLE | PR_MTE_TCF_SYNC | PR_MTE_TCF_ASYNC |
-            (0xfffe << PR_MTE_TAG_SHIFT),
-        0L, 0L, 0L);
-  int result = prctl(PR_GET_TAGGED_ADDR_CTRL, 0L, 0L, 0L, 0L);
-  if (result == -1) {
-    memory_tagging_enabled_ = false;
-  } else {
-    memory_tagging_enabled_ = (result & PR_TAGGED_ADDR_ENABLE) != 0;
-  }
+  memory_tagging_enabled_ = internal::TryEnableArm64MemoryTagging(
+      []() { return getauxval(AT_HWCAP2); },
+      [](int option, unsigned long flags) {
+        return prctl(option, flags, 0L, 0L, 0L);
+      });
 #endif
 
 #if defined(HOST_ARCH_ARM64) && defined(DART_HOST_OS_MACOS)

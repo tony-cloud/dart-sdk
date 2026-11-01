@@ -379,6 +379,7 @@ vm_sources = [
   "visitor.h",
   "zone.cc",
   "zone.h",
+  "zone_memory_tagging.h",
   "zone_text_buffer.cc",
   "zone_text_buffer.h",
 ]
