@@ -171,16 +171,39 @@ void main() { print(selected); print(enabled); }
         );
       });
     }
-    for (final os in [null, 'android', 'macos']) {
-      test('rejects full Flutter without explicit iOS ($os)', () async {
-        expect(
-          await compile([
-            '--shorebird-full-replacement',
-            if (os != null) '--target-os=$os',
+    for (final full in [false, true]) {
+      test('macOS keeps desktop target semantics with full=$full', () async {
+        final previous = targets['flutter']!;
+        targets['flutter'] = (flags) => throw _TargetCreated(flags);
+        addTearDown(() => targets['flutter'] = previous);
+        await expectLater(
+          compile([
+            '--target-os=macos',
+            if (full) '--shorebird-full-replacement',
           ]),
-          badUsageExitCode,
+          throwsA(
+            isA<_TargetCreated>().having(
+              (created) => created.flags.shorebirdIosFullReplacement,
+              'iOS-only conditional-import marker',
+              isFalse,
+            ),
+          ),
         );
       });
+    }
+    for (final os in [null, 'android', 'linux', 'windows']) {
+      test(
+        'rejects full Flutter without supported explicit Apple OS ($os)',
+        () async {
+          expect(
+            await compile([
+              '--shorebird-full-replacement',
+              if (os != null) '--target-os=$os',
+            ]),
+            badUsageExitCode,
+          );
+        },
+      );
     }
   });
 }

@@ -25,12 +25,16 @@ String _platformOption(Uri sdkRoot) =>
 Library carrier(Map<String, Object> targets) =>
     NativeAssetsSynthesizer.synthesizeLibrary({'native-assets': targets});
 
-Map<String, Object> describe(Component component, {Library? extra}) =>
-    shorebirdNativeAssetsDescriptor(
-      component,
-      nativeAssetsLibrary: extra,
-      target: 'ios_arm64',
-    );
+Map<String, Object> describe(
+  Component component, {
+  Library? extra,
+  String targetOS = 'ios',
+}) => shorebirdNativeAssetsDescriptor(
+  component,
+  nativeAssetsLibrary: extra,
+  target: '${targetOS}_arm64',
+  targetOS: targetOS,
+);
 
 void replaceMapping(Library library, Constant constant) {
   final annotation = library.annotations.last as ConstantExpression;
@@ -96,18 +100,47 @@ void main() {
 
   group('compiled native-assets descriptor', () {
     test('absent differs from present empty and missing target', () {
-      expect(describe(Component()), {
-        'schema': 1,
-        'target': 'ios_arm64',
-        'carrier_present': false,
-      });
-      final empty = describe(Component(), extra: carrier({'ios_arm64': {}}));
-      expect(empty['carrier_present'], true);
-      expect(
-        empty['mapping_sha256'],
-        '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
-      );
-      expect(describe(Component(), extra: carrier({})), empty);
+      for (final targetOS in ['ios', 'macos']) {
+        final target = '${targetOS}_arm64';
+        expect(describe(Component(), targetOS: targetOS), {
+          'schema': 1,
+          'target': target,
+          'carrier_present': false,
+        });
+        final empty = describe(
+          Component(),
+          extra: carrier({target: {}}),
+          targetOS: targetOS,
+        );
+        expect(empty['carrier_present'], true);
+        expect(
+          empty['mapping_sha256'],
+          '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+        );
+        expect(
+          describe(Component(), extra: carrier({}), targetOS: targetOS),
+          empty,
+        );
+      }
+    });
+
+    test('descriptor target requires a matching supported compiler OS', () {
+      for (final (targetOS, target) in [
+        (null, 'ios_arm64'),
+        ('linux', 'ios_arm64'),
+        ('ios', 'macos_arm64'),
+        ('macos', 'ios_arm64'),
+        ('macos', 'macos_x64'),
+      ]) {
+        expect(
+          () => shorebirdNativeAssetsDescriptor(
+            Component(),
+            target: target,
+            targetOS: targetOS,
+          ),
+          throwsFormatException,
+        );
+      }
     });
 
     test('sorts IDs; preserves exact paths and ignores other target maps', () {
@@ -278,6 +311,8 @@ void main() {
       FrontendCompiler? compiler,
       bool full = true,
       bool sidecar = true,
+      String? targetOS = 'ios',
+      String nativeAssetsTarget = 'ios_arm64',
       List<String> flags = const [],
     }) => (compiler ?? FrontendCompiler(protocol)).compile(
       source.path,
@@ -286,7 +321,7 @@ void main() {
         _platformOption(sdkRoot),
         '--aot',
         '--no-tfa',
-        '--target-os=ios',
+        if (targetOS != null) '--target-os=$targetOS',
         if (full) ...[
           '--shorebird-full-replacement',
           '--shorebird-host-abi=$hostAbi',
@@ -294,7 +329,7 @@ void main() {
         ],
         if (sidecar) ...[
           '--shorebird-native-assets-descriptor=${descriptor.path}',
-          '--shorebird-native-assets-target=ios_arm64',
+          '--shorebird-native-assets-target=$nativeAssetsTarget',
         ],
         '--output-dill=${output.path}',
         '--depfile=${depfile.path}',
@@ -305,6 +340,95 @@ void main() {
 
     Map<String, Object?> readDescriptor() =>
         jsonDecode(descriptor.readAsStringSync()) as Map<String, Object?>;
+
+    for (final targetOS in ['ios', 'macos']) {
+      final target = '${targetOS}_arm64';
+      test('$target describes the same effective map from source and dill', () async {
+        yaml.writeAsStringSync('''
+format-version: [1,0,0]
+native-assets:
+  ios_arm64:
+    z: [relative, 'a/../lib.dylib']
+    a: [process]
+  macos_arm64:
+    a: [executable]
+    z: [relative, 'a/../lib.dylib']
+''');
+        expect(
+          await compile(
+            input: yaml,
+            targetOS: targetOS,
+            nativeAssetsTarget: target,
+          ),
+          true,
+        );
+        final fromSource = readDescriptor();
+        expect(fromSource, {
+          'schema': 1,
+          'target': target,
+          'carrier_present': true,
+          'mapping_sha256': targetOS == 'ios'
+              ? '7c51a0ca7652edc17bef189038ed4a5e71facff0013efd1af43d4da26f84dbc3'
+              : '6b62b2594b15e060459eca6b9e13a43af7c26924015a9933873a15734083a916',
+        });
+        expect(
+          fromSource,
+          describe(loadComponentFromBinary(output.path), targetOS: targetOS),
+        );
+        final inputDill = File('${directory.path}/input.dill')
+          ..writeAsBytesSync(output.readAsBytesSync());
+        // The from-dill route must use its serialized carrier, not YAML input.
+        yaml.writeAsStringSync('not: valid native-assets YAML');
+        descriptor.writeAsStringSync('stale');
+        expect(
+          await compile(
+            targetOS: targetOS,
+            nativeAssetsTarget: target,
+            flags: ['--from-dill=${inputDill.path}'],
+          ),
+          true,
+        );
+        expect(readDescriptor(), fromSource);
+        expect(
+          readDescriptor(),
+          describe(loadComponentFromBinary(output.path), targetOS: targetOS),
+        );
+      });
+    }
+
+    test(
+      'cross-target, missing and unsupported OS delete stale descriptors',
+      () async {
+        expect(await compile(sidecar: false), true);
+        final inputDill = File('${directory.path}/input.dill')
+          ..writeAsBytesSync(output.readAsBytesSync());
+        for (final (targetOS, target) in [
+          (null, 'ios_arm64'),
+          (null, 'macos_arm64'),
+          ('linux', 'ios_arm64'),
+          ('windows', 'macos_arm64'),
+          ('ios', 'macos_arm64'),
+          ('macos', 'ios_arm64'),
+          ('macos', 'macos_x64'),
+        ]) {
+          for (final flags in [
+            <String>[],
+            ['--from-dill=${inputDill.path}'],
+          ]) {
+            descriptor.writeAsStringSync('stale');
+            expect(
+              await compile(
+                targetOS: targetOS,
+                nativeAssetsTarget: target,
+                flags: flags,
+              ),
+              false,
+            );
+            expect(descriptor.existsSync(), false);
+          }
+        }
+      },
+    );
 
     test('absent and empty describe the actual serialized carriers', () async {
       expect(await compile(), true);

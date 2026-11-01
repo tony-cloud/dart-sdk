@@ -384,8 +384,11 @@ Future<int> runCompiler(ArgResults options, String usage) async {
 
   if (options['shorebird-full-replacement'] &&
       targetName == 'flutter' &&
-      targetOS != 'ios') {
-    print('Flutter full replacement requires --target-os=ios.');
+      targetOS != 'ios' &&
+      targetOS != 'macos') {
+    print(
+      'Flutter full replacement requires --target-os=ios or --target-os=macos.',
+    );
     return badUsageExitCode;
   }
 

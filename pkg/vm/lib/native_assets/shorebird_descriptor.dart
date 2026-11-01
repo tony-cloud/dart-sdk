@@ -9,6 +9,14 @@ import 'package:kernel/ast.dart';
 
 import 'metadata.dart';
 
+/// Supported descriptor targets for an explicit compiler target OS.
+String? shorebirdNativeAssetsTargetForOS(String? targetOS) =>
+    switch (targetOS) {
+      'ios' => 'ios_arm64',
+      'macos' => 'macos_arm64',
+      _ => null,
+    };
+
 /// Describes the effective native-assets map carried by the compiled Kernel.
 ///
 /// This deliberately consumes constants after native-assets validation/pruning,
@@ -19,9 +27,12 @@ Map<String, Object> shorebirdNativeAssetsDescriptor(
   Component component, {
   Library? nativeAssetsLibrary,
   required String target,
+  required String? targetOS,
 }) {
-  if (target != 'ios_arm64') {
-    throw const FormatException('Unsupported Shorebird native-assets target.');
+  if (shorebirdNativeAssetsTargetForOS(targetOS) != target) {
+    throw const FormatException(
+      'Unsupported or mismatched Shorebird native-assets target OS.',
+    );
   }
   final carriers = [
     for (final library in component.libraries)

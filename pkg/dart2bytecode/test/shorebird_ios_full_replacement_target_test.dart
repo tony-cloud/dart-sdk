@@ -55,7 +55,28 @@ void main() {
       );
     });
   }
-  for (final os in [null, 'android', 'macos']) {
+  for (final full in [false, true]) {
+    test('macOS keeps desktop target semantics with full=$full', () async {
+      final previous = targets['flutter']!;
+      targets['flutter'] = (flags) => throw _TargetCreated(flags);
+      addTearDown(() => targets['flutter'] = previous);
+      await expectLater(
+        compile([
+          '--target-os=macos',
+          if (full) '--shorebird-full-replacement',
+          if (full) '--shorebird-host-abi=${'0' * 64}',
+        ]),
+        throwsA(
+          isA<_TargetCreated>().having(
+            (created) => created.flags.shorebirdIosFullReplacement,
+            'iOS-only conditional-import marker',
+            isFalse,
+          ),
+        ),
+      );
+    });
+  }
+  for (final os in [null, 'android', 'linux', 'windows']) {
     test('dart2bytecode rejects full Flutter target OS $os', () async {
       expect(
         await compile([

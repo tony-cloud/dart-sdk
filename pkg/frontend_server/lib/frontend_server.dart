@@ -811,8 +811,9 @@ class FrontendCompiler implements CompilerInterface {
 
     if (options['shorebird-full-replacement'] &&
         options['target'] == 'flutter' &&
-        options['target-os'] != 'ios') {
-      print('Flutter full replacement requires --target-os=ios.');
+        options['target-os'] != 'ios' &&
+        options['target-os'] != 'macos') {
+      print('Flutter full replacement requires --target-os=ios or macos.');
       return false;
     }
 
@@ -953,6 +954,7 @@ class FrontendCompiler implements CompilerInterface {
             results.component!,
             nativeAssetsLibrary: results.nativeAssetsLibrary,
             target: options['shorebird-native-assets-target'],
+            targetOS: options['target-os'],
           ),
         );
       }
@@ -1037,13 +1039,15 @@ class FrontendCompiler implements CompilerInterface {
     if (descriptor == null && target == null) return true;
     if (descriptor == null ||
         descriptor.isEmpty ||
-        target != 'ios_arm64' ||
+        target == null ||
+        target != shorebirdNativeAssetsTargetForOS(options['target-os']) ||
         !options['shorebird-full-replacement'] ||
         options['native-assets-only']) {
       print(
         'Error: --shorebird-native-assets-descriptor and '
-        '--shorebird-native-assets-target=ios_arm64 must be paired and require '
-        'full replacement compilation.',
+        '--shorebird-native-assets-target must be paired, match an explicit '
+        '--target-os (ios: ios_arm64, macos: macos_arm64), and require full '
+        'replacement compilation.',
       );
       return false;
     }

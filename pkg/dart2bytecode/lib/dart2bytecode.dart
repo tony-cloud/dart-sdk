@@ -328,8 +328,11 @@ Future<int> runCompilerWithOptions({
   }
   if (shorebirdFullReplacement &&
       targetName == 'flutter' &&
-      targetOS != 'ios') {
-    printMessage('Flutter full replacement requires --target-os=ios.');
+      targetOS != 'ios' &&
+      targetOS != 'macos') {
+    printMessage(
+      'Flutter full replacement requires --target-os=ios or --target-os=macos.',
+    );
     return badUsageExitCode;
   }
   if (shorebirdFullReplacement || shorebirdHostAbi != null) {
