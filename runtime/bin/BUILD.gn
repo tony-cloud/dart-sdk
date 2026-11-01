@@ -1289,6 +1289,7 @@ source_set("run_vm_tests_set") {
   deps = [
     "//third_party/boringssl",  # for secure_socket_utils_test
     "//third_party/perfetto:libprotozero",  # for timeline_test
+    "//third_party/zlib",
   ]
 
   if (is_fuchsia) {
