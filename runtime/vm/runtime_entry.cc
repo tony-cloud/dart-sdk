@@ -1309,7 +1309,11 @@ static_assert(offsetof(FfiCallArguments, fpu_registers) == 144);
 static_assert(offsetof(FfiCallArguments, target) == 272);
 #endif
 
-#if defined(HOST_ARCH_ARM64)
+// BUILD.gn excludes ffi_trampolines_arm64.S on Windows. Keep unsupported
+// Windows ARM64 interpreter calls in the local fail-closed path below rather
+// than introducing an external symbol with no linked implementation. Match
+// the host-OS assembly selection also for cross-target gen_snapshot builds.
+#if defined(HOST_ARCH_ARM64) && !defined(DART_HOST_OS_WINDOWS)
 extern "C" void FfiCallTrampoline(FfiCallArguments* args);
 #else
 extern "C" typedef void (*ffiCallTrampoline)(FfiCallArguments* args);
