@@ -29,10 +29,11 @@ Map<String, Object> describe(
   Component component, {
   Library? extra,
   String targetOS = 'ios',
+  String? target,
 }) => shorebirdNativeAssetsDescriptor(
   component,
   nativeAssetsLibrary: extra,
-  target: '${targetOS}_arm64',
+  target: target ?? '${targetOS}_arm64',
   targetOS: targetOS,
 );
 
@@ -130,7 +131,9 @@ void main() {
         ('linux', 'ios_arm64'),
         ('ios', 'macos_arm64'),
         ('macos', 'ios_arm64'),
-        ('macos', 'macos_x64'),
+        ('ios', 'macos_x64'),
+        ('linux', 'macos_x64'),
+        ('macos', 'linux_x64'),
       ]) {
         expect(
           () => shorebirdNativeAssetsDescriptor(
@@ -341,8 +344,11 @@ void main() {
     Map<String, Object?> readDescriptor() =>
         jsonDecode(descriptor.readAsStringSync()) as Map<String, Object?>;
 
-    for (final targetOS in ['ios', 'macos']) {
-      final target = '${targetOS}_arm64';
+    for (final (targetOS, target) in [
+      ('ios', 'ios_arm64'),
+      ('macos', 'macos_arm64'),
+      ('macos', 'macos_x64'),
+    ]) {
       test('$target describes the same effective map from source and dill', () async {
         yaml.writeAsStringSync('''
 format-version: [1,0,0]
@@ -351,6 +357,9 @@ native-assets:
     z: [relative, 'a/../lib.dylib']
     a: [process]
   macos_arm64:
+    a: [executable]
+    z: [relative, 'a/../lib.dylib']
+  macos_x64:
     a: [executable]
     z: [relative, 'a/../lib.dylib']
 ''');
@@ -373,7 +382,11 @@ native-assets:
         });
         expect(
           fromSource,
-          describe(loadComponentFromBinary(output.path), targetOS: targetOS),
+          describe(
+            loadComponentFromBinary(output.path),
+            targetOS: targetOS,
+            target: target,
+          ),
         );
         final inputDill = File('${directory.path}/input.dill')
           ..writeAsBytesSync(output.readAsBytesSync());
@@ -391,7 +404,11 @@ native-assets:
         expect(readDescriptor(), fromSource);
         expect(
           readDescriptor(),
-          describe(loadComponentFromBinary(output.path), targetOS: targetOS),
+          describe(
+            loadComponentFromBinary(output.path),
+            targetOS: targetOS,
+            target: target,
+          ),
         );
       });
     }
@@ -409,7 +426,9 @@ native-assets:
           ('windows', 'macos_arm64'),
           ('ios', 'macos_arm64'),
           ('macos', 'ios_arm64'),
-          ('macos', 'macos_x64'),
+          ('ios', 'macos_x64'),
+          ('linux', 'macos_x64'),
+          ('macos', 'linux_x64'),
         ]) {
           for (final flags in [
             <String>[],

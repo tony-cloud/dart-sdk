@@ -243,3 +243,29 @@ and one positive and passed the driver contract parser. Synthetic wrong-version,
 generic-diagnostic, nonboolean-poison, relative-path and duplicate-name contracts
 were each rejected. No gen_kernel, gen_snapshot, native target or SDK build was
 run during these checks; no native N or runtime acceptance was established.
+
+
+### Bounded native macOS x64 interpreter FFI
+
+The x64 runtime uses the existing snapshot `FfiCallTrampoline` for call-outs
+and a release-linked callback capture entry for SysV CPU/SSE arguments. ABI
+classification remains in `NativeCallingConvention`. The callback fixtures
+cover mixed INTEGER/SSE results, register spills, guarded 4/12-byte float
+results, packed aggregates, exact sret writes and RAX pointer identity, zero
+fallbacks, and callback pools spanning multiple precompiled RX alias pages.
+
+Native Intel execution is required for x64 acceptance. Cross compilation and
+Rosetta are not runtime evidence. The PRODUCT call-out, callback and full
+replacement runners require `--macos-signing-identity` on x64. They sign private
+host copies, fixtures and snapshots with the same Developer ID certificate,
+hardened runtime and explicit empty entitlements. No executable-memory or
+library-validation exception is permitted. The full runner asks its envelope
+producer for `--target-os=macos --target-arch=x64`; the producer must support
+those explicit options. The historical ARM64 envelope target remains unchanged.
+
+Ad-hoc signing is insufficient for this dynamic-library acceptance path:
+library validation requires Apple-signed code or the host's Team ID. A native
+Intel CI worker must have access to an Apple-issued signing identity. A hosted
+worker without that prerequisite may compile and perform static checks, but
+strict signed-host runtime acceptance remains pending. No signing key needs to
+be exported from another machine; a provisioned signing worker can run the gate.

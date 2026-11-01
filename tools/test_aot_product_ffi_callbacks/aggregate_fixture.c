@@ -84,6 +84,8 @@ Dart_Handle HandleCallbackKill(Dart_Handle (*cb)(int64_t, int64_t)) {
 }
 
 typedef struct { int64_t a, b; } Pair;
+typedef struct { float a; } Float1;
+typedef struct { int64_t a; double b; } Mixed;
 typedef struct { float a, b, c; } HfaF;
 typedef struct { double a, b, c, d; } HfaD;
 typedef struct { int64_t a, b, c; } Large;
@@ -186,7 +188,13 @@ int64_t MarkAggregateInputRead(int64_t sum) {
   Require(sum==66 || sum==310,"aliased callback did not read original native input");
   ++input_read_checks; return 1;
 }
-extern void CallbackIndirectAt(void* callback,const void* argument,void* result);
+extern void* CallbackIndirectAt(void* callback,const void* argument,void* result,size_t size);
+static void IndirectAt(void* callback,const void* argument,void* result,size_t size) {
+  void* returned=CallbackIndirectAt(callback,argument,result,size);
+#if defined(__x86_64__)
+  Require(returned==result,"SysV sret RAX lost destination pointer identity");
+#endif
+}
 static void* Guarded(size_t size, void** mapping) {
   const size_t page=(size_t)sysconf(_SC_PAGESIZE);
   Require(size+32<=page,"guard fixture payload too large");
@@ -202,7 +210,7 @@ int64_t CheckGuardedIndirect(void* cb,int64_t size,int64_t zero,int64_t alias) {
   unsigned char expected[24];memcpy(expected,input,size);
   void* out_mapping=NULL; unsigned char* output=alias?input:Guarded(size,&out_mapping);
   const intptr_t reads_before=input_read_checks;
-  ++aggregate_calls; CallbackIndirectAt(cb,input,output);
+  ++aggregate_calls; IndirectAt(cb,input,output,size);
   Require(input_read_checks==reads_before+1,"guard callback did not confirm original input before fallback");
   for(intptr_t i=0;i<size;++i) Require(output[i]==(zero?0:expected[i]),"exact-size indirect result mismatch");
   for(intptr_t i=1;i<=32;++i) Require(output[-i]==0xA7,"indirect result overwrote leading sentinel");
@@ -218,7 +226,7 @@ int64_t CheckOverlap(void* cb) {
   // Returned wrapper uses native backing +8; output starts +16 and overlaps
   // that source. memmove must read the original 24 bytes before overwriting.
   const Large argument={11,22,33}; ++aggregate_calls;
-  CallbackIndirectAt(cb,&argument,overlap_storage+16);
+  IndirectAt(cb,&argument,overlap_storage+16,sizeof(argument));
   Require(memcmp(overlap_storage+16,&original,24)==0,"overlapping native return copy corrupted payload");
   Require(overlap_storage[15]==((unsigned char*)&original)[7] && overlap_storage[40]==0xA7,
           "overlap result wrote beyond its exact payload");return 1;
@@ -320,4 +328,18 @@ int64_t CheckGuardedReturnHfaD(HfaD (*cb)(void)) {
   const HfaD result=cb();
   Require(memcmp(&result,&expected,sizeof(expected))==0,"guarded HfaD return overread/wrong payload");
   guarded_return_address=0;munmap(mapping,(size_t)sysconf(_SC_PAGESIZE)*3);return 1;
+}
+
+// Four-byte SSE result from a guard page detects rounded eightbyte overreads.
+int64_t CheckGuardedReturnFloat1(Float1 (*cb)(void)) {
+  void* mapping;unsigned char* source=Guarded(sizeof(Float1),&mapping);
+  const Float1 expected={1.25f};memcpy(source,&expected,sizeof(expected));
+  guarded_return_address=(intptr_t)source;++aggregate_calls;
+  const Float1 result=cb();
+  Require(memcmp(&result,&expected,sizeof(expected))==0,"guarded Float1 result mismatch");
+  guarded_return_address=0;munmap(mapping,(size_t)sysconf(_SC_PAGESIZE)*3);return 1;
+}
+int64_t CheckMixedAggregate(Mixed (*cb)(Mixed),int64_t zero) {
+  const Mixed input={11,2.5};++aggregate_calls;const Mixed result=cb(input);
+  Require(result.a==(zero?0:111) && result.b==(zero?0:4.5),"mixed INTEGER/SSE result/fallback mismatch");return 1;
 }

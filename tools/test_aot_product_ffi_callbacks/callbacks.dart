@@ -207,7 +207,7 @@ typedef V0 = Void Function(Int64);
 typedef Abi16 = CallbackAbiInt Function(CallbackAbiInt);
 typedef EmptyVar = Int64 Function(Int64, VarArgs<()>);
 typedef NarrowStack = Int64 Function(Int64,Int64,Int64,Int64,Int64,Int64,Int64,Int64,Int8,Uint8,Int16,Uint16,Int32,Uint32);
-@AbiSpecificIntegerMapping({Abi.macosArm64: Int16(), Abi.linuxArm64: Int16()})
+@AbiSpecificIntegerMapping({Abi.macosArm64: Int16(), Abi.linuxArm64: Int16(), Abi.macosX64: Int16()})
 final class CallbackAbiInt extends AbiSpecificInteger { const CallbackAbiInt(); }
 @AbiSpecificIntegerMapping({Abi.fuchsiaArm64: Int8()})
 final class CallbackMissingInt extends AbiSpecificInteger { const CallbackMissingInt(); }

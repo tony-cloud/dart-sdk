@@ -1233,8 +1233,10 @@ executable("abstract_socket_test") {
   include_dirs = [ ".." ]
 }
 
-if (dart_enable_shorebird_interpreter && (is_mac || is_linux) &&
-    current_cpu == "arm64" && dart_target_arch == "arm64") {
+if (dart_enable_shorebird_interpreter &&
+    (((is_mac || is_linux) && current_cpu == "arm64" &&
+      dart_target_arch == "arm64") ||
+     (is_mac && current_cpu == "x64" && dart_target_arch == "x64"))) {
   foreach(test_name,
           [
             "product_ffi_test",

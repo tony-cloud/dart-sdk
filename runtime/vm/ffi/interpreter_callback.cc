@@ -25,9 +25,11 @@
 #include "vm/zone.h"
 
 #if defined(DART_PRECOMPILED_RUNTIME) && defined(DART_BYTECODE_INTERPRETER) && \
-    defined(DART_SHOREBIRD_INTERPRETER) && defined(HOST_ARCH_ARM64) &&         \
-    defined(TARGET_ARCH_ARM64) && !defined(DART_HOST_OS_WINDOWS) &&            \
-    !defined(DART_TARGET_OS_WINDOWS)
+    defined(DART_SHOREBIRD_INTERPRETER) &&                                     \
+    ((defined(HOST_ARCH_ARM64) && defined(TARGET_ARCH_ARM64) &&                \
+      !defined(DART_HOST_OS_WINDOWS) && !defined(DART_TARGET_OS_WINDOWS)) ||   \
+     (defined(HOST_ARCH_X64) && defined(TARGET_ARCH_X64) &&                    \
+      defined(DART_HOST_OS_MACOS) && defined(DART_TARGET_OS_MACOS)))
 #define INTERPRETER_FFI_CALLBACK 1
 #endif
 
@@ -52,6 +54,19 @@ static_assert(offsetof(InterpreterFfiCallbackFrame, result) +
                   offsetof(InterpreterFfiCallbackNativeResult, fpu) ==
               160);
 static_assert(sizeof(InterpreterFfiCallbackFrame) == 192);
+static_assert(alignof(InterpreterFfiCallbackFrame) == 16);
+static_assert(FfiCallbackMetadata::kNativeCallbackTrampolineStackDelta == 6);
+#elif defined(HOST_ARCH_X64) && defined(TARGET_ARCH_X64)
+// Coupled to ffi_trampolines_x64.S and the shared callback stub: six words,
+// two epilogue cookies and the CALL return PC precede native stack arguments.
+static_assert(offsetof(InterpreterFfiCallbackFrame, cpu) == 0);
+static_assert(offsetof(InterpreterFfiCallbackFrame, fpu) == 128);
+static_assert(offsetof(InterpreterFfiCallbackFrame, stack_args) == 192);
+static_assert(offsetof(InterpreterFfiCallbackFrame, result) == 200);
+static_assert(offsetof(InterpreterFfiCallbackFrame, result) +
+                  offsetof(InterpreterFfiCallbackNativeResult, fpu) ==
+              216);
+static_assert(sizeof(InterpreterFfiCallbackFrame) == 256);
 static_assert(alignof(InterpreterFfiCallbackFrame) == 16);
 static_assert(FfiCallbackMetadata::kNativeCallbackTrampolineStackDelta == 6);
 #endif
@@ -118,6 +133,41 @@ bool IsPointer(Zone* zone, const InterpreterFfiCallPlan& plan, intptr_t index) {
          kPointerCid;
 }
 
+// The input frame uses architectural indices; the compact output bank does
+// not. In particular x64 RDX == 2 must map to result.cpu[1].
+intptr_t CpuResultIndex(Register reg) {
+#if defined(TARGET_ARCH_X64)
+  if (reg == RAX) return 0;
+  if (reg == RDX) return 1;
+  return -1;
+#else
+  return reg >= 0 && reg < 2 ? reg : -1;
+#endif
+}
+
+bool IsCapturedCpuRegister(Register reg) {
+#if defined(TARGET_ARCH_X64)
+  return reg == RDI || reg == RSI || reg == RDX || reg == RCX || reg == R8 ||
+         reg == R9;
+#else
+  return reg >= 0 && reg < 9;
+#endif
+}
+
+bool IsSupportedCpuLocation(const NativeLocation& location, bool is_result) {
+  const auto& regs = location.AsRegisters();
+  return regs.num_regs() == 1 &&
+         (is_result ? CpuResultIndex(regs.reg_at(0)) >= 0
+                    : IsCapturedCpuRegister(regs.reg_at(0)));
+}
+
+constexpr intptr_t kResultFpuRegisters =
+#if defined(TARGET_ARCH_X64)
+    2;
+#else
+    4;
+#endif
+
 bool IsSupportedScalarLocation(const NativeLocation& location, bool is_result) {
   const auto& type = location.payload_type();
   if (!type.IsPrimitive() || type.SizeInBytes() > kWordSize) {
@@ -136,14 +186,13 @@ bool IsSupportedScalarLocation(const NativeLocation& location, bool is_result) {
     return false;
   }
   if (location.IsRegisters()) {
-    const auto& regs = location.AsRegisters();
-    return regs.num_regs() == 1 && regs.reg_at(0) >= 0 &&
-           regs.reg_at(0) < (is_result ? 2 : 9);
+    return IsSupportedCpuLocation(location, is_result);
   }
   if (location.IsFpuRegisters()) {
     const auto& regs = location.AsFpuRegisters();
     return regs.fpu_reg_kind() == compiler::ffi::kQuadFpuReg &&
-           regs.fpu_reg() >= 0 && regs.fpu_reg() < (is_result ? 4 : 8);
+           regs.fpu_reg() >= 0 &&
+           regs.fpu_reg() < (is_result ? kResultFpuRegisters : 8);
   }
   return !is_result && location.IsStack() &&
          location.AsStack().offset_in_bytes() >= 0;
@@ -152,18 +201,20 @@ bool IsSupportedScalarLocation(const NativeLocation& location, bool is_result) {
 // Aggregate chunks are byte sequences, including 3/5/6/7-byte tails. They
 // must not go through scalar integer extension or rounded container copies.
 bool IsSupportedCompoundLocation(const NativeLocation& location,
-                                 bool is_result) {
-  const intptr_t size = location.payload_type().SizeInBytes();
+                                 bool is_result,
+                                 intptr_t remaining = kIntptrMax) {
+  const intptr_t size =
+      Utils::Minimum(location.payload_type().SizeInBytes(), remaining);
   if (size <= 0) return false;
   if (location.IsMultiple()) {
     intptr_t offset = 0;
     for (const auto* part : location.AsMultiple().locations()) {
       const intptr_t part_size = part->payload_type().SizeInBytes();
-      if (part->IsPointerToMemory() || part_size > size - offset ||
-          !IsSupportedCompoundLocation(*part, is_result)) {
+      if (offset >= size || part->IsPointerToMemory() ||
+          !IsSupportedCompoundLocation(*part, is_result, size - offset)) {
         return false;
       }
-      offset += part_size;
+      offset += Utils::Minimum(part_size, size - offset);
     }
     return offset == size;
   }
@@ -175,16 +226,20 @@ bool IsSupportedCompoundLocation(const NativeLocation& location,
       return false;
     }
     if (!is_result) return true;
-    // ARM64's indirect result is supplied in captured x8. It does not belong
-    // in the x0/x1 result bank restored by the shared callback trampoline.
+    // Use both classifier locations: SysV receives sret in RDI and returns it
+    // in RAX; ARM64 receives x8 without restoring it as an ordinary result.
     const auto& returned =
         location.AsPointerToMemory().pointer_return_location();
     return pointer.IsRegisters() &&
            pointer.AsRegisters().reg_at(0) ==
                CallingConventions::kPointerToReturnStructRegisterCall &&
-           pointer.AsRegisters().reg_at(0) == 8 && returned.IsRegisters() &&
-           returned.AsRegisters().num_regs() == 1 &&
+           returned.IsRegisters() && returned.AsRegisters().num_regs() == 1 &&
+#if defined(TARGET_ARCH_X64)
+           returned.AsRegisters().reg_at(0) == RAX;
+#else
+           pointer.AsRegisters().reg_at(0) == 8 &&
            returned.AsRegisters().reg_at(0) == 8;
+#endif
   }
   if (location.IsStack()) {
     const intptr_t offset = location.AsStack().offset_in_bytes();
@@ -194,14 +249,13 @@ bool IsSupportedCompoundLocation(const NativeLocation& location,
     return false;
   }
   if (location.IsRegisters()) {
-    const auto& regs = location.AsRegisters();
-    return regs.num_regs() == 1 && regs.reg_at(0) >= 0 &&
-           regs.reg_at(0) < (is_result ? 2 : 9);
+    return IsSupportedCpuLocation(location, is_result);
   }
   if (location.IsFpuRegisters()) {
     const auto& regs = location.AsFpuRegisters();
     return regs.fpu_reg_kind() == compiler::ffi::kQuadFpuReg &&
-           regs.fpu_reg() >= 0 && regs.fpu_reg() < (is_result ? 4 : 8);
+           regs.fpu_reg() >= 0 &&
+           regs.fpu_reg() < (is_result ? kResultFpuRegisters : 8);
   }
   return false;
 }
@@ -240,7 +294,7 @@ bool EncodeResult(Zone* zone,
     }
   }
   if (location.IsRegisters()) {
-    result->cpu[location.AsRegisters().reg_at(0)] = bits;
+    result->cpu[CpuResultIndex(location.AsRegisters().reg_at(0))] = bits;
   } else {
     ASSERT(location.IsFpuRegisters());
     result->fpu[location.AsFpuRegisters().fpu_reg()] = bits;
@@ -272,13 +326,16 @@ uint64_t ReadArgument(const InterpreterFfiCallbackFrame& frame,
 // whose ABI container is a full word.
 void CopyCompoundArgument(const InterpreterFfiCallbackFrame& frame,
                           const NativeLocation& location,
-                          uint8_t* destination) {
-  const intptr_t size = location.payload_type().SizeInBytes();
+                          uint8_t* destination,
+                          intptr_t remaining) {
+  const intptr_t size =
+      Utils::Minimum(location.payload_type().SizeInBytes(), remaining);
   if (location.IsMultiple()) {
     intptr_t offset = 0;
     for (const auto* part : location.AsMultiple().locations()) {
-      CopyCompoundArgument(frame, *part, destination + offset);
-      offset += part->payload_type().SizeInBytes();
+      CopyCompoundArgument(frame, *part, destination + offset, size - offset);
+      offset +=
+          Utils::Minimum(part->payload_type().SizeInBytes(), size - offset);
     }
     ASSERT(offset == size);
   } else if (location.IsPointerToMemory()) {
@@ -300,17 +357,21 @@ void CopyCompoundArgument(const InterpreterFfiCallbackFrame& frame,
 
 void CopyCompoundResult(const NativeLocation& location,
                         const uint8_t* source,
-                        InterpreterFfiCallbackNativeResult* result) {
-  const intptr_t size = location.payload_type().SizeInBytes();
+                        InterpreterFfiCallbackNativeResult* result,
+                        intptr_t remaining) {
+  const intptr_t size =
+      Utils::Minimum(location.payload_type().SizeInBytes(), remaining);
   if (location.IsMultiple()) {
     intptr_t offset = 0;
     for (const auto* part : location.AsMultiple().locations()) {
-      CopyCompoundResult(*part, source + offset, result);
-      offset += part->payload_type().SizeInBytes();
+      CopyCompoundResult(*part, source + offset, result, size - offset);
+      offset +=
+          Utils::Minimum(part->payload_type().SizeInBytes(), size - offset);
     }
     ASSERT(offset == size);
   } else if (location.IsRegisters()) {
-    memcpy(&result->cpu[location.AsRegisters().reg_at(0)], source, size);
+    memcpy(&result->cpu[CpuResultIndex(location.AsRegisters().reg_at(0))],
+           source, size);
   } else {
     ASSERT(location.IsFpuRegisters());
     memcpy(&result->fpu[location.AsFpuRegisters().fpu_reg()], source, size);
@@ -392,9 +453,17 @@ bool EncodeCompoundResult(Thread* thread,
     if (location.IsPointerToMemory()) {
       // Native backing can alias the result destination. Do not zero or copy
       // the destination until after successful validation of the whole result.
-      memmove(reinterpret_cast<void*>(frame->cpu[8]), source, size);
+      const auto& indirect = location.AsPointerToMemory();
+      const uword destination =
+          ReadArgument(*frame, indirect.pointer_location());
+      memmove(reinterpret_cast<void*>(destination), source, size);
+#if defined(TARGET_ARCH_X64)
+      native_result.cpu[CpuResultIndex(
+          indirect.pointer_return_location().AsRegisters().reg_at(0))] =
+          destination;
+#endif
     } else {
-      CopyCompoundResult(location, source, &native_result);
+      CopyCompoundResult(location, source, &native_result, size);
     }
   }
   // No allocation or potentially failing conversion follows the native write.
@@ -474,7 +543,8 @@ ArrayPtr BuildCallbackArguments(Thread* thread,
     for (intptr_t i = 0; i < plan.num_args(); ++i) {
       if (compound_offsets[i] >= 0) {
         CopyCompoundArgument(frame, plan.Location(i),
-                             snapshots + compound_offsets[i]);
+                             snapshots + compound_offsets[i],
+                             plan.Location(i).payload_type().SizeInBytes());
       }
     }
   }
@@ -551,13 +621,20 @@ DART_NOINLINE void PostCallback(Thread* thread,
 }
 
 void ApplyIndirectFallback(const InterpreterFfiCallbackFallback& fallback,
-                           const InterpreterFfiCallbackFrame& frame) {
+                           InterpreterFfiCallbackFrame& frame) {
   if (fallback.indirect_result_size != 0) {
-    // Deliberately delayed until failure: x8 can alias an input buffer read by
-    // the target. Use the descriptor's exact size even if plan creation failed.
+    // Deliberately delayed until failure: sret may overlap native input. The
+    // fallback stays plan-independent so this also works after a VM longjmp.
+    const uword destination =
+        frame.cpu[CallingConventions::kPointerToReturnStructRegisterCall];
     NoSafepointScope no_safepoint;
-    memset(reinterpret_cast<void*>(frame.cpu[8]), 0,
+    memset(reinterpret_cast<void*>(destination), 0,
            fallback.indirect_result_size);
+#if defined(TARGET_ARCH_X64)
+    frame.result.cpu[CpuResultIndex(
+        CallingConventions::kPointerToReturnStructRegisterReturn)] =
+        destination;
+#endif
   }
 }
 
@@ -617,7 +694,7 @@ InterpreterFfiCallbackPreparation PrepareInterpreterFfiCallback(
                      : IsSupportedScalarLocation(location, is_result))) {
         *error =
             "The native callback ABI location is not supported by the "
-            "ARM64 interpreter capture.";
+            "native interpreter capture.";
         return InterpreterFfiCallbackPreparation::kUnsupportedSignature;
       }
       if (compound && !is_result) {
@@ -667,7 +744,7 @@ InterpreterFfiCallbackPreparation PrepareInterpreterFfiCallback(
   }
 #endif
   *error =
-      "Runtime-created callbacks require the native ARM64 AOT interpreter.";
+      "Runtime-created callbacks require a supported native AOT interpreter.";
   return InterpreterFfiCallbackPreparation::kUnsupportedSignature;
 }
 

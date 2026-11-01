@@ -1,7 +1,7 @@
 // Every declaration and signature in this library is absent from N and B.
 import 'dart:ffi';
 
-@AbiSpecificIntegerMapping({Abi.macosArm64: Int16(), Abi.linuxArm64: Int16()})
+@AbiSpecificIntegerMapping({Abi.macosArm64: Int16(), Abi.linuxArm64: Int16(), Abi.macosX64: Int16()})
 final class PluginInt extends AbiSpecificInteger {
   const PluginInt();
 }

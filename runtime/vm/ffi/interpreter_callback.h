@@ -32,7 +32,7 @@ struct InterpreterFfiCallbackNativeResult {
 
 struct InterpreterFfiCallbackFallback {
   InterpreterFfiCallbackNativeResult registers;
-  // Exact bytes zeroed at captured x8 only after an indirect-result failure.
+  // Exact bytes zeroed at the captured sret address after a result failure.
   uint64_t indirect_result_size;
   // Handle results reserve one LocalHandle in the caller's current API scope.
   uint64_t flags;
@@ -42,14 +42,18 @@ constexpr uint64_t kInterpreterFfiCallbackReturnsHandle = 1;
 
 // Native bits only; managed roots belong in the helper's VM handles.
 struct alignas(16) InterpreterFfiCallbackFrame {
+#if defined(TARGET_ARCH_X64)
+  uint64_t cpu[16];  // Architectural indices, including R9 == 9 and sret RDI.
+#else
   uint64_t cpu[9];  // x0-x8, including the indirect result address.
-  uint64_t fpu[8];  // d0-d7.
+#endif
+  uint64_t fpu[8];  // d0-d7 or low 64 bits of xmm0-xmm7.
   uword stack_args;
   InterpreterFfiCallbackNativeResult result;
 };
 
 bool InterpreterFfiCallbacksSupported();
-// Raw instruction PC consumed by the existing callback stub's BLR.
+// Raw instruction PC consumed by the existing shared callback stub.
 uword InterpreterFfiCallbackEntryPoint();
 bool IsInterpreterFfiCallbackEntry(uword entry_point);
 

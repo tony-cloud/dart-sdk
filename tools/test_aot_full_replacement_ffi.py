@@ -199,8 +199,14 @@ def main():
     check_fixtures(fixtures)
     if args.check_fixtures:
         return
-    if platform.machine().lower() not in ('arm64', 'aarch64') or sys.platform not in ('darwin', 'linux'):
-        parser.error('Execution requires native ARM64 macOS/Linux, never simulator/x64')
+    if not ((platform.machine().lower() in ('arm64', 'aarch64') and sys.platform in ('darwin', 'linux'))
+            or (platform.machine().lower() in ('x86_64', 'amd64') and sys.platform == 'darwin')):
+        parser.error('Execution requires native ARM64 macOS/Linux or macOS x64, never simulator/x64')
+    if sys.platform == 'darwin' and platform.machine().lower() in ('x86_64', 'amd64'):
+        from native_ffi_test_support import require_native_macos_x64
+        require_native_macos_x64()
+        if not args.macos_signing_identity:
+            parser.error('Native x64 execution requires strict signing with EMPTY entitlements')
     if args.build_dir is None:
         parser.error('--build-dir is required for execution')
     if args.macos_signing_identity and sys.platform != 'darwin':
@@ -320,7 +326,7 @@ def main():
         released_hash = digest_artifact(native)
         assets = work / 'released-native-assets.json'
         assets.write_text(json.dumps({'format-version': [1, 0, 0], 'native-assets': {
-            'macos_arm64' if sys.platform == 'darwin' else 'linux_arm64': {
+            ('macos_x64' if platform.machine().lower() in ('x86_64', 'amd64') else 'macos_arm64') if sys.platform == 'darwin' else 'linux_arm64': {
                 'full-release-asset': ['absolute', str(native)],
             },
         }}))
@@ -407,7 +413,9 @@ def main():
             # Exactly the established test_aot_full_replacement producer API.
             run(args.envelope_dart.resolve(),
                 f'--packages={args.envelope_packages.resolve()}',
-                args.envelope_producer.resolve(), base, payload, envelopes)
+                args.envelope_producer.resolve(), base, payload, envelopes,
+                *(['--target-os=macos', '--target-arch=x64']
+                  if sys.platform == 'darwin' and platform.machine().lower() in ('x86_64', 'amd64') else []))
             for name in ('valid.json', 'tampered.json', 'expired.json'):
                 if not (envelopes / name).is_file():
                     raise AssertionError(f'Envelope producer omitted {name}')
@@ -445,8 +453,9 @@ def main():
                 macos_signing_mode='hardened_runtime_empty_entitlements',
                 signed_images=strict_signatures, host_runtime_sha256=digest_artifact(harness),
                 actual_macos_flutter='not_exercised',
-                envelope_target_os='ios',
-                macos_authentication_metadata='not_exercised')
+                envelope_target_os=('macos' if platform.machine().lower() in ('x86_64', 'amd64') else 'ios'),
+                envelope_target_arch=('x64' if platform.machine().lower() in ('x86_64', 'amd64') else 'arm64'),
+                macos_authentication_metadata=('exercised' if platform.machine().lower() in ('x86_64', 'amd64') else 'not_exercised'))
         publish_host_acceptance(work, acceptance, guards)
         print('PRODUCT full N→B/N→U FFI host fixture passed; physical iOS, '
               'CLI archive comparison and server signature gates remain separate.')

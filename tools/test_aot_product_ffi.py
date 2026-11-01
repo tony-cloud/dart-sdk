@@ -22,6 +22,9 @@ import subprocess
 import sys
 import tempfile
 
+from native_ffi_test_support import (StrictMacosSigning, is_macos_x64,
+                                     require_native_macos_x64)
+
 from test_interpreter_ffi_calls import NATIVE, DART, interpreter_entry_range
 
 FORGED_CARRIER = r'''
@@ -66,8 +69,18 @@ void* ProductGuardPage(void) {
   return result;
 }
 void ProductFreeGuard(void* value) { munmap(value, sysconf(_SC_PAGESIZE)); }
+static uintptr_t product_trampoline_start, product_trampoline_end;
+void ProductSetTrampolineRange(uintptr_t start, uintptr_t end) {
+  product_trampoline_start=start; product_trampoline_end=end;
+}
 int ProductTrampolineCaller(uint64_t start, uint64_t end, uint64_t image_base) {
   void* caller = __builtin_return_address(0);
+#if defined(__x86_64__)
+  // The x64 native return PC belongs to the precompiled snapshot stub, not
+  // the runtime's C++ wrapper. The embedder supplies its actual Code range.
+  return product_trampoline_start <= (uintptr_t)caller &&
+         (uintptr_t)caller < product_trampoline_end;
+#endif
   Dl_info info;
   if (dladdr(caller, &info) == 0) return 0;
   uintptr_t address = (uintptr_t)caller - (uintptr_t)info.dli_fbase + image_base;
@@ -195,7 +208,7 @@ int runResolverErrors() {
   }
   return caught;
 }
-@AbiSpecificIntegerMapping({Abi.macosArm64: Int16(), Abi.linuxArm64: Int16()})
+@AbiSpecificIntegerMapping({Abi.macosArm64: Int16(), Abi.linuxArm64: Int16(), Abi.macosX64: Int16()})
 final class ProductAbiInt extends AbiSpecificInteger { const ProductAbiInt(); }
 @AbiSpecificIntegerMapping({Abi.fuchsiaArm64: Int8()})
 final class ProductMissingInt extends AbiSpecificInteger { const ProductMissingInt(); }
@@ -357,9 +370,16 @@ def main():
                         help='Also diagnose raw loading against body-only SDK exports')
     parser.add_argument('--full-assets-only', action='store_true',
                         help='Run release-map publication checks without raw call-outs')
+    parser.add_argument('--macos-signing-identity', help='Developer ID Application identity for private hardened, empty-entitlement test images; required on x64')
     args = parser.parse_args()
-    if platform.machine().lower() not in ('arm64', 'aarch64') or sys.platform not in ('darwin', 'linux'):
-        parser.error('This first PRODUCT call-out test requires native ARM64 macOS/Linux')
+    require_native_macos_x64()
+    if is_macos_x64() and not args.macos_signing_identity:
+        parser.error('Native x64 execution requires --macos-signing-identity and EMPTY entitlements')
+    if args.macos_signing_identity and sys.platform != 'darwin':
+        parser.error('--macos-signing-identity requires macOS')
+    if not ((platform.machine().lower() in ('arm64', 'aarch64') and sys.platform in ('darwin', 'linux'))
+            or (platform.machine().lower() in ('x86_64', 'amd64') and sys.platform == 'darwin')):
+        parser.error('This first PRODUCT call-out test requires native ARM64 macOS/Linux or macOS x64')
     root = Path(__file__).resolve().parents[1]
     build = args.build_dir.resolve()
     dart = build / 'dart'
@@ -387,11 +407,16 @@ def main():
             raise AssertionError(f'Native backend did not reject forged carrier: {result.stdout}')
         return result.stdout
 
+    strict_signing = None
+
     def snapshot(kernel, output, profile):
         if sys.platform == 'darwin':
             run(gen_snapshot, '--snapshot-kind=app-aot-macho-dylib', *profile,
                 f'--macho={output}', kernel)
-            run('codesign', '--force', '--sign', '-', output)
+            if strict_signing:
+                strict_signing.sign(output)
+            else:
+                run('codesign', '--force', '--sign', '-', output)
         else:
             run(gen_snapshot, '--snapshot-kind=app-aot-elf', *profile,
                 f'--elf={output}', kernel)
@@ -400,8 +425,14 @@ def main():
         args.work_dir.mkdir(parents=True, exist_ok=True)
     workspace = (contextlib.nullcontext(str(args.work_dir.resolve()))
                  if args.work_dir else tempfile.TemporaryDirectory(prefix='product-ffi-'))
-    with workspace as directory:
+    with workspace as directory, contextlib.ExitStack() as guards:
         work = Path(directory)
+        strict_signing = None
+        if args.macos_signing_identity:
+            strict_signing = guards.enter_context(StrictMacosSigning(
+                work, build, (dart, platform_file, gen_snapshot, test),
+                args.macos_signing_identity, run))
+            test = strict_signing.copy_harness(test)
         baseline = work / 'baseline.dart'
         baseline.write_text('void main() {}\n')
         library = work / ('libfixture.dylib' if sys.platform == 'darwin' else 'libfixture.so')
@@ -409,7 +440,7 @@ def main():
         native_assets.write_text(json.dumps({
             'format-version': [1, 0, 0],
             'native-assets': {
-                ('macos_arm64' if sys.platform == 'darwin' else 'linux_arm64'): {
+                (('macos_x64' if platform.machine().lower() in ('x86_64', 'amd64') else 'macos_arm64') if sys.platform == 'darwin' else 'linux_arm64'): {
                     'product-release-asset': ['absolute', str(library)],
                 },
             },
@@ -453,6 +484,7 @@ def main():
             raise AssertionError('Rejected native metadata carrier produced an output artifact')
         print('Native backend rejected executable declaration in metadata-only carrier; no output produced')
         if args.baseline_only:
+            guards.close()
             print('PRODUCT no-app-FFI baseline inspection passed')
             return
         native = work / 'fixture.c'
@@ -475,12 +507,15 @@ def main():
             '-I', root / 'runtime/include', native, '-o', library,
             *(['-ldl'] if sys.platform == 'linux' else []))
         if sys.platform == 'darwin':
-            run('codesign', '--force', '--sign', '-', library)
+            if strict_signing:
+                strict_signing.sign(library)
+            else:
+                run('codesign', '--force', '--sign', '-', library)
         if not args.full_assets_only:
             run(dart, root / 'pkg/dart2bytecode/bin/dart2bytecode.dart',
                 '-Ddart.vm.product=true', f'--platform={platform_file}', '-o', bytecode, source)
             drt_start, drt_end, image_base = interpreter_entry_range(test)
-            trampoline_start, trampoline_end = symbol_range(test, 'FfiCallTrampoline')
+            trampoline_start, trampoline_end = ((0, 0) if is_macos_x64() else symbol_range(test, 'FfiCallTrampoline'))
         required = [
             'Handle arguments/results and 21 nonleaf native GC calls passed',
             'leaf TypedData.address/view/element and Dart/native Struct.address passed',
@@ -550,11 +585,13 @@ def main():
         for label, native_snapshot in [('source', full_snapshot), ('from-dill', from_dill_snapshot)]:
             run(test, native_snapshot, full_update, library, plugin_uri, '--full-assets', 2,
                 log=work / f'full-{label}-update.log')
+        guards.close()
         if args.full_assets_only:
             print('PRODUCT release-map publication checks passed; raw call-outs skipped')
         else:
-            print('PRODUCT native ARM64 raw-library interpreter FFI call-out proof passed; '
+            print('PRODUCT native raw-library interpreter FFI call-out proof passed; '
                   'full admission/callbacks/devices remain unproven')
+
 
 
 if __name__ == '__main__':

@@ -34,11 +34,14 @@
 #include "vm/object_store.h"
 #include "vm/shorebird_replacement.h"
 #include "vm/symbols.h"
+#include "vm/stub_code.h"
 #include "vm/thread.h"
 
 #if !defined(PRODUCT) || !defined(DART_PRECOMPILED_RUNTIME) ||                 \
-    !defined(TARGET_ARCH_ARM64) || !defined(HOST_ARCH_ARM64)
-#error "This test requires the native ARM64 PRODUCT precompiled runtime."
+    !((defined(TARGET_ARCH_ARM64) && defined(HOST_ARCH_ARM64)) || \
+      (defined(TARGET_ARCH_X64) && defined(HOST_ARCH_X64) && \
+       defined(DART_HOST_OS_MACOS) && defined(DART_TARGET_OS_MACOS)))
+#error "This test requires the supported native PRODUCT precompiled runtime."
 #endif
 
 namespace {
@@ -604,6 +607,16 @@ int main(int argc, char** argv) {
   } else {
     fixture_library = dlopen(argv[3], RTLD_NOW | RTLD_GLOBAL);
     Expect(fixture_library != nullptr, "cannot load signed native fixture");
+#if defined(HOST_ARCH_X64) && defined(DART_HOST_OS_MACOS)
+    {
+      dart::TransitionNativeToVM transition(dart::Thread::Current());
+      const auto& trampoline = dart::StubCode::FfiCallTrampoline();
+      auto set_range = reinterpret_cast<void (*)(uintptr_t, uintptr_t)>(
+          dlsym(fixture_library, "ProductSetTrampolineRange"));
+      Expect(set_range != nullptr, "missing native trampoline-PC oracle");
+      set_range(trampoline.EntryPoint(), trampoline.EntryPoint()+trampoline.Size());
+    }
+#endif
     const auto mappings = ExecutableMappings();
     std::ifstream input(argv[2], std::ios::binary);
     bytes.assign(std::istreambuf_iterator<char>(input),

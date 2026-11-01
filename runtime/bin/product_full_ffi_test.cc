@@ -32,8 +32,10 @@
 #include "vm/thread.h"
 
 #if !defined(PRODUCT) || !defined(DART_PRECOMPILED_RUNTIME) || \
-    !defined(TARGET_ARCH_ARM64) || !defined(HOST_ARCH_ARM64)
-#error "Requires the native ARM64 PRODUCT precompiled runtime."
+    !((defined(TARGET_ARCH_ARM64) && defined(HOST_ARCH_ARM64)) || \
+      (defined(TARGET_ARCH_X64) && defined(HOST_ARCH_X64) && \
+       defined(DART_HOST_OS_MACOS) && defined(DART_TARGET_OS_MACOS)))
+#error "Requires the supported native PRODUCT precompiled runtime."
 #endif
 
 namespace {
@@ -542,7 +544,11 @@ int main(int argc, char** argv) {
   options.flavor_id = "pro"; options.license_type = "pro";
   options.sdk_hash = "encrypted-aot-host-sdk";
   options.base_snapshot_hash = argv[6]; options.patch_snapshot_hash = argv[7];
+#if defined(DART_HOST_OS_MACOS) && defined(HOST_ARCH_X64)
+  options.target_os = "macos"; options.target_arch = "x64";
+#else
   options.target_os = "ios"; options.target_arch = "arm64";
+#endif
   options.runtime_mode = "dart-bytecode-interpreter";
   const std::string envelopes(argv[5]);
   for (intptr_t group = 0; group < 2; ++group) {

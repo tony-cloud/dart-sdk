@@ -3,6 +3,8 @@ import 'dart:ffi';
 import 'dart:typed_data';
 
 final class Pair extends Struct { @Int64() external int a; @Int64() external int b; }
+final class Float1 extends Struct { @Float() external double a; }
+final class Mixed extends Struct { @Int64() external int a; @Double() external double b; }
 final class HfaF extends Struct { @Float() external double a; @Float() external double b; @Float() external double c; }
 final class HfaD extends Struct { @Double() external double a; @Double() external double b; @Double() external double c; @Double() external double d; }
 final class Large extends Struct { @Int64() external int a; @Int64() external int b; @Int64() external int c; }
@@ -46,6 +48,7 @@ late Pointer<Int64> alias;
 late Pointer<Envelope> nativeEnvelope;
 late Pair retained;
 late Large retainedLarge;
+bool get sysVX64 => Abi.current() == Abi.macosX64;
 var fail = false;
 var expectMissingScope = false;
 var checked = 0;
@@ -96,7 +99,7 @@ List<List<int>> prepare(String path) {
   wrongPair=NativeCallable<PairSig>.isolateLocal(wrongPairTarget); remember(wrongPair);
   retainPair=NativeCallable<PairSig>.isolateLocal((Pair value) { retained=value; collect(); value.a+=capture[0]; return value; }); remember(retainPair);
   hfaF=NativeCallable<HfaFSig>.isolateLocal((HfaF value) { collect(); if(fail) throw StateError('${capture[0]} HFA'); return value; }); remember(hfaF);
-  hfaD=NativeCallable<HfaDSig>.isolateLocal((HfaD value) { collect(); if(fail) throw StateError('${capture[0]} HFA'); return value; }); remember(hfaD);
+  hfaD=NativeCallable<HfaDSig>.isolateLocal((HfaD value) { collect(); if(fail) throw StateError('${capture[0]} HFA'); return value; }); remember(hfaD,indirect:sysVX64?32:0);
   largeInput=NativeCallable<LargeSig>.isolateLocal((Large value) { collect(); value.a+=capture[0]; value.b+=200; value.c+=300; return value; }); remember(largeInput,indirect:24);
   largeHeap=NativeCallable<LargeSig>.isolateLocal((Large value) { collect(); return Struct.create<Large>()..a=capture[0]+11..b=222..c=333; }); remember(largeHeap,indirect:24);
   largeView=NativeCallable<LargeSig>.isolateLocal((Large value) {
@@ -158,10 +161,10 @@ typedef Odd17Sig = Odd17 Function(Odd17);
 late NativeCallable<Odd17Sig> odd17;
 late NativeCallable<Odd17Sig> guardOdd, guardOddFail;
 void prepareOdds(List<int> capture) {
-  odd3=NativeCallable<Odd3Sig>.isolateLocal((Odd3 value) {collect();equal(100,capture[0]);if(fail)throw StateError('Odd3');return value;});remember(odd3,indirect:0);
-  odd5=NativeCallable<Odd5Sig>.isolateLocal((Odd5 value) {collect();equal(100,capture[0]);if(fail)throw StateError('Odd5');return value;});remember(odd5,indirect:0);
-  odd7=NativeCallable<Odd7Sig>.isolateLocal((Odd7 value) {collect();equal(100,capture[0]);if(fail)throw StateError('Odd7');return value;});remember(odd7,indirect:0);
-  odd9=NativeCallable<Odd9Sig>.isolateLocal((Odd9 value) {collect();equal(100,capture[0]);if(fail)throw StateError('Odd9');return value;});remember(odd9,indirect:0);
+  odd3=NativeCallable<Odd3Sig>.isolateLocal((Odd3 value) {collect();equal(100,capture[0]);if(fail)throw StateError('Odd3');return value;});remember(odd3,indirect:sysVX64?3:0);
+  odd5=NativeCallable<Odd5Sig>.isolateLocal((Odd5 value) {collect();equal(100,capture[0]);if(fail)throw StateError('Odd5');return value;});remember(odd5,indirect:sysVX64?5:0);
+  odd7=NativeCallable<Odd7Sig>.isolateLocal((Odd7 value) {collect();equal(100,capture[0]);if(fail)throw StateError('Odd7');return value;});remember(odd7,indirect:sysVX64?7:0);
+  odd9=NativeCallable<Odd9Sig>.isolateLocal((Odd9 value) {collect();equal(100,capture[0]);if(fail)throw StateError('Odd9');return value;});remember(odd9,indirect:sysVX64?9:0);
   odd17=NativeCallable<Odd17Sig>.isolateLocal((Odd17 value) {collect();equal(100,capture[0]);if(fail)throw StateError('Odd17');return value;});remember(odd17,indirect:17);
   guardOdd=NativeCallable<Odd17Sig>.isolateLocal((Odd17 value) {equal(7,value.tag);equal(101,value.a);equal(202,value.b);equal(1,markInputRead(value.tag+value.a+value.b));collect();equal(100,capture[0]);return value;});remember(guardOdd,indirect:17);
   guardOddFail=NativeCallable<Odd17Sig>.isolateLocal((Odd17 value) {equal(7,value.tag);equal(101,value.a);equal(202,value.b);equal(1,markInputRead(value.tag+value.a+value.b));collect();throw StateError('${capture[0]} Odd17 alias');});remember(guardOddFail,indirect:17);
@@ -221,13 +224,21 @@ int checkGuardedReturnHfaF() => lib.lookupFunction<Int64 Function(Pointer<Native
 typedef GuardedHfaDSig = HfaD Function();
 late NativeCallable<GuardedHfaDSig> guardedHfaD;
 int checkGuardedReturnHfaD() => lib.lookupFunction<Int64 Function(Pointer<NativeFunction<GuardedHfaDSig>>),int Function(Pointer<NativeFunction<GuardedHfaDSig>>)>('CheckGuardedReturnHfaD')(guardedHfaD.nativeFunction);
+typedef GuardedFloat1Sig = Float1 Function();
+late NativeCallable<GuardedFloat1Sig> guardedFloat1;
+int checkGuardedReturnFloat1() => lib.lookupFunction<Int64 Function(Pointer<NativeFunction<GuardedFloat1Sig>>),int Function(Pointer<NativeFunction<GuardedFloat1Sig>>)>('CheckGuardedReturnFloat1')(guardedFloat1.nativeFunction);
+typedef MixedSig = Mixed Function(Mixed);
+late NativeCallable<MixedSig> mixed;
+int checkMixed(int zero) => lib.lookupFunction<Int64 Function(Pointer<NativeFunction<MixedSig>>,Int64),int Function(Pointer<NativeFunction<MixedSig>>,int)>('CheckMixedAggregate')(mixed.nativeFunction,zero);
 void prepareGuardedReturns(List<int> capture) {
-  guardedOdd3=NativeCallable<GuardedOdd3Sig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<Odd3>.fromAddress(guardReturnAddress()).ref;});remember(guardedOdd3);
-  guardedOdd5=NativeCallable<GuardedOdd5Sig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<Odd5>.fromAddress(guardReturnAddress()).ref;});remember(guardedOdd5);
-  guardedOdd7=NativeCallable<GuardedOdd7Sig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<Odd7>.fromAddress(guardReturnAddress()).ref;});remember(guardedOdd7);
-  guardedOdd9=NativeCallable<GuardedOdd9Sig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<Odd9>.fromAddress(guardReturnAddress()).ref;});remember(guardedOdd9);
+  guardedFloat1=NativeCallable<GuardedFloat1Sig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<Float1>.fromAddress(guardReturnAddress()).ref;});remember(guardedFloat1);
+  mixed=NativeCallable<MixedSig>.isolateLocal((Mixed value) {collect();if(fail)throw StateError('mixed');value.a+=capture[0];value.b+=2;return value;});remember(mixed);
+  guardedOdd3=NativeCallable<GuardedOdd3Sig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<Odd3>.fromAddress(guardReturnAddress()).ref;});remember(guardedOdd3,indirect:sysVX64?3:0);
+  guardedOdd5=NativeCallable<GuardedOdd5Sig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<Odd5>.fromAddress(guardReturnAddress()).ref;});remember(guardedOdd5,indirect:sysVX64?5:0);
+  guardedOdd7=NativeCallable<GuardedOdd7Sig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<Odd7>.fromAddress(guardReturnAddress()).ref;});remember(guardedOdd7,indirect:sysVX64?7:0);
+  guardedOdd9=NativeCallable<GuardedOdd9Sig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<Odd9>.fromAddress(guardReturnAddress()).ref;});remember(guardedOdd9,indirect:sysVX64?9:0);
   guardedHfaF=NativeCallable<GuardedHfaFSig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<HfaF>.fromAddress(guardReturnAddress()).ref;});remember(guardedHfaF);
-  guardedHfaD=NativeCallable<GuardedHfaDSig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<HfaD>.fromAddress(guardReturnAddress()).ref;});remember(guardedHfaD);
+  guardedHfaD=NativeCallable<GuardedHfaDSig>.isolateLocal(() {collect();equal(100,capture[0]);return Pointer<HfaD>.fromAddress(guardReturnAddress()).ref;});remember(guardedHfaD,indirect:sysVX64?32:0);
 }
 @pragma('vm:entry-point')
 int runAggregates() {
@@ -265,9 +276,12 @@ int runAggregates() {
   check(checkGuardedReturnOdd7());
   check(checkGuardedReturnOdd9());
   check(checkGuardedReturnHfaF());
+  check(checkGuardedReturnFloat1());
+  check(checkMixed(0));
   check(checkGuardedReturnHfaD());
   fail=true;
   try {
+    check(checkMixed(1));
     check(checkHfaF(hfaF.nativeFunction,1));check(checkHfaD(hfaD.nativeFunction,1));
     check(checkWord(word.nativeFunction,1));check(checkNested(nested.nativeFunction,1));
     check(checkOdd3(odd3.nativeFunction,1));

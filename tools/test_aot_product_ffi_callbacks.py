@@ -19,6 +19,9 @@ import subprocess
 import sys
 import tempfile
 
+from native_ffi_test_support import (StrictMacosSigning, is_macos_x64,
+                                     require_native_macos_x64)
+
 
 def common_entry_range(binary):
     symbols = []
@@ -46,9 +49,16 @@ def main():
     parser.add_argument('--build-dir', required=True, type=Path)
     parser.add_argument('--work-dir', type=Path)
     parser.add_argument('--transitions-only', action='store_true', help='Generate fixtures and run all eight mandatory isolated compiled/interpreted transition children')
+    parser.add_argument('--macos-signing-identity', help='Developer ID Application identity for private hardened, empty-entitlement test images; required on x64')
     args = parser.parse_args()
-    if platform.machine().lower() not in ('arm64', 'aarch64') or sys.platform not in ('darwin', 'linux'):
-        parser.error('Native ARM64 macOS/Linux required')
+    require_native_macos_x64()
+    if is_macos_x64() and not args.macos_signing_identity:
+        parser.error('Native x64 execution requires --macos-signing-identity and EMPTY entitlements')
+    if args.macos_signing_identity and sys.platform != 'darwin':
+        parser.error('--macos-signing-identity requires macOS')
+    if not ((platform.machine().lower() in ('arm64', 'aarch64') and sys.platform in ('darwin', 'linux'))
+            or (platform.machine().lower() in ('x86_64', 'amd64') and sys.platform == 'darwin')):
+        parser.error('Native ARM64 macOS/Linux or macOS x64 required')
     root = Path(__file__).resolve().parents[1]
     fixtures = root / 'tools/test_aot_product_ffi_callbacks'
     build = args.build_dir.resolve()
@@ -66,8 +76,9 @@ def main():
         args.work_dir.mkdir(parents=True, exist_ok=True)
     workspace = (contextlib.nullcontext(str(args.work_dir.resolve()))
                  if args.work_dir else tempfile.TemporaryDirectory(prefix='product-ffi-callbacks-'))
-    with workspace as directory:
+    with workspace as directory, contextlib.ExitStack() as guards:
         work = Path(directory)
+        strict_signing = None
 
         def run(*command, log=None, required=(), expect_failure=False):
             print('+', *command, flush=True)
@@ -97,6 +108,12 @@ def main():
                     raise AssertionError(f'Missing acceptance marker: {marker}')
             return result.stdout
 
+        if args.macos_signing_identity:
+            strict_signing = guards.enter_context(StrictMacosSigning(
+                work, build, (dart, platform_file, gen_snapshot, harness),
+                args.macos_signing_identity, run))
+            harness = strict_signing.copy_harness(harness)
+
         def snapshot(kernel, output, structural=False, shared=False):
             profile = ['--shorebird-structural-patching'] if structural else []
             if shared:
@@ -104,7 +121,10 @@ def main():
             if sys.platform == 'darwin':
                 run(gen_snapshot, '--snapshot-kind=app-aot-macho-dylib', *profile,
                     f'--macho={output}', kernel)
-                run('codesign', '--force', '--sign', '-', output)
+                if strict_signing:
+                    strict_signing.sign(output)
+                else:
+                    run('codesign', '--force', '--sign', '-', output)
             else:
                 run(gen_snapshot, '--snapshot-kind=app-aot-elf', *profile,
                     f'--elf={output}', kernel)
@@ -125,14 +145,17 @@ def main():
             work / 'async_group_fixture.c', '-pthread', '-o', library,
             *(['-ldl'] if sys.platform == 'linux' else []))
         if sys.platform == 'darwin':
-            run('codesign', '--force', '--sign', '-', library)
-            entitlements = run('codesign', '-d', '--entitlements', ':-', harness)
-            if 'com.apple.security.cs.disable-library-validation' not in entitlements:
-                raise AssertionError('Host harness must carry its isolated library-validation entitlement')
-            for forbidden in ('com.apple.security.cs.allow-jit', 'com.apple.security.cs.allow-unsigned-executable-memory', 'get-task-allow'):
-                if forbidden in entitlements:
-                    raise AssertionError(f'Unexpected harness entitlement: {forbidden}')
-            run('codesign', '--verify', '--strict', harness)
+            if strict_signing:
+                strict_signing.sign(library)
+            else:
+                run('codesign', '--force', '--sign', '-', library)
+                entitlements = run('codesign', '-d', '--entitlements', ':-', harness)
+                if 'com.apple.security.cs.disable-library-validation' not in entitlements:
+                    raise AssertionError('Legacy ARM harness requires its isolated library-validation entitlement')
+                for forbidden in ('com.apple.security.cs.allow-jit', 'com.apple.security.cs.allow-unsigned-executable-memory', 'get-task-allow'):
+                    if forbidden in entitlements:
+                        raise AssertionError(f'Unexpected harness entitlement: {forbidden}')
+                run('codesign', '--verify', '--strict', harness)
         baseline = work / 'baseline.snapshot'
         kernel(work / 'baseline.dart', work / 'baseline.dill', structural=True)
         snapshot(work / 'baseline.dill', baseline, structural=True)
@@ -193,6 +216,7 @@ def main():
             raise AssertionError('Mandatory callback transition preflight failed:\n' + '\n'.join(failures))
         print('All eight isolated compiled/interpreted callback transition children passed')
         if args.transitions_only:
+            guards.close()
             return
         for interpreted in (False, True):
             label = 'runtime' if interpreted else 'control'
@@ -258,9 +282,11 @@ def main():
                          required=(marker, 'API_UNWIND_OBSERVED'))
             if 'FORBIDDEN_OUTER_DART_AFTER_KILL' in output:
                 raise AssertionError('Killed callback resumed the outer Dart continuation')
+        guards.close()
         print('PRODUCT runtime-created callback listener/group and local Handle/aggregate acceptance passed; '
               'full admission, deterministic allocation/OOM injection, '
               'transient instruction/permission audit and devices remain outside this proof')
+
 
 
 if __name__ == '__main__':

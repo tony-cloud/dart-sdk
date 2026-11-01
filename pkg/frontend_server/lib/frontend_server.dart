@@ -1040,13 +1040,13 @@ class FrontendCompiler implements CompilerInterface {
     if (descriptor == null ||
         descriptor.isEmpty ||
         target == null ||
-        target != shorebirdNativeAssetsTargetForOS(options['target-os']) ||
+        !shorebirdNativeAssetsTargetMatchesOS(options['target-os'], target) ||
         !options['shorebird-full-replacement'] ||
         options['native-assets-only']) {
       print(
         'Error: --shorebird-native-assets-descriptor and '
         '--shorebird-native-assets-target must be paired, match an explicit '
-        '--target-os (ios: ios_arm64, macos: macos_arm64), and require full '
+        '--target-os (ios: ios_arm64, macos: macos_arm64/macos_x64), and require full '
         'replacement compilation.',
       );
       return false;

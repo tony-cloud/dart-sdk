@@ -43,8 +43,10 @@
 #include "vm/virtual_memory.h"
 
 #if !defined(PRODUCT) || !defined(DART_PRECOMPILED_RUNTIME) || \
-    !defined(TARGET_ARCH_ARM64) || !defined(HOST_ARCH_ARM64)
-#error "Native ARM64 PRODUCT precompiled runtime required."
+    !((defined(TARGET_ARCH_ARM64) && defined(HOST_ARCH_ARM64)) || \
+      (defined(TARGET_ARCH_X64) && defined(HOST_ARCH_X64) && \
+       defined(DART_HOST_OS_MACOS) && defined(DART_TARGET_OS_MACOS)))
+#error "Supported native PRODUCT precompiled runtime required."
 #endif
 namespace {
 void Expect(bool condition, const char* message) {

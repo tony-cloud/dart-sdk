@@ -36,6 +36,16 @@ NATIVE = r'''
 #include "dart_api.h"
 #include "dart_native_api.h"
 
+// Read AL at the very first instruction, before any C variadic prologue.
+#if defined(__x86_64__)
+#if defined(__APPLE__)
+#define AL_SYMBOL "_VariadicAl"
+#else
+#define AL_SYMBOL "VariadicAl"
+#endif
+__asm__(".text\n.globl " AL_SYMBOL "\n" AL_SYMBOL ":\nmovzbl %al,%eax\nretq\n");
+#endif
+
 static void* RequiredApi(const char* name) {
   void* address = dlsym(RTLD_DEFAULT, name);
   if (address == NULL) {
@@ -340,6 +350,13 @@ void main(List<String> args) {
       ? lib.lookupFunction<Double Function(Int32, VarArgs<(Int32, Double, Int32, Double, Int32, Double)>), double Function(int, int, double, int, double, int, double)>('Variadic', isLeaf: true)
       : lib.lookupFunction<Double Function(Int32, VarArgs<(Int32, Double, Int32, Double, Int32, Double)>), double Function(int, int, double, int, double, int, double)>('Variadic');
     equal(1 + 2.5 + 3 + 4.25 + 5 + 6.5, variadic(3, 1, 2.5, 3, 4.25, 5, 6.5));
+    if (Abi.current() == Abi.macosX64 || Abi.current() == Abi.linuxX64) {
+      final readAl = leaf
+        ? lib.lookupFunction<Int32 Function(Int32, VarArgs<(Double,)>), int Function(int, double)>('VariadicAl', isLeaf: true)
+        : lib.lookupFunction<Int32 Function(Int32, VarArgs<(Double,)>), int Function(int, double)>('VariadicAl');
+      final al = readAl(1, 2.5);
+      if (al < 1 || al > 8) throw StateError('SysV variadic AL must be a legal SSE upper bound: $al');
+    }
     // OVERFLOW_CALL
   }
   testHandlesAndGc(lib);

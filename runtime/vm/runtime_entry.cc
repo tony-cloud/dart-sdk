@@ -1249,10 +1249,12 @@ DEFINE_RUNTIME_ENTRY(ResolveExternalCall, 2) {
 
 #if defined(DART_BYTECODE_INTERPRETER)
 
-#if !defined(DART_PRECOMPILED_RUNTIME) ||                                    \
-    (defined(DART_SHOREBIRD_INTERPRETER) && defined(HOST_ARCH_ARM64) &&      \
-     defined(TARGET_ARCH_ARM64) && !defined(DART_HOST_OS_WINDOWS) &&        \
-     !defined(DART_TARGET_OS_WINDOWS))
+#if !defined(DART_PRECOMPILED_RUNTIME) ||                                      \
+    (defined(DART_SHOREBIRD_INTERPRETER) &&                                    \
+     ((defined(HOST_ARCH_ARM64) && defined(TARGET_ARCH_ARM64) &&               \
+       !defined(DART_HOST_OS_WINDOWS) && !defined(DART_TARGET_OS_WINDOWS)) ||  \
+      (defined(HOST_ARCH_X64) && defined(TARGET_ARCH_X64) &&                   \
+       defined(DART_HOST_OS_MACOS) && defined(DART_TARGET_OS_MACOS))))
 
 struct FfiCallArguments {
   uword stack_area;
@@ -1298,6 +1300,13 @@ static_assert(offsetof(FfiCallArguments, stack_area_end) == 8);
 static_assert(offsetof(FfiCallArguments, cpu_registers) == 16);
 static_assert(offsetof(FfiCallArguments, fpu_registers) == 272);
 static_assert(offsetof(FfiCallArguments, target) == 528);
+#elif defined(HOST_ARCH_X64) && defined(TARGET_ARCH_X64)
+// The release snapshot already contains StubCode::FfiCallTrampoline.
+static_assert(offsetof(FfiCallArguments, stack_area) == 0);
+static_assert(offsetof(FfiCallArguments, stack_area_end) == 8);
+static_assert(offsetof(FfiCallArguments, cpu_registers) == 16);
+static_assert(offsetof(FfiCallArguments, fpu_registers) == 144);
+static_assert(offsetof(FfiCallArguments, target) == 272);
 #endif
 
 #if defined(HOST_ARCH_ARM64)
@@ -1362,16 +1371,21 @@ static void PassFfiCallCompoundArgumentPortion(
     FfiCallArguments* args,
     const compiler::ffi::NativeLocation& loc,
     const Instance& compound_contents,
-    intptr_t offset_in_bytes) {
-  auto const size = loc.payload_type().SizeInBytes();
+    intptr_t offset_in_bytes,
+    intptr_t remaining) {
+  const intptr_t size =
+      Utils::Minimum(loc.payload_type().SizeInBytes(), remaining);
   if (loc.IsMultiple()) {
     // Copy from the TypedData to from a list of native locations.
     const auto& multiple = loc.AsMultiple();
     for (intptr_t i = 0, n = multiple.locations().length(); i < n; ++i) {
       const auto& portion = *multiple.locations().At(i);
-      PassFfiCallCompoundArgumentPortion(thread, args, portion,
-                                         compound_contents, offset_in_bytes);
-      offset_in_bytes += portion.payload_type().SizeInBytes();
+      PassFfiCallCompoundArgumentPortion(
+          thread, args, portion, compound_contents, offset_in_bytes, remaining);
+      const intptr_t copied =
+          Utils::Minimum(portion.payload_type().SizeInBytes(), remaining);
+      offset_in_bytes += copied;
+      remaining -= copied;
     }
   } else if (loc.IsStack()) {
     const intptr_t offset = loc.AsStack().offset_in_bytes();
@@ -1407,12 +1421,11 @@ static void PassFfiCallCompoundArgumentPortion(
   }
 }
 
-static void PassFfiCallArguments(
-    Thread* thread,
-    const InterpreterFfiCallPlan& call_plan,
-    ObjectPtr* argv,
-    FfiCallArguments* args,
-    bool is_leaf) {
+static void PassFfiCallArguments(Thread* thread,
+                                 const InterpreterFfiCallPlan& call_plan,
+                                 ObjectPtr* argv,
+                                 FfiCallArguments* args,
+                                 bool is_leaf) {
   Zone* zone = thread->zone();
   ApiLocalScope* scope = thread->api_top_scope();
   auto* const stack_top = reinterpret_cast<uint8_t*>(args->stack_area);
@@ -1463,7 +1476,8 @@ static void PassFfiCallArguments(
         }
       } else {
         PassFfiCallCompoundArgumentPortion(thread, args, loc, compound_contents,
-                                           offset_in_bytes);
+                                           offset_in_bytes,
+                                           loc.payload_type().SizeInBytes());
       }
     } else {
       if (!loc.payload_type().IsPrimitive()) {
@@ -1535,9 +1549,10 @@ static void PassFfiCallArguments(
 #if defined(TARGET_ARCH_X64)
   if (call_plan.contains_varargs() &&
       CallingConventions::kVarArgFpuRegisterCount != kNoRegister) {
-    // TODO(http://dartbug.com/38578): Use the number of used FPU registers.
+    // SysV AL is an upper bound in [0, 8], not the register bit mask.
+    // TODO(http://dartbug.com/38578): Use the exact number of used registers.
     args->cpu_registers[CallingConventions::kVarArgFpuRegisterCount] =
-        CallingConventions::kFpuArgumentRegisters;
+        CallingConventions::kNumFpuArgRegs;
   }
 #endif  // defined(TARGET_ARCH_X64)
 
@@ -1562,10 +1577,9 @@ static void PassFfiCallArguments(
   }
 }
 
-static ObjectPtr ReceiveFfiCallResult(
-    Thread* thread,
-    const InterpreterFfiCallPlan& call_plan,
-    const FfiCallArguments& args) {
+static ObjectPtr ReceiveFfiCallResult(Thread* thread,
+                                      const InterpreterFfiCallPlan& call_plan,
+                                      const FfiCallArguments& args) {
   const intptr_t arg_index = InterpreterFfiCallPlan::kResultIndex;
   if (call_plan.IsCompoundCType(arg_index)) {
     auto* const zone = thread->zone();
@@ -1594,8 +1608,10 @@ static ObjectPtr ReceiveFfiCallResult(
         if (!portion.payload_type().IsPrimitive()) {
           UNIMPLEMENTED();
         }
-        auto const size = portion.payload_type().SizeInBytes();
-        ASSERT(size <= kWordSize);
+        const intptr_t size =
+            Utils::Minimum(portion.payload_type().SizeInBytes(),
+                           loc.payload_type().SizeInBytes() - offset_in_bytes);
+        ASSERT(size > 0 && size <= kWordSize);
         uword value;
         if (portion.IsRegisters()) {
           ASSERT(portion.AsRegisters().num_regs() == 1);
@@ -1735,11 +1751,13 @@ static uword ResolveFfiNativeTarget(Thread* thread, const Instance& native) {
 // This method does not return anything, but instead caches the resolved
 // entry point in the object pool entry.
 DEFINE_RUNTIME_ENTRY(ResolveNativeFunction, 3) {
-#if defined(DART_BYTECODE_INTERPRETER) &&                                  \
-    (!defined(DART_PRECOMPILED_RUNTIME) ||                                   \
-     (defined(DART_SHOREBIRD_INTERPRETER) && defined(HOST_ARCH_ARM64) &&     \
-      defined(TARGET_ARCH_ARM64) && !defined(DART_HOST_OS_WINDOWS) &&       \
-      !defined(DART_TARGET_OS_WINDOWS)))
+#if defined(DART_BYTECODE_INTERPRETER) &&                                      \
+    (!defined(DART_PRECOMPILED_RUNTIME) ||                                     \
+     (defined(DART_SHOREBIRD_INTERPRETER) &&                                   \
+      ((defined(HOST_ARCH_ARM64) && defined(TARGET_ARCH_ARM64) &&              \
+        !defined(DART_HOST_OS_WINDOWS) && !defined(DART_TARGET_OS_WINDOWS)) || \
+       (defined(HOST_ARCH_X64) && defined(TARGET_ARCH_X64) &&                  \
+        defined(DART_HOST_OS_MACOS) && defined(DART_TARGET_OS_MACOS)))))
   const auto& instance = Instance::CheckedHandle(zone, arguments.ArgAt(0));
   const auto& function = Function::CheckedZoneHandle(zone, arguments.ArgAt(1));
   const intptr_t pool_index =
@@ -1762,11 +1780,13 @@ DEFINE_RUNTIME_ENTRY(ResolveNativeFunction, 3) {
 // Arg0: function.
 // Arg1: constant pool index to store resolved target.
 DEFINE_RUNTIME_ENTRY(FfiCall, 2) {
-#if defined(DART_BYTECODE_INTERPRETER) &&                                  \
-    (!defined(DART_PRECOMPILED_RUNTIME) ||                                   \
-     (defined(DART_SHOREBIRD_INTERPRETER) && defined(HOST_ARCH_ARM64) &&     \
-      defined(TARGET_ARCH_ARM64) && !defined(DART_HOST_OS_WINDOWS) &&       \
-      !defined(DART_TARGET_OS_WINDOWS)))
+#if defined(DART_BYTECODE_INTERPRETER) &&                                      \
+    (!defined(DART_PRECOMPILED_RUNTIME) ||                                     \
+     (defined(DART_SHOREBIRD_INTERPRETER) &&                                   \
+      ((defined(HOST_ARCH_ARM64) && defined(TARGET_ARCH_ARM64) &&              \
+        !defined(DART_HOST_OS_WINDOWS) && !defined(DART_TARGET_OS_WINDOWS)) || \
+       (defined(HOST_ARCH_X64) && defined(TARGET_ARCH_X64) &&                  \
+        defined(DART_HOST_OS_MACOS) && defined(DART_TARGET_OS_MACOS)))))
   const auto& function = Function::CheckedZoneHandle(zone, arguments.ArgAt(0));
   const intptr_t pool_index =
       Smi::CheckedHandle(zone, arguments.ArgAt(1)).Value();
