@@ -24,14 +24,17 @@ def is_macos_x64():
 
 
 def _sysctl_flag(name):
-    result = subprocess.run(['/usr/sbin/sysctl', '-in', name], capture_output=True,
+    # Do not pass -i: it converts an absent OID to silent success, hiding
+    # the distinction between a supported zero value and unavailable metadata.
+    result = subprocess.run(['/usr/sbin/sysctl', '-n', name], capture_output=True,
                             text=True, env=_safe_environment(), timeout=60)
     if result.returncode == 0 and result.stdout.strip() in ('0', '1'):
         return result.stdout.strip() == '1'
     # Intel macOS versions may omit these Apple-silicon sysctls. Other probe
     # failures do not establish a native host and must not silently pass.
     if (result.returncode == 1 and not result.stdout.strip() and
-            'unknown oid' in result.stderr.lower()):
+            re.fullmatch(r"sysctl: unknown oid '" + re.escape(name) + "'",
+                         result.stderr.strip(), flags=re.IGNORECASE)):
         return None
     raise RuntimeError('Cannot establish native Intel host: sysctl probe failed for ' + name)
 

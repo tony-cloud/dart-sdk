@@ -15,6 +15,7 @@ import sys
 import unittest
 from unittest import mock
 
+import native_ffi_test_support as native_support
 from native_ffi_test_support import require_native_macos_x64
 import test_aot_product_ffi
 import test_aot_product_ffi_callbacks
@@ -99,18 +100,80 @@ class HostAcceptancePublicationTest(unittest.TestCase):
 
 
 class NativeIntelSigningGateTest(unittest.TestCase):
-    def test_rosetta_rejected(self):
-        translated = type('Result', (), {'returncode': 0, 'stdout': '1\n', 'stderr': ''})()
-        with mock.patch('native_ffi_test_support.is_macos_x64', return_value=True), \
-             mock.patch('native_ffi_test_support.subprocess.run', return_value=translated):
-            with self.assertRaisesRegex(RuntimeError, 'native Intel'):
-                require_native_macos_x64()
+    @staticmethod
+    def result(code=0, output='', error=''):
+        return subprocess.CompletedProcess([], code, output, error)
 
-    def test_native_intel_not_rejected(self):
-        native = type('Result', (), {'returncode': 1, 'stdout': '', 'stderr': 'sysctl: unknown oid'})()
-        with mock.patch('native_ffi_test_support.is_macos_x64', return_value=True), \
-             mock.patch('native_ffi_test_support.subprocess.run', return_value=native):
+    def test_rosetta_and_hardware_arm_rejected(self):
+        for translated, hardware_arm in ((True, False), (False, True),
+                                        (None, True), (True, None)):
+            with self.subTest(translated=translated, hardware_arm=hardware_arm), \
+                 mock.patch.object(native_support, 'is_macos_x64', return_value=True), \
+                 mock.patch.object(native_support, '_sysctl_flag', side_effect=[translated, hardware_arm]):
+                with self.assertRaisesRegex(RuntimeError, 'native Intel'):
+                    require_native_macos_x64()
+
+    def test_native_intel_missing_oids_are_unsuppressed_and_not_rejected(self):
+        def probe(command, **kwargs):
+            self.assertEqual(command[:2], ['/usr/sbin/sysctl', '-n'])
+            self.assertEqual(kwargs['env'], native_support._safe_environment())
+            self.assertEqual(kwargs['env']['LC_ALL'], 'C')
+            self.assertEqual(kwargs['timeout'], 60)
+            # Real -i instead produces (0, '', ''), which is not native proof.
+            return self.result(1, '', "sysctl: unknown oid '" + command[2] + "'\n")
+        with mock.patch.object(native_support, 'is_macos_x64', return_value=True), \
+             mock.patch.object(native_support.subprocess, 'run', side_effect=probe) as run:
             require_native_macos_x64()
+        self.assertEqual([call.args[0][2] for call in run.call_args_list],
+                         ['sysctl.proc_translated', 'hw.optional.arm64'])
+
+    def test_supported_zero_and_one_flags(self):
+        for output, expected in (('0\n', False), ('1\n', True)):
+            with self.subTest(output=output), \
+                 mock.patch.object(native_support.subprocess, 'run', return_value=self.result(0, output)):
+                self.assertIs(native_support._sysctl_flag('sysctl.proc_translated'), expected)
+
+    def test_genuine_probe_errors_and_ambiguous_empty_success_fail_closed(self):
+        name = 'sysctl.proc_translated'
+        absent = "sysctl: unknown oid '" + name + "'\n"
+        results = [self.result(0, '', ''), self.result(0, '2\n', ''),
+                   self.result(1, '', 'sysctl: permission denied\n'),
+                   self.result(2, '', absent), self.result(1, '0\n', absent),
+                   self.result(1, '', "sysctl: unknown oid 'another.oid'\n"),
+                   self.result(1, '', 'sysctl: unknown oid'),
+                   self.result(1, '', "sysctl: unknown oid 'sysctlXproc_translated'\n"),
+                   self.result(1, '', 'sysctl: unknown oid \u2018sysctl.proc_translated\u2019\n'),
+                   self.result(1, '', absent + 'sysctl: permission denied\n')]
+        for result in results:
+            with self.subTest(result=result), \
+                 mock.patch.object(native_support.subprocess, 'run', return_value=result):
+                with self.assertRaisesRegex(RuntimeError, 'sysctl probe failed'):
+                    native_support._sysctl_flag(name)
+
+    def test_probe_execution_failure_or_timeout_is_not_native_proof(self):
+        for error in (OSError('probe cannot execute'), subprocess.TimeoutExpired('sysctl', 60)):
+            with self.subTest(error=error), \
+                 mock.patch.object(native_support.subprocess, 'run', side_effect=error):
+                with self.assertRaises(type(error)):
+                    native_support._sysctl_flag('sysctl.proc_translated')
+
+    def test_prepared_acceptance_rejects_foreign_process_without_sysctl(self):
+        with mock.patch.object(native_support, 'is_macos_x64', return_value=False), \
+             mock.patch.object(native_support.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'native macOS Intel'):
+                native_support.require_native_intel()
+            run.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == 'darwin' and Path('/usr/sbin/sysctl').is_file(),
+                         'Actual unknown-OID reproduction requires macOS sysctl')
+    def test_actual_host_unknown_oid_is_visible_without_ignore_flag(self):
+        # Read-only synthetic missing OID: this is probe behavior, not Intel
+        # runtime acceptance on an Apple-silicon development machine.
+        name = 'shorebird.native_ffi_test_missing_oid_20261102'
+        ignored = subprocess.run(['/usr/sbin/sysctl', '-in', name], capture_output=True,
+                                 text=True, env=native_support._safe_environment(), timeout=60)
+        self.assertEqual((ignored.returncode, ignored.stdout, ignored.stderr), (0, '', ''))
+        self.assertIsNone(native_support._sysctl_flag(name))
 
 
 class StrictRunnerOriginalPreservationTest(unittest.TestCase):
