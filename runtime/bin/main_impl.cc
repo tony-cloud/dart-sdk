@@ -52,10 +52,12 @@ extern void kDartCoreSnapshotText();
 
 #if defined(DART_MIXED_MODE)
 #include "bin/elf_loader.h"
+#include <openssl/sha.h>
+#include "vm/mixed_mode.h"  // MixedLink (plain struct).
 DART_EXPORT bool Dart_MixedModeRegisterImages(const uint8_t* patch_text,
                                               const uint8_t* base_text,
-                                              const uint8_t* link_table,
-                                              intptr_t link_table_size,
+                                              const dart::MixedLink* links,
+                                              intptr_t link_count,
                                               const char** error);
 DART_EXPORT void Dart_MixedModeDeactivate();
 DART_EXPORT void Dart_MixedModePrintStats();
@@ -95,6 +97,135 @@ static void MixedModeFallBackToRelease(const char* reason) {
   app_snapshot_text = mixed_release_text;
   mixed_release_data = nullptr;
   mixed_release_text = nullptr;
+}
+
+static uint32_t ReadU32(const uint8_t* p) {
+  uint32_t v;
+  memcpy(&v, p, sizeof(v));
+  return v;
+}
+static uint64_t ReadU64(const uint8_t* p) {
+  uint64_t v;
+  memcpy(&v, p, sizeof(v));
+  return v;
+}
+
+// Validates a vmcode v1 container (docs/ios-linker/COMPILER_LINKER.md
+// section 6) against the release text and returns nullptr, or an error.
+static const char* ParseVmcode(const uint8_t* bytes,
+                               uint64_t length,
+                               const uint8_t* release_text,
+                               uint64_t* elf_offset,
+                               dart::MixedLink** links,
+                               intptr_t* link_count) {
+  static const uint8_t kMagic[8] = {'O', 'S', 'B', 'V', 'M', 'C', 0, 1};
+  if (length < 128 || memcmp(bytes, kMagic, 8) != 0) return "bad vmcode magic";
+  if (ReadU32(bytes + 8) != 1) return "unsupported vmcode version";
+  const uint64_t offset = ReadU64(bytes + 16);
+  const uint64_t elf_size = ReadU64(bytes + 24);
+  const uint32_t count = ReadU32(bytes + 32);
+  if (ReadU32(bytes + 12) != offset || offset % 16384 != 0 ||
+      ReadU32(bytes + 36) != 16 || ReadU32(bytes + 40) != 128 ||
+      ReadU32(bytes + 44) != 0 || 128 + uint64_t{count} * 16 > offset ||
+      offset + elf_size != length) {
+    return "malformed vmcode header";
+  }
+  for (uint64_t i = 128 + uint64_t{count} * 16; i < offset; i++) {
+    if (bytes[i] != 0) return "malformed vmcode padding";
+  }
+  uint8_t digest[SHA256_DIGEST_LENGTH];
+  SHA256(bytes + offset, elf_size, digest);
+  if (memcmp(digest, bytes + 80, sizeof(digest)) != 0) {
+    return "vmcode ELF hash mismatch";
+  }
+  if (release_text == nullptr) return "no release to check the patch against";
+  SHA256(release_text, ReadU32(bytes + 112), digest);
+  if (memcmp(digest, bytes + 48, sizeof(digest)) != 0) {
+    return "patch was linked against a different release";
+  }
+  *elf_offset = offset;
+  *link_count = count;
+  *links = reinterpret_cast<dart::MixedLink*>(
+      malloc(Utils::Maximum<intptr_t>(count, 1) * sizeof(dart::MixedLink)));
+  memcpy(*links, bytes + 128, count * sizeof(dart::MixedLink));
+  return nullptr;
+}
+
+// DART_MIXED_BASE=<release snapshot> runs the snapshot given on the command
+// line as a patch of that release. The patch is either a vmcode v1 container
+// (link records + ELF) or a plain ELF, linked by identity (testing). Its text
+// is mapped without execute permission; linked code runs from the release,
+// the rest is simulated. If the patch is rejected for any reason, the release
+// runs unpatched (fail closed).
+// DART_MIXED_TEST_UNMAP_BASE=1 (testing) hides the release image from the
+// patch while keeping it available for the fallback.
+static void MixedModeLoad(const char* script_name) {
+  const char* base_path = getenv("DART_MIXED_BASE");
+  if (strcmp(base_path, "none") != 0) {
+    AppSnapshot* base = Snapshot::TryReadAppSnapshot(base_path, false);
+    if (base == nullptr || !base->IsAOT()) {
+      Syslog::PrintErr("Cannot load mixed-mode release %s\n", base_path);
+      Platform::Exit(kErrorExitCode);
+    }
+    // Leaked: the release stays mapped for the process lifetime.
+    base->SetBuffers(&mixed_release_data, &mixed_release_text);
+  }
+  vm_run_app_snapshot = true;
+  auto reject = [](const char* reason) {
+    if (mixed_release_data == nullptr) {
+      Syslog::PrintErr("mixed: patch rejected (%s) and no release\n", reason);
+      Platform::Exit(kErrorExitCode);
+    }
+    MixedModeFallBackToRelease(reason);
+  };
+
+  File* file = File::Open(nullptr, script_name, File::kRead);
+  if (file == nullptr) return reject("cannot open the patch");
+  const uint64_t length = file->Length();
+  uint8_t* bytes = reinterpret_cast<uint8_t*>(malloc(length + 1));
+  const bool read = file->ReadFully(bytes, length);
+  file->Release();
+  if (!read) {
+    free(bytes);
+    return reject("cannot read the patch");
+  }
+  const bool is_vmcode = length >= 8 && memcmp(bytes, "OSBVMC", 6) == 0;
+  uint64_t elf_offset = 0;
+  dart::MixedLink* links = nullptr;
+  intptr_t link_count = 0;
+  if (is_vmcode) {
+    const char* error = ParseVmcode(bytes, length, mixed_release_text,
+                                    &elf_offset, &links, &link_count);
+    free(bytes);
+    if (error != nullptr) return reject(error);
+  } else {
+    free(bytes);
+  }
+
+  elf_loader_map_text_read_only = true;
+  const char* elf_error = nullptr;
+  const uint8_t* patch_data = nullptr;
+  const uint8_t* patch_text = nullptr;
+  Dart_LoadedElf* elf = Dart_LoadELF(script_name, elf_offset, &elf_error,
+                                     &patch_data, &patch_text);
+  elf_loader_map_text_read_only = false;
+  if (elf == nullptr) {
+    free(links);
+    return reject(elf_error);
+  }
+  app_snapshot_data = patch_data;
+  app_snapshot_text = patch_text;
+
+  const uint8_t* base_text = mixed_release_text;
+  const char* unmap = getenv("DART_MIXED_TEST_UNMAP_BASE");
+  if (unmap != nullptr && unmap[0] == '1') base_text = nullptr;
+  const char* error = nullptr;
+  const bool ok = Dart_MixedModeRegisterImages(patch_text, base_text, links,
+                                               link_count, &error);
+  free(links);
+  // Accepted for now; LinkImage may still reject the patch while the isolate
+  // group is created (see RunMainIsolate).
+  if (!ok) reject(error);
 }
 #endif
 static bool kernel_isolate_is_running = false;
@@ -1435,14 +1566,12 @@ void main(int argc, char** argv) {
           false DEBUG_ONLY(|| Options::force_load_from_memory());
 #if defined(DART_MIXED_MODE)
       if (getenv("DART_MIXED_BASE") != nullptr) {
-        elf_loader_map_text_read_only = true;
+        MixedModeLoad(script_name);
+        return;
       }
 #endif
       app_snapshot =
           Snapshot::TryReadAppSnapshot(script_name, force_load_from_memory);
-#if defined(DART_MIXED_MODE)
-      elf_loader_map_text_read_only = false;
-#endif
     }
     if (app_snapshot != nullptr && app_snapshot->IsJITorAOT()) {
       if (app_snapshot->IsAOT() && !Dart_IsPrecompiledRuntime()) {
@@ -1459,64 +1588,6 @@ void main(int argc, char** argv) {
       }
       vm_run_app_snapshot = true;
       app_snapshot->SetBuffers(&app_snapshot_data, &app_snapshot_text);
-#if defined(DART_MIXED_MODE)
-      // DART_MIXED_BASE=<release snapshot> runs the snapshot given on the
-      // command line as a patch: its text is mapped without execute
-      // permission (see TryReadAppSnapshot below); code identical to the
-      // release runs from the release's text, the rest is simulated.
-      // DART_MIXED_BASE=none simulates all code.
-      // DART_MIXED_LINK_TABLE=<file> supplies the linker's table (otherwise
-      // the runtime links by identity). If the patch is rejected for any
-      // reason, the release runs unpatched (fail closed).
-      // DART_MIXED_TEST_UNMAP_BASE=1 (testing) hides the release image from
-      // the patch while keeping it available for the fallback.
-      if (const char* base_path = getenv("DART_MIXED_BASE")) {
-        const uint8_t* base_text = nullptr;
-        if (strcmp(base_path, "none") != 0) {
-          AppSnapshot* base = Snapshot::TryReadAppSnapshot(base_path, false);
-          if (base == nullptr || !base->IsAOT()) {
-            Syslog::PrintErr("Cannot load mixed-mode release %s\n",
-                             base_path);
-            Platform::Exit(kErrorExitCode);
-          }
-          // Leaked: the release stays mapped for the process lifetime.
-          base->SetBuffers(&mixed_release_data, &mixed_release_text);
-          base_text = mixed_release_text;
-        }
-        uint8_t* table = nullptr;
-        intptr_t table_size = 0;
-        const char* table_error = nullptr;
-        if (const char* table_path = getenv("DART_MIXED_LINK_TABLE")) {
-          File* file = File::Open(nullptr, table_path, File::kRead);
-          if (file == nullptr) {
-            table_error = "cannot open the link table";
-          } else {
-            table_size = file->Length();
-            table = reinterpret_cast<uint8_t*>(malloc(table_size + 1));
-            if (!file->ReadFully(table, table_size)) {
-              table_error = "cannot read the link table";
-            }
-            file->Release();
-          }
-        }
-        const char* error = table_error;
-        const char* unmap = getenv("DART_MIXED_TEST_UNMAP_BASE");
-        if (unmap != nullptr && unmap[0] == '1') base_text = nullptr;
-        if (error == nullptr &&
-            Dart_MixedModeRegisterImages(app_snapshot_text, base_text, table,
-                                         table_size, &error)) {
-          // Patch accepted for now; LinkImage may still reject it while the
-          // isolate group is created (see RunMainIsolate).
-        } else if (mixed_release_data != nullptr) {
-          MixedModeFallBackToRelease(error);
-        } else {
-          Syslog::PrintErr("mixed: patch rejected (%s) and no release\n",
-                           error);
-          Platform::Exit(kErrorExitCode);
-        }
-        free(table);
-      }
-#endif
     } else if (app_snapshot == nullptr && Dart_IsPrecompiledRuntime()) {
       Syslog::PrintErr(
           "%s is not an AOT snapshot,"

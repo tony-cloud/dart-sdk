@@ -57,9 +57,9 @@ struct BaseRange {
 BaseRange* base_ranges = nullptr;
 intptr_t base_range_count = 0;
 
-// Link table given by the embedder (copied), or nullptr for identity mode.
-MixedLinkTableHeader table_header;
-MixedLinkTableEntry* table_entries = nullptr;
+// Link records given by the embedder (copied), or nullptr for identity mode.
+MixedLink* table_links = nullptr;
+intptr_t table_link_count = 0;
 
 uword gate_count = 0;
 std::atomic<uword> next_gate = {0};
@@ -106,23 +106,66 @@ intptr_t FindEntryIndex(uword pc) {
   return lo;
 }
 
-// Target of a pc-relative branch or address computation, or 0.
-uword PcRelativeTarget(uword pc, uint32_t instr) {
+// Pc-relative instructions. kind: 0 = none, 1 = b, 2 = bl, 3 = any other
+// pc-relative branch, literal load or address computation.
+int PcRelative(uword pc, uint32_t instr, uword* target) {
   if ((instr & 0x7C000000) == 0x14000000) {  // b / bl imm26
     const int64_t imm26 = static_cast<int32_t>(instr << 6) >> 6;
-    return pc + (imm26 << 2);
+    *target = pc + (imm26 << 2);
+    return (instr & 0x80000000) != 0 ? 2 : 1;
   }
-  if ((instr & 0x9F000000) == 0x10000000) {  // adr
-    int64_t imm = ((instr >> 5) & 0x7FFFF) << 2 | ((instr >> 29) & 3);
-    imm = (imm << 43) >> 43;
-    return pc + imm;
+  int64_t imm;
+  if ((instr & 0xFF000010) == 0x54000000 ||  // b.cond
+      (instr & 0x7E000000) == 0x34000000 ||  // cbz / cbnz
+      (instr & 0x3B000000) == 0x18000000) {  // ldr (literal)
+    imm = static_cast<int32_t>(((instr >> 5) & 0x7FFFF) << 13) >> 13;
+    *target = pc + (imm << 2);
+    return 3;
   }
-  if ((instr & 0x9F000000) == 0x90000000) {  // adrp
-    int64_t imm = ((instr >> 5) & 0x7FFFF) << 2 | ((instr >> 29) & 3);
+  if ((instr & 0x7E000000) == 0x36000000) {  // tbz / tbnz
+    imm = static_cast<int32_t>(((instr >> 5) & 0x3FFF) << 18) >> 18;
+    *target = pc + (imm << 2);
+    return 3;
+  }
+  if ((instr & 0x1F000000) == 0x10000000) {  // adr / adrp
+    imm = ((instr >> 5) & 0x7FFFF) << 2 | ((instr >> 29) & 3);
     imm = (imm << 43) >> 43;
-    return (pc & ~static_cast<uword>(0xFFF)) + (imm << 12);
+    if ((instr & 0x80000000) != 0) {
+      // adrp: always treated as leaving the entry (the linker refuses it).
+      *target = ~static_cast<uword>(0);
+    } else {
+      *target = pc + imm;
+    }
+    return 3;
   }
   return 0;
+}
+
+// Whether linked entry i may run from the release: every instruction equals
+// the release copy, except direct branches (b/bl) leaving the entry, which in
+// the release must reach the release copy of a linked patch entry at the same
+// offset (the displacement differs when the layout differs). Other
+// pc-relative references leaving the entry are not allowed.
+bool VerifyEntry(intptr_t i) {
+  const uword lo = entry_start[i], hi = entry_start[i + 1];
+  const intptr_t delta = entry_delta[i];
+  for (uword pc = lo; pc + 4 <= hi; pc += 4) {
+    const uint32_t pw = *reinterpret_cast<const uint32_t*>(pc);
+    const uint32_t bw = *reinterpret_cast<const uint32_t*>(pc + delta);
+    uword pt = 0;
+    const int kind = PcRelative(pc, pw, &pt);
+    if (kind == 0 || (pt >= lo && pt < hi)) {
+      if (pw != bw) return false;
+      continue;
+    }
+    if (kind == 3) return false;
+    const intptr_t j = FindEntryIndex(pt);
+    if (j < 0 || !entry_linked[j]) return false;
+    uword bt = 0;
+    if (PcRelative(pc + delta, bw, &bt) != kind) return false;
+    if (bt != pt + entry_delta[j]) return false;
+  }
+  return true;
 }
 
 bool IsCall(uint32_t instr) {
@@ -145,25 +188,10 @@ void FreeLinkState() {
 
 }  // namespace
 
-uint64_t MixedMode::HashImage(const uint8_t* image) {
-  const uword size = ImageEnd(image) - reinterpret_cast<uword>(image);
-  uint64_t hash = 0xcbf29ce484222325ULL;
-  uword i = 0;
-  for (; i + 8 <= size; i += 8) {
-    uint64_t word;
-    memcpy(&word, image + i, 8);
-    hash = (hash ^ word) * 0x100000001b3ULL;
-  }
-  for (; i < size; i++) {
-    hash = (hash ^ image[i]) * 0x100000001b3ULL;
-  }
-  return hash;
-}
-
 bool MixedMode::RegisterImages(const uint8_t* patch_text,
                                const uint8_t* base_text,
-                               const uint8_t* link_table,
-                               intptr_t link_table_size,
+                               const MixedLink* links,
+                               intptr_t link_count,
                                const char** error) {
   if (Thread::mixed_area_offset() != DART_MIXED_AREA_OFFSET) {
     FATAL("Mixed mode: rebuild with dart_mixed_area_offset=%" Pd
@@ -175,62 +203,44 @@ bool MixedMode::RegisterImages(const uint8_t* patch_text,
     *error = "no patch image";
     return false;
   }
-  if (link_table == nullptr && base_text == nullptr) {
+  if (links == nullptr && base_text == nullptr) {
     *error = "identity linking needs the release image";
     return false;
   }
-
-  if (link_table != nullptr) {
-    if (link_table_size < static_cast<intptr_t>(sizeof(MixedLinkTableHeader))) {
-      *error = "link table truncated";
+  if (links != nullptr) {
+    if (link_count > 0 && base_text == nullptr) {
+      *error = "patch links release code but no release image is mapped";
       return false;
     }
-    memcpy(&table_header, link_table, sizeof(table_header));
-    if (table_header.magic != MixedLinkTableHeader::kMagic ||
-        table_header.version != MixedLinkTableHeader::kVersion) {
-      *error = "link table has a bad magic or version";
-      return false;
-    }
-    const intptr_t entries_size =
-        static_cast<intptr_t>(table_header.entry_count) *
-        sizeof(MixedLinkTableEntry);
-    if (link_table_size != static_cast<intptr_t>(sizeof(table_header)) +
-                               entries_size) {
-      *error = "link table size does not match its entry count";
-      return false;
-    }
-    const uword patch_size = ImageEnd(patch_text) -
-                             reinterpret_cast<uword>(patch_text);
-    if (table_header.patch_size != patch_size) {
-      *error = "link table was made for a different patch";
-      return false;
-    }
-    bool needs_base = false;
-    for (uint32_t i = 0; i < table_header.entry_count; i++) {
-      MixedLinkTableEntry entry;
-      memcpy(&entry,
-             link_table + sizeof(table_header) + i * sizeof(entry),
-             sizeof(entry));
-      if (entry.base_offset != MixedLinkTableEntry::kUnlinked) {
-        needs_base = true;
-        break;
-      }
-    }
-    if (needs_base) {
-      if (base_text == nullptr) {
-        *error = "patch links release code but no release image is mapped";
+    const uword patch_size =
+        ImageEnd(patch_text) - reinterpret_cast<uword>(patch_text);
+    const uword base_size =
+        base_text == nullptr
+            ? 0
+            : ImageEnd(base_text) - reinterpret_cast<uword>(base_text);
+    uint64_t previous_end = 0;
+    for (intptr_t i = 0; i < link_count; i++) {
+      const MixedLink& l = links[i];
+      if (l.flags != 0 || l.size == 0 || (l.size & 3) != 0 ||
+          (l.patch_offset & 3) != 0 || (l.release_offset & 3) != 0) {
+        *error = "malformed link record";
         return false;
       }
-      const uword base_size =
-          ImageEnd(base_text) - reinterpret_cast<uword>(base_text);
-      if (table_header.base_size != base_size ||
-          table_header.base_hash != HashImage(base_text)) {
-        *error = "patch was linked against a different release";
+      if (l.patch_offset < previous_end) {
+        *error = "link records are not sorted or overlap";
+        return false;
+      }
+      previous_end = static_cast<uint64_t>(l.patch_offset) + l.size;
+      if (previous_end > patch_size ||
+          static_cast<uint64_t>(l.release_offset) + l.size > base_size) {
+        *error = "link record outside the patch or release image";
         return false;
       }
     }
-    table_entries = reinterpret_cast<MixedLinkTableEntry*>(malloc(entries_size));
-    memcpy(table_entries, link_table + sizeof(table_header), entries_size);
+    table_link_count = link_count;
+    table_links = reinterpret_cast<MixedLink*>(
+        malloc(Utils::Maximum<intptr_t>(link_count, 1) * sizeof(MixedLink)));
+    memcpy(table_links, links, link_count * sizeof(MixedLink));
   }
 
   patch_image_ = patch_text;
@@ -264,8 +274,9 @@ void MixedMode::Deactivate() {
   base_start_ = base_size_ = 0;
   patch_start_ = patch_size_ = 0;
   gates_size_ = 0;
-  free(table_entries);
-  table_entries = nullptr;
+  free(table_links);
+  table_links = nullptr;
+  table_link_count = 0;
   FreeLinkState();
 }
 
@@ -375,77 +386,57 @@ const char* MixedMode::LinkImage(uword start_pc,
   };
 
   intptr_t identical = 0;
-  if (table_entries != nullptr) {
-    // Validate the linker's table against the snapshot it claims to describe.
-    if (static_cast<intptr_t>(table_header.entry_count) != length) {
-      return fail("link table entry count does not match the patch");
-    }
-    for (intptr_t i = 0; i < length; i++) {
-      const MixedLinkTableEntry& e = table_entries[i];
-      const uword lo = entry_start[i], hi = entry_start[i + 1];
-      if (e.patch_offset != lo - patch_start_ || e.size != hi - lo) {
-        return fail("link table entries do not match the patch's code");
+  intptr_t cascaded = 0;
+  if (table_links != nullptr) {
+    // Map every record to the entry it names, then verify every linked
+    // entry against the release (word-wise, see VerifyEntry).
+    for (intptr_t r = 0; r < table_link_count; r++) {
+      const MixedLink& l = table_links[r];
+      const uword lo = patch_start_ + l.patch_offset;
+      const intptr_t i = FindEntryIndex(lo);
+      if (i < 0 || entry_start[i] != lo) {
+        return fail("link record does not start a patch code entry");
       }
-      if (e.base_offset == MixedLinkTableEntry::kUnlinked) continue;
-      if (base_image_ == nullptr ||
-          static_cast<uword>(e.base_offset) + e.size > base_size_) {
-        return fail("link table points outside the release image");
-      }
-      const uword base_lo = base_start_ + e.base_offset;
-      if (memcmp(reinterpret_cast<void*>(lo), reinterpret_cast<void*>(base_lo),
-                 hi - lo) != 0) {
-        return fail("linked code differs from the release copy");
+      if (entry_start[i + 1] - lo != l.size) {
+        return fail("link record size differs from the patch code entry");
       }
       entry_linked[i] = 1;
-      entry_delta[i] = base_lo - lo;
-      identical++;
+      entry_delta[i] = (base_start_ + l.release_offset) - lo;
+    }
+    for (intptr_t i = 0; i < length; i++) {
+      if (entry_linked[i] && !VerifyEntry(i)) {
+        return fail("linked code does not match the release copy");
+      }
+      if (entry_linked[i]) identical++;
     }
   } else {
-    // Identity linking (spike): an entry may be linked if the release has
-    // identical bytes at the same image offset.
+    // Identity linking (testing): start from every entry that fits in the
+    // release at the same image offset and remove entries that fail
+    // VerifyEntry until stable (greatest fixpoint, as the linker's rule 3).
+    const intptr_t identity_delta = base_start_ - patch_start_;
     for (intptr_t i = 0; i < length; i++) {
       const uword lo = entry_start[i], hi = entry_start[i + 1];
       if (unlink_all || base_image_ == nullptr) continue;
       if (lo - start_pc < unlink_below) continue;
-      const uword base_lo = lo - patch_start_ + base_start_;
-      if (base_lo + (hi - lo) > base_start_ + base_size_) continue;
-      if (memcmp(reinterpret_cast<void*>(lo), reinterpret_cast<void*>(base_lo),
-                 hi - lo) == 0) {
-        entry_linked[i] = 1;
-        entry_delta[i] = base_lo - lo;
-        identical++;
-      }
+      if (lo + identity_delta + (hi - lo) > base_start_ + base_size_) continue;
+      entry_linked[i] = 1;
+      entry_delta[i] = identity_delta;
     }
-  }
-
-  // Link rule: a linked entry must not reach unlinked code by a pc-relative
-  // branch or address computation, since in the release that instruction
-  // reaches the release's stale copy (and the delta must agree). Identity
-  // mode unlinks such entries to a fixed point; a linker-provided table that
-  // violates the rule is rejected.
-  intptr_t cascaded = 0;
-  bool changed = true;
-  while (changed) {
-    changed = false;
-    for (intptr_t i = 0; i < length; i++) {
-      if (!entry_linked[i]) continue;
-      const uword lo = entry_start[i], hi = entry_start[i + 1];
-      for (uword pc = lo; pc + 4 <= hi; pc += 4) {
-        const uint32_t instr = *reinterpret_cast<const uint32_t*>(pc);
-        const uword target = PcRelativeTarget(pc, instr);
-        if (target == 0 || (target >= lo && target < hi)) continue;
-        const intptr_t j = FindEntryIndex(target);
-        if (j >= 0 && entry_linked[j] && entry_delta[j] == entry_delta[i]) {
-          continue;
+    bool changed = true;
+    bool first = true;
+    while (changed) {
+      changed = false;
+      for (intptr_t i = 0; i < length; i++) {
+        if (entry_linked[i] && !VerifyEntry(i)) {
+          entry_linked[i] = 0;
+          changed = true;
+          if (!first) cascaded++;
         }
-        if (table_entries != nullptr) {
-          return fail("link table links code that reaches unlinked code");
-        }
-        entry_linked[i] = 0;
-        changed = true;
-        cascaded++;
-        break;
       }
+      first = false;
+    }
+    for (intptr_t i = 0; i < length; i++) {
+      if (entry_linked[i]) identical++;
     }
   }
 
@@ -494,27 +485,17 @@ const char* MixedMode::LinkImage(uword start_pc,
         });
 
   if (const char* path = getenv("DART_MIXED_DUMP_LINK_TABLE")) {
-    // Testing aid: write the table this run used, in the on-disk format.
+    // Testing aid: write the vmcode v1 link records this run used.
     if (FILE* f = fopen(path, "wb")) {
-      MixedLinkTableHeader h;
-      memset(&h, 0, sizeof(h));
-      h.magic = MixedLinkTableHeader::kMagic;
-      h.version = MixedLinkTableHeader::kVersion;
-      h.base_size = base_size_;
-      h.base_hash = base_image_ != nullptr ? HashImage(base_image_) : 0;
-      h.patch_size = patch_size_;
-      h.entry_count = static_cast<uint32_t>(length);
-      fwrite(&h, sizeof(h), 1, f);
       for (intptr_t i = 0; i < length; i++) {
-        MixedLinkTableEntry e;
-        e.patch_offset = static_cast<uint32_t>(entry_start[i] - patch_start_);
-        e.size = static_cast<uint32_t>(entry_start[i + 1] - entry_start[i]);
-        e.base_offset =
-            entry_linked[i]
-                ? static_cast<uint32_t>(entry_start[i] + entry_delta[i] -
-                                        base_start_)
-                : MixedLinkTableEntry::kUnlinked;
-        fwrite(&e, sizeof(e), 1, f);
+        if (!entry_linked[i]) continue;
+        MixedLink l;
+        l.patch_offset = static_cast<uint32_t>(entry_start[i] - patch_start_);
+        l.release_offset = static_cast<uint32_t>(entry_start[i] +
+                                                 entry_delta[i] - base_start_);
+        l.size = static_cast<uint32_t>(entry_start[i + 1] - entry_start[i]);
+        l.flags = 0;
+        fwrite(&l, sizeof(l), 1, f);
       }
       fclose(f);
     }
@@ -527,7 +508,7 @@ const char* MixedMode::LinkImage(uword start_pc,
         " cascade-unlinked=%" Pd " linked=%" Pd " unlinked=%" Pd
         " linked-bytes=%" Pu "/%" Pu " (%.3f%%) gates-budget=%" Pd "/%" Pu
         " patch=[%#" Px ",%#" Px ") base=%#" Px "\n",
-        table_entries != nullptr ? "file" : "identity", length, identical,
+        table_links != nullptr ? "vmcode" : "identity", length, identical,
         cascaded, linked, unlinked, linked_bytes, total_bytes,
         total_bytes == 0 ? 0.0 : 100.0 * linked_bytes / total_bytes,
         gates_needed, gate_count, patch_start_, patch_start_ + patch_size_,

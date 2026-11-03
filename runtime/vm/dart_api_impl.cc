@@ -8542,11 +8542,11 @@ void ThrowCantRunWithoutIsolateError() {
 #if defined(DART_MIXED_MODE)
 DART_EXPORT bool Dart_MixedModeRegisterImages(const uint8_t* patch_text,
                                               const uint8_t* base_text,
-                                              const uint8_t* link_table,
-                                              intptr_t link_table_size,
+                                              const dart::MixedLink* links,
+                                              intptr_t link_count,
                                               const char** error) {
-  return dart::MixedMode::RegisterImages(patch_text, base_text, link_table,
-                                         link_table_size, error);
+  return dart::MixedMode::RegisterImages(patch_text, base_text, links,
+                                         link_count, error);
 }
 
 DART_EXPORT void Dart_MixedModeDeactivate() {

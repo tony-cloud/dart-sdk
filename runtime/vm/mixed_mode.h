@@ -50,44 +50,35 @@ struct MixedRegs {
 };
 static_assert(sizeof(MixedRegs) == 800, "Keep in sync with the gate asm");
 
-// On-disk link table (version 1, little endian), produced by the patch
-// linker and consumed by RegisterImages/LinkImage. Offsets are relative to the
-// start of the respective instructions image (_kDartSnapshotText).
-struct MixedLinkTableHeader {
-  static constexpr uint32_t kMagic = 0x544C4D44;  // "DMLT"
-  static constexpr uint32_t kVersion = 1;
-  uint32_t magic;
-  uint32_t version;
-  uint64_t base_size;    // Size of the release instructions image.
-  uint64_t base_hash;    // MixedMode::HashImage of that image.
-  uint64_t patch_size;   // Size of the patch instructions image.
-  uint32_t entry_count;  // Must equal the patch's instructions-table length.
-  uint32_t reserved;
-};
-struct MixedLinkTableEntry {
-  static constexpr uint32_t kUnlinked = 0xFFFFFFFF;
+// One record of a vmcode v1 link table (docs/ios-linker/COMPILER_LINKER.md
+// section 6): the patch instructions entry whose payload starts at
+// `patch_offset` is linked to the identical release code at
+// `release_offset`. Offsets are relative to the respective instructions
+// image (_kDartSnapshotText). Entries without a record are unlinked.
+struct MixedLink {
   uint32_t patch_offset;
+  uint32_t release_offset;
   uint32_t size;
-  uint32_t base_offset;  // kUnlinked, or where the identical code lives.
+  uint32_t flags;  // Must be 0 in version 1.
 };
-static_assert(sizeof(MixedLinkTableHeader) == 40, "packed layout");
-static_assert(sizeof(MixedLinkTableEntry) == 12, "packed layout");
+static_assert(sizeof(MixedLink) == 16, "vmcode v1 link record");
 
 class MixedMode : public AllStatic {
  public:
   // Called by the embedder before the patch snapshot is deserialized.
   // `patch_text` is the instructions image of the patch (readable, not
   // executable); `base_text` is the instructions image of the release
-  // (executable), or nullptr if none is mapped. `link_table` may be nullptr:
-  // then the runtime links by identity (equal bytes at equal offsets), which
-  // is only valid for two compiles that share one layout (spike/testing).
+  // (executable), or nullptr if none is mapped. `links` are the linker's
+  // records (the embedder has already checked the vmcode hashes). If `links`
+  // is nullptr the runtime links by identity (equal bytes at equal offsets),
+  // which is only valid for two compiles that share one layout (testing).
   //
   // Returns false (and sets *error) if the patch must not be used; the
   // embedder must then run the release unpatched. Mixed mode stays inactive.
   static bool RegisterImages(const uint8_t* patch_text,
                              const uint8_t* base_text,
-                             const uint8_t* link_table,
-                             intptr_t link_table_size,
+                             const MixedLink* links,
+                             intptr_t link_count,
                              const char** error);
 
   // Undoes RegisterImages after a failure (before any code was entered).
@@ -157,9 +148,6 @@ class MixedMode : public AllStatic {
   static uword PatchToBase(uword patch_pc);
   // Patch pc for a pc inside linked release code.
   static uword BaseToPatch(uword base_pc);
-
-  // 64-bit FNV-1a over an instructions image (header included).
-  static uint64_t HashImage(const uint8_t* image);
 
   // Allocates the per-thread register area and side stack.
   static MixedRegs* NewThreadArea();
