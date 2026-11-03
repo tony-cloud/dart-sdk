@@ -258,6 +258,7 @@ base class VMOffsets {
   int get Thread_double_truncate_round_supported_offset => throw 'Unknown';
   int get Thread_service_extension_stream_offset => throw 'Unknown';
   int get Thread_thread_locals_offset => throw 'Unknown';
+  int get Thread_shorebird_overridden_cids_offset => throw 'Unknown';
   int get Thread_optimize_entry_offset => throw 'Unknown';
   int get Thread_optimize_stub_offset => throw 'Unknown';
   int get Thread_deoptimize_entry_offset => throw 'Unknown';
@@ -1107,6 +1108,8 @@ final class Arm64VMOffsets extends VMOffsets {
   int get Thread_service_extension_stream_offset => 0x910;
   @override
   int get Thread_thread_locals_offset => 0x918;
+  @override
+  int get Thread_shorebird_overridden_cids_offset => 0x920;
   @override
   int get Thread_optimize_entry_offset => 0x258;
   @override
@@ -2126,6 +2129,8 @@ final class Arm64ProductVMOffsets extends VMOffsets {
   int get Thread_service_extension_stream_offset => 0x910;
   @override
   int get Thread_thread_locals_offset => 0x918;
+  @override
+  int get Thread_shorebird_overridden_cids_offset => 0x920;
   @override
   int get Thread_optimize_entry_offset => 0x258;
   @override
