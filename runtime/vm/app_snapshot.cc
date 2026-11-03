@@ -9968,6 +9968,66 @@ class HeapLocker : public StackResource {
   FreeList* freelist_;
 };
 
+#if defined(DART_PRECOMPILED_RUNTIME) && defined(DART_MIXED_MODE)
+const char* MixedModeLinkSnapshot(const uint8_t* snapshot_data,
+                                  const uint8_t* snapshot_instructions) {
+  // Reads just enough of the isolate snapshot to find its instructions table
+  // (the same fields Deserializer::Deserialize starts with) and links the
+  // registered patch image. Needs no isolate or heap, so an embedder can do
+  // it before it creates the VM and boot the release if it fails.
+  if (snapshot_data == nullptr || snapshot_instructions == nullptr) {
+    return "no patch snapshot";
+  }
+  if (!MixedMode::IsPatchImage(snapshot_instructions)) {
+    return "the snapshot instructions are not the registered patch image";
+  }
+  if (MixedMode::active()) return nullptr;  // Linked already.
+  const Snapshot* snapshot = Snapshot::SetupFromBuffer(snapshot_data);
+  if (snapshot == nullptr || snapshot->kind() != Snapshot::kFullAOT) {
+    return "the patch is not an AOT snapshot";
+  }
+  ReadStream stream(snapshot->Addr(), snapshot->length());
+  if (snapshot->length() <= Snapshot::kHeaderSize) {
+    return "the patch snapshot is truncated";
+  }
+  stream.SetPosition(Snapshot::kHeaderSize);
+  const char* expected_version = Version::SnapshotString();
+  const intptr_t version_length = strlen(expected_version);
+  if (stream.PendingBytes() < version_length ||
+      strncmp(reinterpret_cast<const char*>(stream.AddressOfCurrentPosition()),
+              expected_version, version_length) != 0) {
+    return "the patch was compiled for a different Dart VM";
+  }
+  stream.Advance(version_length);
+  const char* features =
+      reinterpret_cast<const char*>(stream.AddressOfCurrentPosition());
+  const intptr_t features_length =
+      Utils::StrNLen(features, stream.PendingBytes());
+  if (features_length == stream.PendingBytes()) {
+    return "the patch snapshot is truncated";
+  }
+  stream.Advance(features_length + 1);
+  stream.ReadUnsigned();  // num_base_objects
+  stream.ReadUnsigned();  // num_objects
+  stream.ReadUnsigned();  // num_clusters
+  const intptr_t instructions_table_len = stream.ReadUnsigned();
+  const uint32_t instruction_table_data_offset = stream.ReadUnsigned();
+  if (instructions_table_len <= 0 || instruction_table_data_offset == 0 ||
+      !Utils::IsAligned(instruction_table_data_offset, kObjectAlignment)) {
+    return "the patch snapshot has no instructions table";
+  }
+  ImageReader reader(snapshot->DataImage(), snapshot_instructions);
+  const auto* rodata = reinterpret_cast<const UntaggedInstructionsTable::Data*>(
+      snapshot->DataImage() + instruction_table_data_offset +
+      OneByteString::data_offset());
+  static_assert(sizeof(UntaggedInstructionsTable::DataEntry) ==
+                2 * sizeof(uint32_t));
+  return MixedMode::LinkImage(reader.GetBareInstructionsAt(0),
+                              reader.GetBareInstructionsEnd(), rodata->length,
+                              &rodata->entries()[0].pc_offset, 2);
+}
+#endif
+
 void Deserializer::Deserialize(DeserializationRoots* roots) {
   const void* clustered_start = AddressOfCurrentPosition();
 
@@ -9981,9 +10041,11 @@ void Deserializer::Deserialize(DeserializationRoots* roots) {
 
 #if defined(DART_PRECOMPILED_RUNTIME) && defined(DART_MIXED_MODE)
   // Link the patch before anything is allocated, so that a rejected patch
-  // leaves no trace and the embedder can boot the release instead.
+  // leaves no trace and the embedder can boot the release instead. Skipped
+  // when the embedder linked it already (MixedModeLinkSnapshot).
   if (instructions_table_len > 0 && instruction_table_data_offset != 0 &&
-      MixedMode::IsPatchImage(image_reader_->instructions_image())) {
+      MixedMode::IsPatchImage(image_reader_->instructions_image()) &&
+      !MixedMode::active()) {
     const UntaggedInstructionsTable::Data* rodata;
     {
       NoSafepointScope no_safepoint;

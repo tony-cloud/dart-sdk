@@ -2536,6 +2536,7 @@ class UntaggedInstructionsTable : public UntaggedObject {
   uword start_pc_;
   uword end_pc_;
 
+  friend const char* MixedModeLinkSnapshot(const uint8_t*, const uint8_t*);
   friend class Deserializer;
 };
 

@@ -39,8 +39,8 @@ declare_args() {
   # for unlinked code of a mixed-mode patch snapshot (see vm/mixed_mode.h).
   dart_mixed_mode = false
 
-  # Offset of Thread::mixed_area_, needed by mixed_mode_gates_arm64.S.
-  # The runtime reports the correct value if this does not match.
+  # Unused (the gates read the Thread::mixed_area_ offset from a variable).
+  # Kept so that existing args.gn files stay valid.
   dart_mixed_area_offset = 0
 
   # The optimization level to use for debug builds. Defaults to 0 for builds

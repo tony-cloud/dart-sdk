@@ -53,14 +53,7 @@ extern void kDartCoreSnapshotText();
 #if defined(DART_MIXED_MODE)
 #include "bin/elf_loader.h"
 #include <openssl/sha.h>
-#include "vm/mixed_mode.h"  // MixedLink (plain struct).
-DART_EXPORT bool Dart_MixedModeRegisterImages(const uint8_t* patch_text,
-                                              const uint8_t* base_text,
-                                              const dart::MixedLink* links,
-                                              intptr_t link_count,
-                                              const char** error);
-DART_EXPORT void Dart_MixedModeDeactivate();
-DART_EXPORT void Dart_MixedModePrintStats();
+#include "include/dart_mixed_mode_api.h"
 #endif
 
 namespace dart {
@@ -116,7 +109,7 @@ static const char* ParseVmcode(const uint8_t* bytes,
                                uint64_t length,
                                const uint8_t* release_text,
                                uint64_t* elf_offset,
-                               dart::MixedLink** links,
+                               Dart_MixedLink** links,
                                intptr_t* link_count) {
   static const uint8_t kMagic[8] = {'O', 'S', 'B', 'V', 'M', 'C', 0, 1};
   if (length < 128 || memcmp(bytes, kMagic, 8) != 0) return "bad vmcode magic";
@@ -145,9 +138,9 @@ static const char* ParseVmcode(const uint8_t* bytes,
   }
   *elf_offset = offset;
   *link_count = count;
-  *links = reinterpret_cast<dart::MixedLink*>(
-      malloc(Utils::Maximum<intptr_t>(count, 1) * sizeof(dart::MixedLink)));
-  memcpy(*links, bytes + 128, count * sizeof(dart::MixedLink));
+  *links = reinterpret_cast<Dart_MixedLink*>(
+      malloc(Utils::Maximum<intptr_t>(count, 1) * sizeof(Dart_MixedLink)));
+  memcpy(*links, bytes + 128, count * sizeof(Dart_MixedLink));
   return nullptr;
 }
 
@@ -191,7 +184,7 @@ static void MixedModeLoad(const char* script_name) {
   }
   const bool is_vmcode = length >= 8 && memcmp(bytes, "OSBVMC", 6) == 0;
   uint64_t elf_offset = 0;
-  dart::MixedLink* links = nullptr;
+  Dart_MixedLink* links = nullptr;
   intptr_t link_count = 0;
   if (is_vmcode) {
     const char* error = ParseVmcode(bytes, length, mixed_release_text,
@@ -223,9 +216,13 @@ static void MixedModeLoad(const char* script_name) {
   const bool ok = Dart_MixedModeRegisterImages(patch_text, base_text, links,
                                                link_count, &error);
   free(links);
-  // Accepted for now; LinkImage may still reject the patch while the isolate
-  // group is created (see RunMainIsolate).
-  if (!ok) reject(error);
+  if (!ok) return reject(error);
+  // Link before the isolate group exists, as an engine would. The
+  // deserializer still rejects a patch whose stubs entered from C++ are
+  // unlinked (see RunMainIsolate).
+  if (!Dart_MixedModeLinkSnapshot(patch_data, patch_text, &error)) {
+    reject(error);
+  }
 }
 #endif
 static bool kernel_isolate_is_running = false;

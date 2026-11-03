@@ -22,6 +22,10 @@
 extern "C" {
 extern char DartMixedGatesStart[];
 extern char DartMixedGatesEnd[];
+// Offset of Thread::mixed_area_, read by DartMixedSimEnter (gates assembly).
+// A variable rather than an assembler constant, so one source works for
+// every build configuration.
+__attribute__((visibility("hidden"))) uintptr_t DartMixedAreaOffset = 0;
 }
 
 namespace dart {
@@ -199,11 +203,7 @@ bool MixedMode::RegisterImages(const uint8_t* patch_text,
                                const MixedLink* links,
                                intptr_t link_count,
                                const char** error) {
-  if (Thread::mixed_area_offset() != DART_MIXED_AREA_OFFSET) {
-    FATAL("Mixed mode: rebuild with dart_mixed_area_offset=%" Pd
-          " (built with %d)",
-          Thread::mixed_area_offset(), DART_MIXED_AREA_OFFSET);
-  }
+  DartMixedAreaOffset = Thread::mixed_area_offset();
   *error = nullptr;
   if (patch_text == nullptr) {
     *error = "no patch image";

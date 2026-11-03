@@ -210,12 +210,14 @@ config("dart_arch_config") {
     }
     defines += [ "DART_COMPRESSED_POINTERS" ]
   }
-  if (dart_mixed_mode) {
+  # Mixed mode is for the target's precompiled runtime only: an embedder
+  # that builds gen_snapshot in its host toolchain (e.g. the Flutter engine
+  # for iOS) keeps an unchanged gen_snapshot.
+  if (dart_mixed_mode && current_toolchain == default_toolchain) {
     defines += [
       "DART_INCLUDE_SIMULATOR",
       "DART_MIXED_MODE",
       "SIMULATOR_FFI",
-      "DART_MIXED_AREA_OFFSET=$dart_mixed_area_offset",
     ]
   }
   if (dart_force_simulator) {

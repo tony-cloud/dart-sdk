@@ -21,17 +21,20 @@
 #define SYM(x) x
 #endif
 
-// Offset of Thread::mixed_area_. Checked at startup by
-// MixedMode::CheckThreadOffset.
-#ifndef DART_MIXED_AREA_OFFSET
-#define DART_MIXED_AREA_OFFSET 0
-#endif
 
 #define GATE_COUNT 131072
 
+// reg = THR->mixed_area_, through the offset in DartMixedAreaOffset (set by
+// MixedMode::RegisterImages before any gate can be bound).
 .macro LOAD_AREA reg
-  add \reg, x26, #(DART_MIXED_AREA_OFFSET >> 12), lsl #12
-  ldr \reg, [\reg, #(DART_MIXED_AREA_OFFSET & 0xfff)]
+#if defined(__APPLE__)
+  adrp \reg, SYM(DartMixedAreaOffset)@PAGE
+  ldr \reg, [\reg, SYM(DartMixedAreaOffset)@PAGEOFF]
+#else
+  adrp \reg, DartMixedAreaOffset
+  ldr \reg, [\reg, :lo12:DartMixedAreaOffset]
+#endif
+  ldr \reg, [x26, \reg]
 .endm
 
   .text

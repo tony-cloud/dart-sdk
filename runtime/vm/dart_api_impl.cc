@@ -29,6 +29,7 @@
 #include "vm/compiler/jit/compiler.h"
 #include "vm/dart.h"
 #include "vm/dart_api_impl.h"
+#include "include/dart_mixed_mode_api.h"
 #include "vm/dart_api_message.h"
 #include "vm/dart_api_state.h"
 #include "vm/dart_entry.h"
@@ -8540,17 +8541,26 @@ void ThrowCantRunWithoutIsolateError() {
 }  // namespace dart
 
 #if defined(DART_MIXED_MODE)
+static_assert(sizeof(Dart_MixedLink) == sizeof(dart::MixedLink));
 DART_EXPORT bool Dart_MixedModeRegisterImages(const uint8_t* patch_text,
                                               const uint8_t* base_text,
-                                              const dart::MixedLink* links,
+                                              const Dart_MixedLink* links,
                                               intptr_t link_count,
                                               const char** error) {
-  return dart::MixedMode::RegisterImages(patch_text, base_text, links,
-                                         link_count, error);
+  return dart::MixedMode::RegisterImages(
+      patch_text, base_text, reinterpret_cast<const dart::MixedLink*>(links),
+      link_count, error);
 }
 
 DART_EXPORT void Dart_MixedModeDeactivate() {
   dart::MixedMode::Deactivate();
+}
+
+DART_EXPORT bool Dart_MixedModeLinkSnapshot(const uint8_t* snapshot_data,
+                                            const uint8_t* snapshot_instructions,
+                                            const char** error) {
+  *error = dart::MixedModeLinkSnapshot(snapshot_data, snapshot_instructions);
+  return *error == nullptr;
 }
 
 DART_EXPORT void Dart_MixedModePrintStats() {

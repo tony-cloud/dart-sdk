@@ -192,6 +192,11 @@ class MixedMode : public AllStatic {
 // the simulator and returns the native address at which to resume.
 extern "C" uword DartMixedRun(MixedRegs* regs);
 
+// Links the registered patch image from its isolate snapshot before any
+// isolate exists (app_snapshot.cc). Returns nullptr or a static error.
+const char* MixedModeLinkSnapshot(const uint8_t* snapshot_data,
+                                  const uint8_t* snapshot_instructions);
+
 }  // namespace dart
 
 #endif  // defined(DART_MIXED_MODE)
