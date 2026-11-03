@@ -14073,6 +14073,14 @@ EntryPointPragma FindEntryPointPragma(IsolateGroup* isolate_group,
                                       Field* reusable_field_handle,
                                       Object* reusable_object_handle);
 
+// Whether the metadata has a dyn-module:dynamically-callable pragma but no
+// other entry point style pragma, i.e. the declaration is dynamically callable
+// but must not be retained unconditionally.
+bool HasOnlyDynamicallyCallablePragma(IsolateGroup* isolate_group,
+                                      const Array& metadata,
+                                      Field* reusable_field_handle,
+                                      Object* reusable_object_handle);
+
 #undef PRECOMPILER_WSR_FIELD_DECLARATION
 
 }  // namespace dart

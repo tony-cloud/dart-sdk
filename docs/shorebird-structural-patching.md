@@ -13,8 +13,9 @@ flag to both full baseline and updated `dart2bytecode` compilation. Generate the
 update with `--patch-base` referencing that baseline bytecode.
 
 The frontend annotates the host hierarchy and callable declarations, including
-private and SDK declarations, so AOT optimizations retain dynamic dispatch and
-type checks needed by later classes. It skips closed-world devirtualization and
+private application declarations and the public SDK API (see "Retention rule for
+`dart:` libraries"), so AOT optimizations retain dynamic dispatch and type
+checks needed by later classes. It skips closed-world devirtualization and
 dynamic-invocation elimination. This increases retained code and snapshot size.
 Ordinary `--no-tfa` does not enable this profile.
 
@@ -68,10 +69,69 @@ the flow graph builder already clears unchecked-entry use for patchable targets.
 `tools/test_aot_patchable_direct_calls.py` checks the generated code (no
 `CallStaticFunction` stub references) and the AOT/patched results.
 
-The annotator only keeps the host hierarchy open where a patch could use it:
-private, `final` and `sealed` classes in `dart:` libraries (and their members)
-are marked callable but not extendable or overridable, because patches cannot add
-code to `dart:` libraries and the language forbids those subclasses.
+## Retention rule for `dart:` libraries
+
+Patches cannot add code to `dart:` libraries and can never name their private
+declarations, and the language forbids extending, implementing or mixing in a
+private, `final` or `sealed` class from another library. Application libraries
+are annotated completely (every class, member and private declaration, because
+a patch can add code to an existing library). `dart:` libraries are not: every
+`callable` or `dynamically-callable` annotation is an AOT root (an entry
+point), so annotating private `dart:` declarations only bloated the snapshot
+with dynamic-invocation forwarders, tear-offs, method extractors, `Function`
+objects, strings and code source maps (`dart:typed_data` dominated).
+`annotateShorebirdStructuralComponent` therefore applies this rule to `dart:`:
+
+* Public classes are annotated as before (callable; extendable and overridable
+  unless `final`, `sealed` or private). Their public members are callable and
+  dynamically callable (and overridable). Their private members are not
+  annotated.
+* Private classes get no class annotation (they are neither extendable nor
+  instantiated roots): they are retained exactly when reachable code allocates
+  them, for example `List()` returning a `_GrowableList` or `Float32List(n)`
+  returning a `_Float32List`.
+* An instance member of a private class is dynamically callable (only; that is
+  not a root by itself) if its name and getter/setter kind is declared by a
+  public supertype, including `Object`. This is the "public selector" rule: a
+  patch can call exactly those on an object whose runtime class is private,
+  statically through the public interface (`list.add(1)`), dynamically
+  (`(x as dynamic).add(1)`, which the interpreter only allows for
+  dynamically-callable functions; others raise `NoSuchMethodError`) or by
+  tear-off (`list.add`). With `--shorebird-structural-patching` or
+  `--shorebird-full-replacement`, `gen_snapshot` does not root such members;
+  once the class is allocated it keeps the member, its dynamic invocation
+  forwarder (where one is needed) and, via normal selector handling, any
+  tear-off support. Public-named members that no public supertype declares are
+  not annotated: only an unjustified dynamic call could reach them.
+* Private top-level and static members and private constructors are not
+  annotated, with exceptions that a patch can reach indirectly and that stay
+  retained: (a) declarations the patch compilers reference by name
+  (`_StringBase._interpolate`, `_SuspendState` for `async`, `LateError`,
+  `_Cell`, `_Future`, `_Enum`, `_GrowableList._literal`, FFI helpers, ...; the
+  list `_bytecodeSdkDependencies` is checked by a test against every private
+  `dart:` `LibraryIndex` lookup in `core_types.dart`, `pkg/vm/lib/**` and
+  `pkg/dart2bytecode/lib/**`); (b) targets of redirecting factories (the CFE
+  compiles `MapEntry(k, v)` as a call of `MapEntry._`), with their class; (c)
+  classes with a const constructor and their instance fields, since a patch
+  can create constants (`Endian.little`, `Abi.macosArm64` with its private
+  `_OS`, enum values) and the bytecode refers to classes and fields by name.
+
+A patch that needs a removed private declaration (`_GrowableList`,
+`_StringBase`, a private member such as `_growToNextCapacity`, or
+`dart:_internal`) still cannot be expressed: the bytecode compiler rejects it.
+`tools/test_aot_structural_public_api.py` records this together with patches
+that use public `dart:` APIs (collections, strings, typed data, dynamic calls,
+tear-offs, Future/Stream, language features) that the base program never
+reaches, and compares their results with the host VM. Patch bytecode that
+references a declaration the snapshot dropped is rejected at install time with
+the missing name in the message.
+
+The unsound upper bound from not annotating public selectors of private
+classes at all (host `widgets.dart` snapshot 14.3 to 7.6 MB) is therefore not
+reachable; the rule above measures 14.3 to 10.2 MB (see the commit message).
+Limiting `tornOff` in `table_selector_assigner.dart` to public methods was
+considered and not done: without TFA nothing proves that no `dart:` code
+tears off a private instance method through dynamic dispatch.
 
 ## Installation and failure boundary
 

@@ -1639,6 +1639,16 @@ void Precompiler::AddAnnotatedRoots() {
           EntryPointPragma pragma = FindEntryPointPragma(
               IG, metadata, &reusable_field_handle, &reusable_object_handle);
           if (!EntryPointPragmaUtils::AllowsAccess(pragma)) continue;
+          // Shorebird structural profile: public-selector members of private
+          // core classes are only dynamically callable; keep them when the
+          // class is allocated, not unconditionally.
+          if ((FLAG_shorebird_structural_patching ||
+               FLAG_shorebird_full_replacement) &&
+              HasOnlyDynamicallyCallablePragma(IG, metadata,
+                                               &reusable_field_handle,
+                                               &reusable_object_handle)) {
+            continue;
+          }
 
           AddField(field);
           AddApiUse(field);
@@ -1713,6 +1723,13 @@ void Precompiler::AddAnnotatedRoots() {
           auto type = FindEntryPointPragma(IG, metadata, &reusable_field_handle,
                                            &reusable_object_handle);
           if (!EntryPointPragmaUtils::AllowsAccess(type)) continue;
+          if ((FLAG_shorebird_structural_patching ||
+               FLAG_shorebird_full_replacement) &&
+              HasOnlyDynamicallyCallablePragma(IG, metadata,
+                                               &reusable_field_handle,
+                                               &reusable_object_handle)) {
+            continue;
+          }
           if (function.IsGetterFunction()) {
             ASSERT(EntryPointPragmaUtils::AllowsGet(type));
             mark_entry_point_method(function);
@@ -1787,6 +1804,19 @@ void Precompiler::CheckForNewDynamicFunctions() {
         selector = function.name();
         if (IsSent(selector)) {
           AddFunction(function, RetainReasons::kCalledViaSelector);
+        }
+        if ((FLAG_shorebird_structural_patching ||
+             FLAG_shorebird_full_replacement) &&
+            lib.is_dart_scheme() && cls.IsPrivate() &&
+            function.is_dynamically_callable() &&
+            !function.IsDynamicInvocationForwarder()) {
+          // Public-selector members of private core classes are only
+          // dynamically callable (AddAnnotatedRoots does not root them, see
+          // dynamic_interface_annotator.dart). Once the class is allocated, a
+          // patch can call them through the public interface, so retain the
+          // function itself (not just the dynamic invocation forwarder, which
+          // may inline it).
+          AddFunction(function, RetainReasons::kEntryPointPragma);
         }
         if (IsHitByTableSelector(function)) {
           AddFunction(function, FLAG_retain_function_objects

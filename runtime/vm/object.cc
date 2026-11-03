@@ -28111,6 +28111,33 @@ EntryPointPragma FindEntryPointPragma(IsolateGroup* IG,
   return EntryPointPragma::kNever;
 }
 
+bool HasOnlyDynamicallyCallablePragma(IsolateGroup* IG,
+                                      const Array& metadata,
+                                      Field* reusable_field_handle,
+                                      Object* pragma) {
+  bool dynamically_callable = false;
+  for (intptr_t i = 0; i < metadata.Length(); i++) {
+    *pragma = metadata.At(i);
+    if (pragma->clazz() != IG->object_store()->pragma_class()) {
+      continue;
+    }
+    *reusable_field_handle = IG->object_store()->pragma_name();
+    const auto pragma_name =
+        Instance::Cast(*pragma).GetField(*reusable_field_handle);
+    if (pragma_name == Symbols::dyn_module_dynamically_callable().ptr() ||
+        pragma_name ==
+            Symbols::dyn_module_implicitly_dynamically_callable().ptr()) {
+      dynamically_callable = true;
+    } else if (pragma_name == Symbols::vm_entry_point().ptr() ||
+               pragma_name == Symbols::dyn_module_callable().ptr() ||
+               pragma_name == Symbols::dyn_module_implicitly_callable().ptr() ||
+               pragma_name == Symbols::dyn_module_extendable().ptr()) {
+      return false;
+    }
+  }
+  return dynamically_callable;
+}
+
 #if !defined(DART_PRECOMPILED_RUNTIME)
 // Note: see also [NeedsDynamicInvocationForwarder] which ensures that we
 // never land in a function which expects parameters in registers from a

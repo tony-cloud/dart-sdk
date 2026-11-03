@@ -22,16 +22,50 @@ import 'package:vm/modular/transformations/pragma.dart'
 
 /// The opt-in Shorebird baseline keeps the host API and hierarchy open while
 /// using the bytecode interpreter, without enabling Dart Dynamic Modules.
-/// Include private declarations: a patch can add code in an existing library.
-/// These annotations constrain compiler assumptions; Dart language restrictions
-/// on extending classes and overriding members still apply to patch sources.
+/// Include private declarations of application libraries: a patch can add code
+/// in an existing library. These annotations constrain compiler assumptions;
+/// Dart language restrictions on extending classes and overriding members
+/// still apply to patch sources.
 ///
-/// Patches cannot add code to `dart:` libraries, and the language forbids
-/// extending, implementing or mixing in a private, `final` or `sealed` class
-/// from another library. Such `dart:` classes (and their members) are therefore
-/// only marked callable: leaving them closed lets the compiler keep its
-/// closed-world assumptions about their hierarchy (for example devirtualizing
-/// calls on core types). Public open `dart:` classes and interfaces stay open.
+/// `dart:` libraries follow a smaller retention rule, because patches cannot
+/// add code to them and can never name their private declarations. Every
+/// annotation below is an AOT root (callable and dynamically-callable pragmas
+/// are entry points), so annotating private `dart:` declarations only bloats
+/// the snapshot (dynamic invocation forwarders, tear-offs, method extractors,
+/// Function objects and code source maps; `dart:typed_data` dominates).
+///
+/// * Public `dart:` classes: annotated as before (callable, and extendable and
+///   overridable unless final, sealed; see [_isClosedToPatches]). Their private
+///   members are not annotated: another library cannot override or call them.
+/// * Private `dart:` classes: no class annotation. They are retained only if the
+///   base program allocates them (normal reachability), for example through
+///   `List()` returning a `_GrowableList` or `Float32List(n)` returning a
+///   `_Float32List`.
+/// * Public instance members of private `dart:` classes are annotated
+///   dynamically callable only if they implement a public selector, i.e.
+///   the same name (and getter/setter kind) is declared by a public supertype
+///   (including `Object`). A patch can call exactly those on an object of a
+///   private runtime class through the public interface (`list.add(1)`, a
+///   tear-off `list.add`, or `(x as dynamic).add(1)`). With
+///   `--shorebird-structural-patching` the AOT precompiler does not treat a
+///   dynamically-callable-only pragma as a root: the member (and its dynamic
+///   invocation forwarder) is kept exactly when the class is allocated by
+///   reachable code. Public-named members
+///   not declared by any public supertype stay unannotated: they are only
+///   reachable by a dynamic call a patch cannot justify statically.
+/// * Targets of redirecting factories in `dart:` (and their classes) are
+///   annotated callable: a call of the factory in a patch is compiled as a call
+///   of the (private) target constructor.
+/// * Private `dart:` classes with a const constructor are annotated callable
+///   too, and so are the instance fields of every `dart:` class with a const
+///   constructor: constants created by a patch (`Endian.little`,
+///   `Abi.macosArm64` with its private `_OS`, enum values) refer to the class
+///   and to every field by name.
+/// * Private top-level members and private statics of `dart:` libraries are
+///   not annotated, except those the bytecode compiler itself references
+///   ([_bytecodeSdkDependencies], string interpolation, `async`, late
+///   variables, ...). `pkg/vm/test/transformations/` checks that list against
+///   `dart2bytecode`'s `LibraryIndex` lookups.
 void annotateShorebirdStructuralComponent(
   Component component,
   CoreTypes coreTypes,
@@ -46,15 +80,70 @@ void annotateShorebirdStructuralComponent(
     coreTypes,
     dynModuleDynamicallyCallablePragmaName,
   );
+  final publicSelectors = _PublicSelectors();
+  // The CFE resolves calls to a redirecting factory (`factory MapEntry(k, v) =
+  // MapEntry._`) to its target, so a patch refers to the (possibly private)
+  // target constructor and its class directly.
+  final redirectionTargets = Set<Member>.identity();
+  final redirectionTargetClasses = Set<Class>.identity();
+  for (final library in component.libraries) {
+    if (!library.importUri.isScheme('dart')) continue;
+    for (final cls in library.classes) {
+      for (final procedure in cls.procedures) {
+        if (!procedure.isRedirectingFactory) continue;
+        final target = procedure.function.redirectingFactoryTarget?.target;
+        if (target == null) continue;
+        redirectionTargets.add(target);
+        final targetClass = target.enclosingClass;
+        if (targetClass != null) redirectionTargetClasses.add(targetClass);
+      }
+    }
+  }
   for (final library in component.libraries) {
     final isCoreLibrary = library.importUri.isScheme('dart');
+    final required = _SdkDependencies(
+      _bytecodeSdkDependencies[library.importUri.toString()] ??
+          const <String>{},
+    );
     for (final cls in library.classes) {
+      final isPrivateCoreClass = isCoreLibrary && cls.name.startsWith('_');
+      final isOpenPrivateClass =
+          isPrivateCoreClass && required.classIsOpen(cls.name);
+      final isConstClass =
+          isCoreLibrary && cls.constructors.any((c) => c.isConst);
       final canBeSubtyped = !(isCoreLibrary && _isClosedToPatches(cls));
       if (canBeSubtyped) {
         cls.addAnnotation(ConstantExpression(extendable));
       }
-      cls.addAnnotation(ConstantExpression(callable));
+      if (!isPrivateCoreClass ||
+          isOpenPrivateClass ||
+          isConstClass ||
+          redirectionTargetClasses.contains(cls)) {
+        cls.addAnnotation(ConstantExpression(callable));
+      }
       for (final member in cls.members) {
+        final isRequired =
+            required.hasMember(cls.name, member.name.text) ||
+            (isOpenPrivateClass && !member.isInstanceMember) ||
+            redirectionTargets.contains(member) ||
+            // A patch can create constants of a class with a const
+            // constructor (`Endian.little`, `Abi.macosArm64`, enum values);
+            // the bytecode refers to every instance field by name.
+            (isConstClass && member is Field && member.isInstanceMember);
+        if (isCoreLibrary && !isRequired) {
+          if (member.name.isPrivate || member.name.text.startsWith('_')) {
+            continue;
+          }
+          if (isPrivateCoreClass) {
+            if (member.isInstanceMember &&
+                publicSelectors.implementsPublicSelector(cls, member)) {
+              // Only dynamically callable (not an unconditional AOT root): the
+              // member is retained when the base program allocates [cls].
+              member.addAnnotation(ConstantExpression(dynamicCallable));
+            }
+            continue;
+          }
+        }
         member.addAnnotation(ConstantExpression(callable));
         if (member.isInstanceMember) {
           if (canBeSubtyped) {
@@ -65,6 +154,11 @@ void annotateShorebirdStructuralComponent(
       }
     }
     for (final member in library.members) {
+      if (isCoreLibrary &&
+          (member.name.isPrivate || member.name.text.startsWith('_')) &&
+          !required.hasMember('', member.name.text)) {
+        continue;
+      }
       member.addAnnotation(ConstantExpression(callable));
     }
   }
@@ -73,6 +167,245 @@ void annotateShorebirdStructuralComponent(
 /// Whether code outside the declaring `dart:` library can never subtype [cls].
 bool _isClosedToPatches(Class cls) =>
     cls.name.startsWith('_') || cls.isFinal || cls.isSealed;
+
+/// Private `dart:` declarations that the compilers of a patch (the CFE and VM
+/// kernel lowerings and `dart2bytecode`) reference by name, as `Class` (the
+/// class and all its constructors and statics), `Class.member` or `.topLevel`
+/// (any getter/setter/method of that name; a trailing `*` matches a prefix).
+/// A patch that uses the corresponding language feature (string interpolation,
+/// `async`, `late` fields and locals, list, map and set literals, enums, `is`
+/// tests, FFI, ...) needs these even if the base program does not.
+///
+/// Generated from the `LibraryIndex` lookups in `pkg/kernel/lib/core_types.dart`,
+/// `pkg/vm/lib/**` and `pkg/dart2bytecode/lib/**`; the test
+/// `shorebird_structural_annotator_test.dart` scans those sources and fails if
+/// a lookup of a private `dart:` declaration is missing here.
+const Map<String, Set<String>> _bytecodeSdkDependencies = {
+  'dart:_compact_hash': {'_ConstMap', '_ConstSet', '_Map', '_Set'},
+  'dart:_internal': {
+    '._ensureDeeplyImmutable',
+    '._instantiateClosure',
+    '._nativeEffect',
+    '._prependTypeArguments',
+    'LateError._throwLocalAlreadyInitialized',
+    'LateError._throwLocalAssignedDuringInitialization',
+    'LateError._throwLocalNotInitialized',
+  },
+  'dart:_late_helper': {
+    '._lateInitializeOnceCheck',
+    '._lateReadCheck',
+    '._lateWriteOnceCheck',
+    '_Cell',
+    '_Cell.finalFieldValue',
+    '_Cell.finalLocalValue',
+    '_Cell.named',
+    '_Cell.readField',
+    '_Cell.readLocal',
+    '_Cell.value',
+    '_InitializedCell',
+    '_InitializedCell.finalValue',
+    '_InitializedCell.named',
+    '_InitializedCell.read',
+    '_InitializedCell.readFinal',
+    '_InitializedCell.value',
+  },
+  'dart:async': {
+    '._asyncStarMoveNextHelper',
+    '._clearAsyncThreadStackTrace',
+    '._setAsyncThreadStackTrace',
+    '._wrapAwaitedExpression',
+    '_AsyncStarStreamController.add',
+    '_AsyncStarStreamController.addStream',
+    '_Future',
+    '_StreamIterator',
+    '_StreamIterator._subscription',
+    '_StreamIterator.cancel',
+    '_StreamIterator.current',
+    '_StreamIterator.moveNext',
+    '_SuspendState._await',
+    '_SuspendState._awaitWithTypeCheck',
+    '_SuspendState._functionData',
+    '_SuspendState._handleException',
+    '_SuspendState._initAsync',
+    '_SuspendState._initAsyncStar',
+    '_SuspendState._initSyncStar',
+    '_SuspendState._returnAsync',
+    '_SuspendState._returnAsyncStar',
+    '_SuspendState._suspendSyncStarAtStart',
+    '_SuspendState._yieldAsyncStar',
+    '_SyncStarIterable',
+    '_SyncStarIterator._current',
+    '_SyncStarIterator._yieldStarIterable',
+  },
+  'dart:core': {
+    // Not a LibraryIndex lookup: the CFE makes every enum extend `_Enum`.
+    '_Enum',
+    '._checkLoaded',
+    '._loadLibrary',
+    'Map._fromLiteral',
+    'NoSuchMethodError._throwNew',
+    'Object._instanceOf',
+    'Object._simpleInstanceOf',
+    'StateError._throwNew',
+    '_AssertionError._throwNewSource',
+    '_Closure',
+    '_Double',
+    '_Enum._name',
+    '_GrowableList',
+    '_GrowableList._literal',
+    '_GrowableList._literal*',
+    '_GrowableList.empty',
+    '_GrowableList.filled',
+    '_GrowableList.generate',
+    '_ImmutableList',
+    '_InvocationMirror',
+    '_InvocationMirror._allocateInvocationMirror',
+    '_InvocationMirror._withType',
+    '_List',
+    '_List.empty',
+    '_List.filled',
+    '_List.generate',
+    '_OneByteString',
+    '_Record',
+    '_Smi',
+    '_StringBase._interpolate',
+    '_StringBase._interpolateSingle',
+    '_TwoByteString',
+    'pragma._',
+  },
+  'dart:ffi': {
+    '._abi',
+    '._checkAbiSpecificIntegerMapping',
+    '._createNativeCallableIsolateGroupBound',
+    '._createNativeCallableIsolateLocal',
+    '._createNativeCallableListener',
+    '._ffiCall',
+    '._fromAddress',
+    '._load*',
+    '._loadAbiSpecificInt',
+    '._loadAbiSpecificIntAtIndex',
+    '._memCopy',
+    '._nativeAsyncCallbackFunction',
+    '._nativeCallbackFunction',
+    '._nativeIsolateGroupBoundCallbackFunction',
+    '._nativeIsolateGroupBoundClosureFunction',
+    '._nativeIsolateLocalCallbackFunction',
+    '._store*',
+    '._storeAbiSpecificInt',
+    '._storeAbiSpecificIntAtIndex',
+    'Array._',
+    'Array._checkIndex',
+    'Array._nestedDimensions',
+    'Array._nestedDimensionsFirst',
+    'Array._nestedDimensionsFlattened',
+    'Array._nestedDimensionsRest',
+    'Array._size',
+    'Array._variableLength',
+    'Native._addressOf',
+    'Native._ffi_resolver',
+    'Pointer._offsetBy',
+    'Struct._fromTypedData',
+    'Struct._fromTypedDataBase',
+    'Union._fromTypedData',
+    'Union._fromTypedDataBase',
+    '_AbiSpecificIntegerArrayList',
+    '_ArrayArrayList',
+    '_ArrayList',
+    '_ArraySize',
+    '_ArraySize.dimension1',
+    '_ArraySize.dimension2',
+    '_ArraySize.dimension3',
+    '_ArraySize.dimension4',
+    '_ArraySize.dimension5',
+    '_ArraySize.dimensions',
+    '_ArraySize.variableDimension',
+    '_Compound',
+    '_Compound._fromTypedDataBase',
+    '_Compound._offsetInBytes',
+    '_Compound._typedDataBase',
+    '_FfiAbiSpecificMapping',
+    '_FfiAbiSpecificMapping.nativeTypes',
+    '_FfiCall',
+    '_FfiCall.isLeaf',
+    '_FfiInlineArray',
+    '_FfiInlineArray.elementType',
+    '_FfiInlineArray.length',
+    '_FfiInlineArray.variableLength',
+    '_FfiStructLayout',
+    '_FfiStructLayout.fieldTypes',
+    '_FfiStructLayout.packing',
+    '_NativeCallableBase._pointer',
+    '_NativeCallableIsolateGroupBound',
+    '_NativeCallableIsolateLocal',
+    '_NativeCallableListener',
+    '_NativeCallableListener._port',
+  },
+  'dart:nativewrappers': {'._getNativeField'},
+};
+
+/// See [_bytecodeSdkDependencies] (exposed for tests).
+Map<String, Set<String>> get shorebirdBytecodeSdkDependencies =>
+    _bytecodeSdkDependencies;
+
+class _SdkDependencies {
+  final Set<String> _entries;
+  final List<String> _prefixes;
+
+  _SdkDependencies(this._entries)
+    : _prefixes = [
+        for (final e in _entries)
+          if (e.endsWith('*')) e.substring(0, e.length - 1),
+      ];
+
+  bool classIsOpen(String cls) => _entries.contains(cls);
+
+  bool hasMember(String cls, String name) {
+    final key = '$cls.$name';
+    return _entries.contains(key) || _prefixes.any(key.startsWith);
+  }
+}
+
+/// Finds the instance members of `dart:` classes that implement a selector
+/// declared by a public supertype.
+class _PublicSelectors {
+  final Map<Class, Set<String>> _interface = Map.identity();
+  final Map<Class, Set<String>> _inheritedPublic = Map.identity();
+
+  static String _key(Name name, {required bool setter}) =>
+      '${setter ? 'set:' : ''}${name.text}';
+
+  static Iterable<String> _selectorsOf(Member member) sync* {
+    if (member is Field) {
+      yield _key(member.name, setter: false);
+      if (member.hasSetter) yield _key(member.name, setter: true);
+    } else if (member is Procedure && !member.isFactory) {
+      yield _key(member.name, setter: member.isSetter);
+    }
+  }
+
+  /// All public instance selectors of the interface of [cls] (declared in it
+  /// or in any supertype).
+  Set<String> _interfaceOf(Class cls) => _interface[cls] ??= {
+    for (final member in cls.members)
+      if (member.isInstanceMember &&
+          !member.name.isPrivate &&
+          !member.name.text.startsWith('_'))
+        ..._selectorsOf(member),
+    for (final supertype in cls.supers) ..._interfaceOf(supertype.classNode),
+  };
+
+  /// The selectors [cls] inherits through its public supertypes.
+  Set<String> _publicSelectorsOf(Class cls) => _inheritedPublic[cls] ??= {
+    for (final supertype in cls.supers)
+      if (supertype.classNode.name.startsWith('_'))
+        ..._publicSelectorsOf(supertype.classNode)
+      else
+        ..._interfaceOf(supertype.classNode),
+  };
+
+  bool implementsPublicSelector(Class cls, Member member) =>
+      _selectorsOf(member).any(_publicSelectorsOf(cls).contains);
+}
 
 void annotateComponent(
   String dynamicInterfaceSpecification,

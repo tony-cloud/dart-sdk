@@ -1576,8 +1576,9 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
         FieldPtr field = cls.LookupField(name);
         if (field == Field::null()) {
           if (thread_->bytecode_loader()->is_loading_patch()) {
-            RejectBytecodePatch(
-                "Bytecode patch references an unavailable field.");
+            RejectBytecodePatch(OS::SCreate(
+                Z, "Bytecode patch references an unavailable field %s in %s.",
+                name.ToCString(), cls.ToCString()));
           }
           FATAL("Unable to find field %s in %s", name.ToCString(),
                 cls.ToCString());
@@ -1627,8 +1628,9 @@ ObjectPtr BytecodeReaderHelper::ReadObjectContents(uint32_t header) {
             }
           }
           if (thread_->bytecode_loader()->is_loading_patch()) {
-            RejectBytecodePatch(
-                "Bytecode patch references an unavailable function.");
+            RejectBytecodePatch(OS::SCreate(
+                Z, "Bytecode patch references an unavailable function %s in %s.",
+                name.ToCString(), cls.ToCString()));
           }
           FATAL("Unable to find function %s in %s", name.ToCString(),
                 cls.ToCString());
