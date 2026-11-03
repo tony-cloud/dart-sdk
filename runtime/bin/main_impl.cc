@@ -50,6 +50,13 @@ extern const uint8_t kDartCoreSnapshotData[];
 extern void kDartCoreSnapshotText();
 }
 
+#if defined(DART_MIXED_MODE)
+#include "bin/elf_loader.h"
+DART_EXPORT void Dart_MixedModeRegisterImages(const uint8_t* patch_text,
+                                              const uint8_t* base_text);
+DART_EXPORT void Dart_MixedModePrintStats();
+#endif
+
 namespace dart {
 namespace bin {
 
@@ -1145,7 +1152,10 @@ void RunMainIsolate(const char* script_name,
     free(error);
     error = nullptr;
     Process::TerminateExitCodeHandler();
-    error = Dart_Cleanup();
+  #if defined(DART_MIXED_MODE)
+  Dart_MixedModePrintStats();
+#endif
+  error = Dart_Cleanup();
     if (error != nullptr) {
       Syslog::PrintErr("VM cleanup failed: %s\n", error);
       free(error);
@@ -1389,8 +1399,16 @@ void main(int argc, char** argv) {
       // in-memory ELF loader.
       const bool force_load_from_memory =
           false DEBUG_ONLY(|| Options::force_load_from_memory());
+#if defined(DART_MIXED_MODE)
+      if (getenv("DART_MIXED_BASE") != nullptr) {
+        elf_loader_map_text_read_only = true;
+      }
+#endif
       app_snapshot =
           Snapshot::TryReadAppSnapshot(script_name, force_load_from_memory);
+#if defined(DART_MIXED_MODE)
+      elf_loader_map_text_read_only = false;
+#endif
     }
     if (app_snapshot != nullptr && app_snapshot->IsJITorAOT()) {
       if (app_snapshot->IsAOT() && !Dart_IsPrecompiledRuntime()) {
@@ -1407,6 +1425,26 @@ void main(int argc, char** argv) {
       }
       vm_run_app_snapshot = true;
       app_snapshot->SetBuffers(&app_snapshot_data, &app_snapshot_text);
+#if defined(DART_MIXED_MODE)
+      // DART_MIXED_BASE=<release snapshot> runs the snapshot given on the
+      // command line as a patch: its text is mapped without execute
+      // permission (see TryReadAppSnapshot below); code identical to the
+      // release runs from the release's text, the rest is simulated.
+      // DART_MIXED_BASE=none simulates all code.
+      if (const char* base_path = getenv("DART_MIXED_BASE")) {
+        const uint8_t* base_text = nullptr;
+        if (strcmp(base_path, "none") != 0) {
+          AppSnapshot* base = Snapshot::TryReadAppSnapshot(base_path, false);
+          if (base == nullptr || !base->IsAOT()) {
+            Syslog::PrintErr("Cannot load mixed-mode base %s\n", base_path);
+            Platform::Exit(kErrorExitCode);
+          }
+          const uint8_t* base_data = nullptr;
+          base->SetBuffers(&base_data, &base_text);  // Leaked: stays mapped.
+        }
+        Dart_MixedModeRegisterImages(app_snapshot_text, base_text);
+      }
+#endif
     } else if (app_snapshot == nullptr && Dart_IsPrecompiledRuntime()) {
       Syslog::PrintErr(
           "%s is not an AOT snapshot,"
@@ -1551,6 +1589,9 @@ void main(int argc, char** argv) {
     }
   }
 
+#if defined(DART_MIXED_MODE)
+  Dart_MixedModePrintStats();
+#endif
   error = Dart_Cleanup();
   if (error != nullptr) {
     Syslog::PrintErr("VM cleanup failed: %s\n", error);

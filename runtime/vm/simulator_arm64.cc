@@ -16,6 +16,7 @@
 #include "vm/compiler/assembler/disassembler.h"
 #include "vm/constants.h"
 #include "vm/image_snapshot.h"
+#include "vm/mixed_mode.h"
 #include "vm/native_arguments.h"
 #include "vm/os_thread.h"
 #include "vm/runtime_entry.h"
@@ -2061,6 +2062,12 @@ void Simulator::DecodeUnconditionalBranch(Instr* instr) {
   const uint64_t imm26 = instr->SImm26Field();
   const uint64_t dest = get_pc() + (imm26 << 2);
   const uint64_t ret = get_pc() + Instr::kInstrSize;
+#if defined(DART_MIXED_MODE)
+  if (mixed_mode_) {
+    MixedBranch(instr, dest, link, ret);
+    return;
+  }
+#endif
   set_pc(dest);
   if (link) {
     set_register(instr, LR, ret);
@@ -2075,6 +2082,12 @@ void Simulator::DecodeUnconditionalBranchReg(Instr* instr) {
         // Format(instr, "br 'rn");
         const Register rn = instr->RnField();
         const int64_t dest = get_register(rn, instr->RnMode());
+#if defined(DART_MIXED_MODE)
+        if (mixed_mode_) {
+          MixedBranch(instr, dest, false, 0);
+          break;
+        }
+#endif
         set_pc(dest);
         break;
       }
@@ -2083,6 +2096,12 @@ void Simulator::DecodeUnconditionalBranchReg(Instr* instr) {
         const Register rn = instr->RnField();
         const int64_t dest = get_register(rn, instr->RnMode());
         const int64_t ret = get_pc() + Instr::kInstrSize;
+#if defined(DART_MIXED_MODE)
+        if (mixed_mode_) {
+          MixedBranch(instr, dest, true, ret);
+          break;
+        }
+#endif
         // Set LR first so that the profiler does not get confused by
         // observing the update to PC without the update to LR when we are
         // calling out of the entry stub, i.e., failing to indentify the entry
@@ -2096,6 +2115,12 @@ void Simulator::DecodeUnconditionalBranchReg(Instr* instr) {
         // Format(instr, "ret 'rn");
         const Register rn = instr->RnField();
         const int64_t rn_val = get_register(rn, instr->RnMode());
+#if defined(DART_MIXED_MODE)
+        if (mixed_mode_) {
+          MixedBranch(instr, rn_val, false, 0);
+          break;
+        }
+#endif
         set_pc(rn_val);
         break;
       }
@@ -4183,6 +4208,83 @@ int64_t Simulator::Call(int64_t entry,
 
   return return_value;
 }
+
+#if defined(DART_MIXED_MODE)
+void Simulator::MixedBranch(Instr* instr, uword dest, bool link, uword ret) {
+  // Fast path: a branch inside the unlinked entry being simulated.
+  if (dest - sim_lo_ < sim_hi_ - sim_lo_) {
+    if (link) set_register(instr, LR, ret);
+    set_pc(dest);
+    return;
+  }
+  uword target = dest;
+  if (MixedMode::IsGate(target)) {
+    target = MixedMode::GateTarget(target);
+    if (target == 0) FATAL("Mixed mode: branch to unbound gate %#" Px, dest);
+  }
+  uword lo, hi;
+  bool linked;
+  if (MixedMode::LookupEntry(target, &lo, &hi, &linked)) {
+    if (!linked) {
+      sim_lo_ = lo;
+      sim_hi_ = hi;
+      if (link) set_register(instr, LR, ret);
+      set_pc(target);
+      return;
+    }
+    // Linked code runs natively from the release's copy.
+    target = MixedMode::PatchToBase(target);
+  } else if (MixedMode::InPatchText(target)) {
+    FATAL("Mixed mode: branch into patch text outside any entry %#" Px,
+          target);
+  }
+  // Leave the simulator. A native callee returns through a gate bound to the
+  // simulated return address.
+  if (link) set_register(instr, LR, MixedMode::ReturnGateFor(ret));
+  mixed_exit_target_ = target;
+  MixedMode::sim_to_native_.fetch_add(1, std::memory_order_relaxed);
+  set_pc(kEndSimulatingPC);
+}
+
+uword Simulator::RunMixed(MixedRegs* regs) {
+  mixed_mode_ = true;
+  for (intptr_t i = 0; i < kNumberOfCpuRegisters; i++) {
+    registers_[i] = regs->x[i];
+  }
+  for (intptr_t i = 0; i < kNumberOfVRegisters; i++) {
+    vregisters_[i].bits.i64[0] = regs->v[i][0];
+    vregisters_[i].bits.i64[1] = regs->v[i][1];
+  }
+  const uword gate = static_cast<uword>(regs->x[16]);
+  const uword start = MixedMode::GateTarget(gate);
+  if (start == 0) FATAL("Mixed mode: entered unbound gate %#" Px, gate);
+  uword lo, hi;
+  bool linked;
+  if (!MixedMode::LookupEntry(start, &lo, &hi, &linked) || linked) {
+    FATAL("Mixed mode: gate %#" Px " bound to non-simulated pc %#" Px, gate,
+          start);
+  }
+  sim_lo_ = lo;
+  sim_hi_ = hi;
+  mixed_exit_target_ = 0;
+  set_pc(start);
+  if (FLAG_stop_sim_at == ULLONG_MAX && FLAG_trace_sim_after == ULLONG_MAX)
+      [[likely]] {
+    ExecuteNoTrace();
+  } else {
+    ExecuteTrace();
+  }
+  for (intptr_t i = 0; i < kNumberOfCpuRegisters; i++) {
+    regs->x[i] = registers_[i];
+  }
+  for (intptr_t i = 0; i < kNumberOfVRegisters; i++) {
+    regs->v[i][0] = vregisters_[i].bits.i64[0];
+    regs->v[i][1] = vregisters_[i].bits.i64[1];
+  }
+  regs->exit_target = mixed_exit_target_;
+  return mixed_exit_target_;
+}
+#endif  // defined(DART_MIXED_MODE)
 
 void Simulator::JumpToFrame(uword pc, uword sp, uword fp, Thread* thread) {
   // Walk over all setjmp buffers (simulated --> C++ transitions)

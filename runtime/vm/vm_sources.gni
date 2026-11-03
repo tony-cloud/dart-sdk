@@ -188,6 +188,8 @@ vm_sources = [
   "message_snapshot.h",
   "metrics.cc",
   "metrics.h",
+  "mixed_mode.cc",
+  "mixed_mode.h",
   "microtask_mirror_queues.cc",
   "microtask_mirror_queues.h",
   "module_snapshot.cc",

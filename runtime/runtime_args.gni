@@ -35,6 +35,14 @@ declare_args() {
   # current cpu.
   dart_force_simulator = false
 
+  # Compile the ARM64 simulator into a native ARM64 runtime and use it only
+  # for unlinked code of a mixed-mode patch snapshot (see vm/mixed_mode.h).
+  dart_mixed_mode = false
+
+  # Offset of Thread::mixed_area_, needed by mixed_mode_gates_arm64.S.
+  # The runtime reports the correct value if this does not match.
+  dart_mixed_area_offset = 0
+
   # The optimization level to use for debug builds. Defaults to 0 for builds
   # with code coverage enabled.
   dart_debug_optimization_level = "2"

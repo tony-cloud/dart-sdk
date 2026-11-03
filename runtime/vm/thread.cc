@@ -6,6 +6,8 @@
 
 #include "vm/thread.h"
 
+#include "vm/mixed_mode.h"
+
 #include "vm/cpu.h"
 #include "vm/dart_api_state.h"
 #include "vm/deopt_instructions.h"
@@ -60,6 +62,10 @@ Thread::~Thread() {
   }
 
   DO_IF_TSAN(delete tsan_utils_);
+#if defined(DART_MIXED_MODE)
+  MixedMode::DeleteThreadArea(mixed_area_);
+  mixed_area_ = nullptr;
+#endif
 }
 
 #if defined(DEBUG)
@@ -141,6 +147,9 @@ Thread::Thread(bool is_bootstrapping)
 
   memset(&unboxed_runtime_arg_, 0, sizeof(simd128_value_t));
   set_user_tag(UserTags::kDefaultUserTag);
+#if defined(DART_MIXED_MODE)
+  mixed_area_ = MixedMode::NewThreadArea();
+#endif
 }
 
 static const double double_nan_constant = NAN;

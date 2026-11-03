@@ -20,6 +20,12 @@ constexpr bool kDartPrecompiledRuntime = true;
 constexpr bool kDartPrecompiledRuntime = false;
 #endif
 
+#if defined(DART_MIXED_MODE)
+constexpr bool kMixedModeBuild = true;
+#else
+constexpr bool kMixedModeBuild = false;
+#endif
+
 constexpr intptr_t kDefaultOptimizationCounterThreshold = 30000;
 
 // The disassembler might be force included even in product builds so we need
@@ -273,6 +279,6 @@ constexpr bool FLAG_support_il_printer = false;
     "entry_point_pragma.md")                                                   \
   C(branch_coverage, false, false, bool, true, "Enable branch coverage")       \
   C(coverage, false, false, bool, true, "Enable coverage")                     \
-  P(use_simulator, bool, true, "Use simulator if available")
+  P(use_simulator, bool, !kMixedModeBuild, "Use simulator if available")
 
 #endif  // RUNTIME_VM_FLAG_LIST_H_

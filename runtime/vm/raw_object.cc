@@ -638,7 +638,11 @@ intptr_t UntaggedSuspendState::VisitSuspendStatePointers(
       ASSERT(thread->isolate_group() == visitor->isolate_group());
       const uword sp = reinterpret_cast<uword>(raw_obj->untag()->payload());
       StackFrame frame(thread);
+#if defined(DART_MIXED_MODE)
+      frame.pc_ = MixedMode::ToPatchPc(pc);
+#else
       frame.pc_ = pc;
+#endif
       frame.sp_ = sp;
       frame.fp_ = sp + raw_obj->untag()->frame_size_;
       frame.VisitObjectPointers(visitor);

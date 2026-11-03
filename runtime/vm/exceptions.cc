@@ -579,6 +579,12 @@ NO_SANITIZE_SAFE_STACK  // This function manipulates the safestack pointer.
                                  bool clear_deopt_at_target) {
   ASSERT(thread->execution_state() == Thread::kThreadInVM);
 
+#if defined(DART_MIXED_MODE)
+  // The handler pc was computed from patch metadata. The CPU must resume at
+  // the release's copy (linked) or at a gate into the simulator (unlinked).
+  program_counter = MixedMode::ToNativePc(program_counter);
+#endif
+
   const uword fp_for_clearing =
       (clear_deopt_at_target ? frame_pointer + 1 : frame_pointer);
   ClearLazyDeopts(thread, fp_for_clearing);

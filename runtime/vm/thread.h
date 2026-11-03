@@ -83,6 +83,8 @@ namespace bytecode {
 class BytecodeLoader;
 }
 
+struct MixedRegs;
+
 namespace compiler {
 namespace target {
 class Thread;
@@ -1668,6 +1670,18 @@ class Thread : public ThreadState, public IntrusiveDListEntry<Thread> {
   std::unique_ptr<WeakTable> forward_table_old_;
 
   MallocGrowableArray<ObjectPtr> pointers_to_verify_at_exit_;
+
+#if defined(DART_MIXED_MODE)
+  // Register save area for native <-> simulator transitions. Placed after
+  // every field accessed by generated code so their offsets do not move.
+  MixedRegs* mixed_area_ = nullptr;
+
+ public:
+  static intptr_t mixed_area_offset() { return OFFSET_OF(Thread, mixed_area_); }
+  MixedRegs* mixed_area() const { return mixed_area_; }
+
+ private:
+#endif
 
   explicit Thread(bool is_bootstrapping);
 

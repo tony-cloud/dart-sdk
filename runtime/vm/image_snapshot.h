@@ -201,6 +201,7 @@ class ImageReader : public ZoneObject {
 
   ONLY_IN_PRECOMPILED(uword GetBareInstructionsAt(uint32_t offset) const);
   ONLY_IN_PRECOMPILED(uword GetBareInstructionsEnd() const);
+  const uint8_t* instructions_image() const { return instructions_image_; }
   InstructionsPtr GetInstructionsAt(uint32_t offset) const;
   ObjectPtr GetObjectAt(uint32_t offset) const;
 

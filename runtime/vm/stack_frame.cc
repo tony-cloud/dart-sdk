@@ -679,7 +679,11 @@ StackFrameIterator::StackFrameIterator(uword fp,
          thread_ == Thread::Current());
   frames_.fp_ = fp;
   frames_.sp_ = sp;
+#if defined(DART_MIXED_MODE)
+  frames_.pc_ = MixedMode::ToPatchPc(pc);
+#else
   frames_.pc_ = pc;
+#endif
 #if defined(DART_BYTECODE_INTERPRETER)
   frames_.CheckIfInterpreted(fp);
 #endif

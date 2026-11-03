@@ -10,6 +10,13 @@
 typedef struct {
 } Dart_LoadedElf;
 
+namespace dart {
+namespace bin {
+// When set, executable segments are mapped read-only (mixed-mode patches).
+extern bool elf_loader_map_text_read_only;
+}  // namespace bin
+}  // namespace dart
+
 /// Load an ELF object from a file.
 ///
 /// On success, return a handle to the library which may be used to close it

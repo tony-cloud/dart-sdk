@@ -18,6 +18,7 @@
 #include "platform/atomic.h"
 #include "platform/thread_sanitizer.h"
 #include "platform/utils.h"
+#include "vm/mixed_mode.h"
 #include "vm/bitmap.h"
 #include "vm/code_comments.h"
 #include "vm/code_entry_kind.h"
@@ -7056,7 +7057,13 @@ class Code : public Object {
     const uword entry_offset = HasMonomorphicEntry(code)
                                    ? Instructions::kPolymorphicEntryOffsetAOT
                                    : 0;
+#if defined(DART_MIXED_MODE)
+    // Entry points may be gates or release addresses; metadata is keyed by
+    // the patch's own instructions.
+    return MixedMode::ToPatchPc(EntryPointOf(code)) - entry_offset;
+#else
     return EntryPointOf(code) - entry_offset;
+#endif
 #else
     auto instr = InstructionsOf(code);
     if (instr == Instructions::null()) {
@@ -13233,7 +13240,13 @@ class SuspendState : public Instance {
                                const SuspendState& src,
                                Heap::Space space = Heap::kNew);
 
+#if defined(DART_MIXED_MODE)
+  // Translated to the patch pc that describes the suspended frame. The Resume
+  // stub reads the raw (native) field directly.
+  uword pc() const { return MixedMode::ToPatchPc(untag()->pc_); }
+#else
   uword pc() const { return untag()->pc_; }
+#endif
 
   intptr_t frame_size() const { return untag()->frame_size_; }
 

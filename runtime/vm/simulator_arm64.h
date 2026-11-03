@@ -28,6 +28,7 @@ class SimulatorSetjmpBuffer;
 class Thread;
 struct CallbackContext;
 struct CallbackMetadata;
+struct MixedRegs;
 
 typedef struct {
   union {
@@ -120,7 +121,23 @@ class Simulator {
 
   void JumpToFrame(uword pc, uword sp, uword fp, Thread* thread);
 
+#if defined(DART_MIXED_MODE)
+  // Mixed-mode execution: loads the CPU state saved by a gate, simulates from
+  // the gate's patch pc until the code branches to native code, stores the
+  // simulated state back and returns the native branch target.
+  uword RunMixed(MixedRegs* regs);
+#endif
+
  private:
+#if defined(DART_MIXED_MODE)
+  void MixedBranch(Instr* instr, uword dest, bool link, uword ret);
+  bool mixed_mode_ = false;
+  uword mixed_exit_target_ = 0;
+  // Patch-text range of the unlinked entry being simulated (cache).
+  uword sim_lo_ = 0;
+  uword sim_hi_ = 0;
+#endif
+
   // Known bad pc value to ensure that the simulator does not execute
   // without being properly setup.
   static constexpr uword kBadLR = -1;

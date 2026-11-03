@@ -8536,3 +8536,14 @@ void ThrowCantRunWithoutIsolateError() {
 }
 
 }  // namespace dart
+
+#if defined(DART_MIXED_MODE)
+DART_EXPORT void Dart_MixedModeRegisterImages(const uint8_t* patch_text,
+                                              const uint8_t* base_text) {
+  dart::MixedMode::RegisterImages(patch_text, base_text);
+}
+
+DART_EXPORT void Dart_MixedModePrintStats() {
+  dart::MixedMode::PrintStats();
+}
+#endif

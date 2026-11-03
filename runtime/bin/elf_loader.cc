@@ -23,6 +23,8 @@
 namespace dart {
 namespace bin {
 
+bool elf_loader_map_text_read_only = false;
+
 namespace elf {
 
 /// A loader for a subset of ELF which may be used to load objects produced by
@@ -301,7 +303,10 @@ bool LoadedElf::LoadSegments() {
     if (header.flags == (dart::elf::PF_R | dart::elf::PF_W)) {
       map_type = File::kReadWrite;
     } else if (header.flags == (dart::elf::PF_R | dart::elf::PF_X)) {
-      map_type = File::kReadExecute;
+      // A mixed-mode patch's instructions are data for the simulator; never
+      // let the CPU execute them (as on iOS).
+      map_type = elf_loader_map_text_read_only ? File::kReadOnly
+                                               : File::kReadExecute;
     } else if (header.flags == dart::elf::PF_R) {
       map_type = File::kReadOnly;
     } else {

@@ -174,7 +174,13 @@ class StackFrame : public ValueObject {
     if (raw_pc == StubCode::DeoptimizeLazyFromReturn().EntryPoint()) {
       return thread_->pending_deopts().FindPendingDeopt(GetCallerFp());
     }
+#if defined(DART_MIXED_MODE)
+    // Return addresses may be gates (into simulated code) or release
+    // addresses (linked code); describe the frame by the patch pc.
+    return MixedMode::ToPatchPc(raw_pc);
+#else
     return raw_pc;
+#endif
   }
 
   uword fp_;

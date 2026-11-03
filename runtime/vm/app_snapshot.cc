@@ -9862,6 +9862,10 @@ void Deserializer::ReadInstructions(CodePtr code, bool deferred) {
   const uword monomorphic_entry_point =
       payload_start + monomorphic_entry_offset;
 
+#if defined(DART_MIXED_MODE)
+  const intptr_t table_index =
+      instructions_table_.rodata()->first_entry_with_code + instructions_index_;
+#endif
   instructions_table_.SetCodeAt(instructions_index_++, code);
 
   // There are no serialized RawInstructions objects in this mode.
@@ -9871,6 +9875,21 @@ void Deserializer::ReadInstructions(CodePtr code, bool deferred) {
   code->untag()->monomorphic_entry_point_ = monomorphic_entry_point;
   code->untag()->monomorphic_unchecked_entry_point_ =
       monomorphic_entry_point + unchecked_offset;
+#if defined(DART_MIXED_MODE)
+  if (MixedMode::IsPatchImage(image_reader_->instructions_image())) {
+    // Linked code is entered at the release's copy; unlinked code through
+    // gates. Everything later derived from these fields (dispatch table,
+    // Function and Closure entry caches, type testing stubs, switchable call
+    // targets) inherits the native addresses.
+    code->untag()->entry_point_ = MixedMode::NativeEntry(table_index, entry_point);
+    code->untag()->unchecked_entry_point_ =
+        MixedMode::NativeEntry(table_index, entry_point + unchecked_offset);
+    code->untag()->monomorphic_entry_point_ =
+        MixedMode::NativeEntry(table_index, monomorphic_entry_point);
+    code->untag()->monomorphic_unchecked_entry_point_ = MixedMode::NativeEntry(
+        table_index, monomorphic_entry_point + unchecked_offset);
+  }
+#endif
 #else
   ASSERT(!deferred);
   InstructionsPtr instr = image_reader_->GetInstructionsAt(Read<uint32_t>());
@@ -9972,6 +9991,18 @@ void Deserializer::Deserialize(DeserializationRoots* roots) {
     }
     instructions_table_ = InstructionsTable::New(
         instructions_table_len, start_pc, end_pc, instruction_table_data);
+#if defined(DART_MIXED_MODE)
+    if (MixedMode::IsPatchImage(image_reader_->instructions_image()) &&
+        instruction_table_data != 0) {
+      const auto* rodata =
+          reinterpret_cast<const UntaggedInstructionsTable::Data*>(
+              instruction_table_data);
+      static_assert(sizeof(UntaggedInstructionsTable::DataEntry) ==
+                    2 * sizeof(uint32_t));
+      MixedMode::LinkImage(start_pc, end_pc, rodata->length,
+                           &rodata->entries()[0].pc_offset, 2);
+    }
+#endif
   }
 #else
   ASSERT(instructions_table_len == 0);
