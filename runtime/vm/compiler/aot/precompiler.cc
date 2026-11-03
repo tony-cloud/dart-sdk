@@ -513,6 +513,9 @@ void Precompiler::DoCompileAll() {
 
       ClassFinalizer::SortClasses();
       LinkInfo::RemapStaticFieldIds(IG);
+      // Record the layout before tree shaking: fields and classes that are
+      // dropped later still determine offsets of compiled code.
+      LinkInfo::RecordProgramTables(IG);
 
       // Collects type usage information which allows us to decide when/how to
       // optimize runtime type tests.
@@ -672,8 +675,6 @@ void Precompiler::DoCompileAll() {
       IG->object_store()->set_shorebird_base_num_cids(
           Smi::Handle(Z, Smi::New(IG->class_table()->NumCids())));
     }
-
-    LinkInfo::RecordProgramTables(IG);
 
     {
       PRECOMPILER_TIMER_SCOPE(this, Obfuscate);

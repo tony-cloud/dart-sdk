@@ -727,29 +727,34 @@ intptr_t ObjectPoolBuilder::TryPlaceAtLinkSlot(
   ObjectPoolBuilder* root = link_root();
   if (root->link_reserved_end_ == 0) return -1;
   if (entry.type() != ObjectPoolBuilderEntry::kImmediate &&
-      entry.type() != ObjectPoolBuilderEntry::kTaggedObject) {
+      entry.type() != ObjectPoolBuilderEntry::kTaggedObject &&
+      entry.type() != ObjectPoolBuilderEntry::kNativeFunction) {
     return -1;
   }
   const bool patchable =
       entry.patchable() == ObjectPoolBuilderEntry::kPatchable;
   const char* key =
       LinkInfo::PoolEntryKey(entry, link_context_, link_ordinal_);
+  auto place = [&](intptr_t index) {
+    root->PlaceAtLinkSlot(index, entry);
+    // The per-code pool built from this builder records which global entries
+    // the code uses (snapshot reachability), so include placed entries.
+    if (parent_ != nullptr) used_from_parent_.Add(index);
+    LinkInfo::RecordPoolKey(index, key);
+    return index;
+  };
   if (patchable) {
-    // Patchable entries are allocated in adjacent pairs (switchable calls,
-    // type tests) that are loaded with a single instruction, so a pair must
-    // either be placed together or appended together.
+    // Patchable entries may be allocated in adjacent pairs that are loaded
+    // with a single instruction (switchable calls, native calls, type
+    // tests). A pair must be placed together or appended together, so an
+    // entry is only placed if the following slot is free as well, and a
+    // patchable request directly following a placed one goes next to it.
     if (link_context_ == nullptr) return -1;
     if (link_pair_index_ >= 0 && link_pair_ordinal_ == link_ordinal_ - 1) {
-      // Second half of a pinned pair: always adjacent to the first.
       const intptr_t index = link_pair_index_ + 1;
       link_pair_index_ = -1;
       ASSERT(root->IsFreeLinkSlot(index));
-      root->PlaceAtLinkSlot(index, entry);
-  // The per-code pool built from this builder records which global entries
-  // the code uses (snapshot reachability), so include placed entries.
-  if (parent_ != nullptr) used_from_parent_.Add(index);
-      LinkInfo::RecordPoolKey(index, key);
-      return index;
+      return place(index);
     }
     link_pair_index_ = -1;
     if (link_appended_patchable_ordinal_ == link_ordinal_ - 1) {
@@ -758,31 +763,19 @@ intptr_t ObjectPoolBuilder::TryPlaceAtLinkSlot(
       return -1;
     }
     const intptr_t index = LinkInfo::BasePoolIndex(key);
-    const char* next_key =
-        LinkInfo::PoolEntryKey(entry, link_context_, link_ordinal_ + 1);
     if (index == LinkInfo::kNone || !root->IsFreeLinkSlot(index) ||
-        LinkInfo::BasePoolIndex(next_key) != index + 1 ||
         !root->IsFreeLinkSlot(index + 1)) {
       link_appended_patchable_ordinal_ = link_ordinal_;
       return -1;
     }
     link_pair_index_ = index;
     link_pair_ordinal_ = link_ordinal_;
-    root->PlaceAtLinkSlot(index, entry);
-  // The per-code pool built from this builder records which global entries
-  // the code uses (snapshot reachability), so include placed entries.
-  if (parent_ != nullptr) used_from_parent_.Add(index);
-    LinkInfo::RecordPoolKey(index, key);
-    return index;
+    return place(index);
   }
+  if (entry.type() == ObjectPoolBuilderEntry::kNativeFunction) return -1;
   const intptr_t index = LinkInfo::BasePoolIndex(key);
   if (index == LinkInfo::kNone || !root->IsFreeLinkSlot(index)) return -1;
-  root->PlaceAtLinkSlot(index, entry);
-  // The per-code pool built from this builder records which global entries
-  // the code uses (snapshot reachability), so include placed entries.
-  if (parent_ != nullptr) used_from_parent_.Add(index);
-  LinkInfo::RecordPoolKey(index, key);
-  return index;
+  return place(index);
 #else
   return -1;
 #endif

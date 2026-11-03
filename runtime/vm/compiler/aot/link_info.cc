@@ -355,9 +355,13 @@ const char* LinkInfo::ObjectKey(const Object& obj, intptr_t depth) {
   if (obj.ptr() == Object::sentinel().ptr()) return "<sentinel>";
   if (obj.IsString()) {
     const auto& str = String::Cast(obj);
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (intptr_t i = 0; i < str.Length(); i++) {
+      const uint16_t unit = str.CharAt(i);
+      hash = Fnv1a(hash, &unit, sizeof(unit));
+    }
     const char* utf8 = str.ToCString();
     const intptr_t len = strlen(utf8);
-    const uint64_t hash = Fnv1a(0xcbf29ce484222325ULL, utf8, len);
     // A short readable prefix helps diagnostics; the hash makes it unique.
     char prefix[25];
     intptr_t i = 0;
@@ -392,6 +396,23 @@ const char* LinkInfo::ObjectKey(const Object& obj, intptr_t depth) {
                           args_key == nullptr ? "?" : args_key,
                           static_cast<int>(type.nullability())));
   }
+  if (obj.IsTypeParameter()) {
+    const auto& param = TypeParameter::Cast(obj);
+    const char* owner = "?";
+    if (param.IsFunctionTypeParameter()) {
+      // Not identifiable without its function; keyed by use site instead.
+      return nullptr;
+    } else {
+      auto* table = IsolateGroup::Current()->class_table();
+      const intptr_t cid = param.parameterized_class_id();
+      if (table->IsValidIndex(cid) && table->HasValidClassAt(cid)) {
+        owner = ClassKey(Class::Handle(zone, table->At(cid)));
+      }
+    }
+    return Sanitize(zone, OS::SCreate(zone, "tparam:%s:%" Pd ":%" Pd ":%d",
+                                      owner, param.base(), param.index(),
+                                      static_cast<int>(param.nullability())));
+  }
   if (obj.IsAbstractType()) {
     return Sanitize(zone, OS::SCreate(zone, "atype:%s", obj.ToCString()));
   }
@@ -411,9 +432,19 @@ const char* LinkInfo::ObjectKey(const Object& obj, intptr_t depth) {
   }
   if (obj.IsArray()) {
     const auto& array = Array::Cast(obj);
+    // Mutable arrays have identity; distinct empty arrays must not share a
+    // key. Key them by use site (nullptr) unless canonical.
+    if (!obj.IsCanonical() && depth == 0) return nullptr;
     if (array.Length() > 64) return nullptr;
     ZoneTextBuffer buffer(zone);
-    buffer.Printf("array:%" Pd "[", array.Length());
+    const auto& type_args =
+        TypeArguments::Handle(zone, array.GetTypeArguments());
+    const char* type_args_key =
+        type_args.IsNull() ? "" : ObjectKey(type_args, depth + 1);
+    buffer.Printf("array:%s:%s:%" Pd "[",
+                  obj.GetClassId() == kImmutableArrayCid ? "const" : "mutable",
+                  type_args_key == nullptr ? "?" : type_args_key,
+                  array.Length());
     auto& element = Object::Handle(zone);
     for (intptr_t i = 0; i < array.Length(); i++) {
       element = array.At(i);
