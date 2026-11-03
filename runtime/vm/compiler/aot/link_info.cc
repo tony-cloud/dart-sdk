@@ -22,6 +22,7 @@
 #include "vm/os.h"
 #include "vm/stub_code.h"
 #include "vm/symbols.h"
+#include "vm/version.h"
 #include "vm/zone_text_buffer.h"
 
 namespace dart {
@@ -52,6 +53,22 @@ DEFINE_FLAG(bool,
 
 namespace {
 
+// Sidecar format. Bump on any change to line kinds or column meanings; a
+// base file with a different version is rejected rather than misread.
+constexpr const char* kLinkInfoHeader = "#osb-link-info 2";
+
+// Identity of the compiler that writes or reads a sidecar. Layout facts are
+// only meaningful to the same VM build (snapshot hash) and target
+// configuration (features: mode, arch, OS, compressed pointers, ...).
+const char* CompilerFeatures() {
+  static char* features = nullptr;
+  if (features == nullptr) {
+    features =
+        Dart::FeaturesString(IsolateGroup::Current(), Snapshot::kFullAOT);
+  }
+  return features;
+}
+
 using CStringIntMap = MallocDirectChainedHashMap<CStringIntMapKeyValueTrait>;
 
 // Base (release) layout as read from --link_base.
@@ -68,6 +85,8 @@ struct BaseLayout {
   intptr_t num_statics = 0;
   intptr_t pool_length = 0;
   intptr_t stub_pool_length = -1;
+  char* snapshot_hash = nullptr;
+  char* features = nullptr;
 };
 
 BaseLayout* base_layout = nullptr;
@@ -80,7 +99,7 @@ intptr_t Lookup(const CStringIntMap& map, const char* key) {
   if (key == nullptr) return LinkInfo::kNone;
   const intptr_t value = map.LookupValue(key);
   return value == CStringIntMapKeyValueTrait::kNoValue ? LinkInfo::kNone
-                                                        : value;
+                                                       : value;
 }
 
 void InsertKey(CStringIntMap* map, const char* key, intptr_t value) {
@@ -149,8 +168,12 @@ void LoadBase() {
       next++;
     }
     if (!saw_header) {
-      if (strncmp(line, "#osb-link-info 1", 16) != 0) {
+      if (strncmp(line, "#osb-link-info ", 15) != 0) {
         FATAL("--link_base: %s is not a link info file", FLAG_link_base);
+      }
+      if (strcmp(line, kLinkInfoHeader) != 0) {
+        FATAL("--link_base: %s has format '%s', this gen_snapshot reads '%s'",
+              FLAG_link_base, line, kLinkInfoHeader);
       }
       saw_header = true;
       line = next;
@@ -178,6 +201,12 @@ void LoadBase() {
       if (columns[4][0] != '\0') {
         InsertKey(&base->pool_index, columns[4], ParseInt(columns[1]));
       }
+    } else if (strcmp(kind, "id") == 0 && n >= 3) {
+      if (strcmp(columns[1], "snapshot_hash") == 0) {
+        base->snapshot_hash = Utils::StrDup(columns[2]);
+      } else if (strcmp(columns[1], "features") == 0) {
+        base->features = Utils::StrDup(columns[2]);
+      }
     } else if (strcmp(kind, "meta") == 0 && n >= 3) {
       const char* name = columns[1];
       const intptr_t value = ParseInt(columns[2]);
@@ -194,6 +223,21 @@ void LoadBase() {
     line = next;
   }
   free(text);
+  if (base->snapshot_hash == nullptr || base->features == nullptr) {
+    FATAL("--link_base: %s has no compiler identity lines", FLAG_link_base);
+  }
+  if (strcmp(base->snapshot_hash, Version::SnapshotString()) != 0) {
+    FATAL(
+        "--link_base: %s was written by a different VM (snapshot hash %s, "
+        "this gen_snapshot is %s)",
+        FLAG_link_base, base->snapshot_hash, Version::SnapshotString());
+  }
+  if (strcmp(base->features, CompilerFeatures()) != 0) {
+    FATAL(
+        "--link_base: %s was written for a different target ('%s', this "
+        "gen_snapshot targets '%s')",
+        FLAG_link_base, base->features, CompilerFeatures());
+  }
   base_layout = base;
 }
 
@@ -329,7 +373,9 @@ bool LinkInfo::IsRecording() {
   if (output == nullptr) {
     alignas(TextBuffer) static uint8_t storage[sizeof(TextBuffer)];
     output = ::new (storage) TextBuffer(1 << 20);
-    output->Printf("#osb-link-info 1\n");
+    output->Printf("%s\n", kLinkInfoHeader);
+    output->Printf("id\tsnapshot_hash\t%s\n", Version::SnapshotString());
+    output->Printf("id\tfeatures\t%s\n", CompilerFeatures());
   }
   return true;
 }
@@ -339,18 +385,17 @@ const char* LinkInfo::ClassKey(const Class& cls) {
   if (cls.IsNull()) return "<null-class>";
   const char* url = LibraryUrl(zone, cls);
   const auto& name = String::Handle(zone, cls.Name());
-  return Sanitize(zone, OS::SCreate(zone, "%s::%s", url,
-                                    ScrubbedName(zone, name)));
+  return Sanitize(zone,
+                  OS::SCreate(zone, "%s::%s", url, ScrubbedName(zone, name)));
 }
 
 const char* LinkInfo::FieldKey(const Field& field) {
   Zone* zone = Thread::Current()->zone();
   const auto& owner = Class::Handle(zone, field.Owner());
   const auto& name = String::Handle(zone, field.name());
-  return Sanitize(zone,
-                  OS::SCreate(zone, "%s::%s%s", ClassKey(owner),
-                              field.is_static() ? "static:" : "",
-                              ScrubbedName(zone, name)));
+  return Sanitize(zone, OS::SCreate(zone, "%s::%s%s", ClassKey(owner),
+                                    field.is_static() ? "static:" : "",
+                                    ScrubbedName(zone, name)));
 }
 
 const char* LinkInfo::FunctionKey(const Function& function) {
@@ -360,8 +405,8 @@ const char* LinkInfo::FunctionKey(const Function& function) {
   if (function.IsClosureFunction()) {
     const auto& parent = Function::Handle(zone, function.parent_function());
     if (function.IsImplicitClosureFunction()) {
-      return Sanitize(zone, OS::SCreate(zone, "%s::<tearoff>",
-                                        FunctionKey(parent)));
+      return Sanitize(zone,
+                      OS::SCreate(zone, "%s::<tearoff>", FunctionKey(parent)));
     }
     // Closures are identified by their parent and their position relative to
     // the outermost enclosing function, so that unrelated edits elsewhere in
@@ -371,18 +416,17 @@ const char* LinkInfo::FunctionKey(const Function& function) {
     if (function.token_pos().IsReal() && outer.token_pos().IsReal()) {
       relative = function.token_pos().Pos() - outer.token_pos().Pos();
     }
-    return Sanitize(
-        zone, OS::SCreate(zone, "%s::<closure %s@%" Pd ">",
-                          parent.IsNull() ? "" : FunctionKey(parent),
-                          ScrubbedName(zone, name), relative));
+    return Sanitize(zone,
+                    OS::SCreate(zone, "%s::<closure %s@%" Pd ">",
+                                parent.IsNull() ? "" : FunctionKey(parent),
+                                ScrubbedName(zone, name), relative));
   }
   const auto& owner = Class::Handle(zone, function.Owner());
   return Sanitize(
-      zone, OS::SCreate(zone, "%s::%s#%d/%" Pd "%s", ClassKey(owner),
-                        ScrubbedName(zone, name),
-                        static_cast<int>(function.kind()),
-                        function.NumParameters(),
-                        function.is_static() ? "s" : ""));
+      zone,
+      OS::SCreate(zone, "%s::%s#%d/%" Pd "%s", ClassKey(owner),
+                  ScrubbedName(zone, name), static_cast<int>(function.kind()),
+                  function.NumParameters(), function.is_static() ? "s" : ""));
 }
 
 const char* LinkInfo::CodeKey(const Code& code) {
@@ -401,8 +445,8 @@ const char* LinkInfo::CodeKey(const Code& code) {
   }
   if (owner.IsAbstractType()) {
     const char* key = ObjectKey(owner);
-    return Sanitize(zone, OS::SCreate(zone, "tts:%s",
-                                      key != nullptr ? key : "?"));
+    return Sanitize(zone,
+                    OS::SCreate(zone, "tts:%s", key != nullptr ? key : "?"));
   }
   return "code:?";
 }
@@ -444,8 +488,8 @@ const char* LinkInfo::ObjectKey(const Object& obj, intptr_t depth) {
       prefix[i] = (c < 0x20 || c > 0x7e) ? '?' : c;
     }
     prefix[i] = '\0';
-    return OS::SCreate(zone, "str:%" Pd ":%016" Px64 ":%s", str.Length(),
-                       hash, prefix);
+    return OS::SCreate(zone, "str:%" Pd ":%016" Px64 ":%s", str.Length(), hash,
+                       prefix);
   }
   if (obj.IsClass()) {
     return OS::SCreate(zone, "class:%s", ClassKey(Class::Cast(obj)));
@@ -463,12 +507,10 @@ const char* LinkInfo::ObjectKey(const Object& obj, intptr_t depth) {
     const auto& type = Type::Cast(obj);
     const auto& cls = Class::Handle(zone, type.type_class());
     const auto& args = TypeArguments::Handle(zone, type.arguments());
-    const char* args_key =
-        args.IsNull() ? "" : ObjectKey(args, depth + 1);
-    return Sanitize(
-        zone, OS::SCreate(zone, "type:%s<%s>%d", ClassKey(cls),
-                          args_key == nullptr ? "?" : args_key,
-                          static_cast<int>(type.nullability())));
+    const char* args_key = args.IsNull() ? "" : ObjectKey(args, depth + 1);
+    return Sanitize(zone, OS::SCreate(zone, "type:%s<%s>%d", ClassKey(cls),
+                                      args_key == nullptr ? "?" : args_key,
+                                      static_cast<int>(type.nullability())));
   }
   if (obj.IsTypeParameter()) {
     const auto& param = TypeParameter::Cast(obj);
@@ -537,9 +579,9 @@ const char* LinkInfo::ObjectKey(const Object& obj, intptr_t depth) {
     const char* kind = obj.IsUnlinkedCall() ? "ucall"
                        : obj.IsICData()     ? "icdata"
                                             : "mega";
-    return Sanitize(zone, OS::SCreate(zone, "%s:%s:%s", kind,
-                                      ScrubbedName(zone, name),
-                                      desc_key == nullptr ? "?" : desc_key));
+    return Sanitize(
+        zone, OS::SCreate(zone, "%s:%s:%s", kind, ScrubbedName(zone, name),
+                          desc_key == nullptr ? "?" : desc_key));
   }
   if (obj.IsClosure()) {
     const auto& fn = Function::Handle(zone, Closure::Cast(obj).function());
@@ -625,8 +667,8 @@ const char* LinkInfo::PoolEntryKey(
       entry.patchable() == ObjectPoolBuilderEntry::kPatchable;
   switch (entry.type()) {
     case ObjectPoolBuilderEntry::kImmediate:
-      if (patchable || entry.snapshot_behavior() !=
-                           ObjectPoolBuilderEntry::kSnapshotable) {
+      if (patchable ||
+          entry.snapshot_behavior() != ObjectPoolBuilderEntry::kSnapshotable) {
         break;
       }
       return OS::SCreate(zone, "imm:%" Px, entry.imm_);
@@ -645,8 +687,7 @@ const char* LinkInfo::PoolEntryKey(
   // objects, native entries) are keyed by their position in the code that
   // requested them.
   if (context == nullptr) return nullptr;
-  return Sanitize(zone,
-                  OS::SCreate(zone, "site:%s#%" Pd, context, ordinal));
+  return Sanitize(zone, OS::SCreate(zone, "site:%s#%" Pd, context, ordinal));
 }
 
 void LinkInfo::RemapStaticFieldIds(IsolateGroup* IG) {
@@ -660,11 +701,13 @@ void LinkInfo::RemapStaticFieldIds(IsolateGroup* IG) {
   CollectStaticFields(thread, old_count, &fields);
 
   std::unique_ptr<intptr_t[]> old_to_new(new intptr_t[old_count]);
-  for (intptr_t i = 0; i < old_count; i++) old_to_new[i] = -1;
+  for (intptr_t i = 0; i < old_count; i++)
+    old_to_new[i] = -1;
   const intptr_t new_capacity = Utils::Maximum(old_count, base_count) +
                                 old_count;  // Worst case: all appended.
   std::unique_ptr<bool[]> taken(new bool[new_capacity]);
-  for (intptr_t i = 0; i < new_capacity; i++) taken[i] = false;
+  for (intptr_t i = 0; i < new_capacity; i++)
+    taken[i] = false;
 
   intptr_t kept = 0;
   for (auto field : fields) {
@@ -680,7 +723,8 @@ void LinkInfo::RemapStaticFieldIds(IsolateGroup* IG) {
   intptr_t next = base_count;
   for (intptr_t i = 0; i < old_count; i++) {
     if (old_to_new[i] == -1) {
-      while (taken[next]) next++;
+      while (taken[next])
+        next++;
       old_to_new[i] = next;
       taken[next] = true;
     }
@@ -707,8 +751,8 @@ void LinkInfo::RemapStaticFieldIds(IsolateGroup* IG) {
     fields[i]->set_field_id_unsafe(new_ids[i]);
   }
   if (FLAG_trace_link_info) {
-    OS::PrintErr("link: static fields kept %" Pd " of %" Pd
-                 " (release %" Pd ", now %" Pd " ids)\n",
+    OS::PrintErr("link: static fields kept %" Pd " of %" Pd " (release %" Pd
+                 ", now %" Pd " ids)\n",
                  kept, old_count, base_count, new_count);
   }
 }
@@ -783,7 +827,8 @@ void LinkInfo::RecordProgramTables(IsolateGroup* IG) {
   // subclasses. A field added to the class in a patch is placed after it so
   // that it cannot collide with a subclass field kept at its release offset.
   std::unique_ptr<intptr_t[]> subtree_end(new intptr_t[num_cids]);
-  for (intptr_t cid = 0; cid < num_cids; cid++) subtree_end[cid] = 0;
+  for (intptr_t cid = 0; cid < num_cids; cid++)
+    subtree_end[cid] = 0;
   auto& cls = Class::Handle(zone);
   auto& super = Class::Handle(zone);
   for (intptr_t cid = kNumPredefinedCids; cid < num_cids; cid++) {
@@ -821,9 +866,10 @@ void LinkInfo::RecordProgramTables(IsolateGroup* IG) {
     for (intptr_t i = 0; i < fields.Length(); i++) {
       field ^= fields.At(i);
       if (field.is_static()) continue;
-      const intptr_t size = field.is_unboxed() ? Class::UnboxedFieldSizeInBytesByCid(
-                                                     field.guarded_cid())
-                                               : 0;
+      const intptr_t size =
+          field.is_unboxed()
+              ? Class::UnboxedFieldSizeInBytesByCid(field.guarded_cid())
+              : 0;
       Emit("field\t%" Pd "\t%" Pd "\t%s\n", field.HostOffset(), size,
            FieldKey(field));
     }
@@ -836,7 +882,8 @@ void LinkInfo::RecordProgramTables(IsolateGroup* IG) {
   GrowableArray<const Field*> statics;
   CollectStaticFields(thread, num_statics, &statics);
   std::unique_ptr<bool[]> emitted(new bool[num_statics]);
-  for (intptr_t i = 0; i < num_statics; i++) emitted[i] = false;
+  for (intptr_t i = 0; i < num_statics; i++)
+    emitted[i] = false;
   for (auto f : statics) {
     if (emitted[f->field_id()]) continue;
     emitted[f->field_id()] = true;
@@ -869,8 +916,8 @@ void LinkInfo::RecordCode(const char* image,
     } else {
       target = call.Get<Code::kSCallTableFunctionTarget>();
       if (target.IsFunction()) {
-        target_key = OS::SCreate(zone, "fn:%s",
-                                 FunctionKey(Function::Cast(target)));
+        target_key =
+            OS::SCreate(zone, "fn:%s", FunctionKey(Function::Cast(target)));
       }
     }
     Emit("call\t%" Pd "\t%" Pd "\t%d\t%d\t%s\n", text_offset,
