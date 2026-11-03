@@ -164,6 +164,11 @@ void MixedMode::LinkImage(uword start_pc,
                           intptr_t pc_offset_stride) {
   const bool verbose = EnvFlag("DART_MIXED_VERBOSE");
   const bool unlink_all = EnvFlag("DART_MIXED_UNLINK_ALL");
+  // Stress mode: simulate every entry whose image offset is below this value
+  // (e.g. all Dart code, leaving the trailing stubs native).
+  const char* below_env = getenv("DART_MIXED_UNLINK_BELOW");
+  const uword unlink_below =
+      below_env != nullptr ? strtoull(below_env, nullptr, 0) : 0;
 
   patch_start_ = reinterpret_cast<uword>(patch_image_);
   patch_size_ = end_pc - patch_start_;
@@ -193,6 +198,7 @@ void MixedMode::LinkImage(uword start_pc,
   for (intptr_t i = 0; i < length; i++) {
     const uword lo = entry_start[i], hi = entry_start[i + 1];
     if (unlink_all || base_image_ == nullptr) continue;
+    if (lo - start_pc < unlink_below) continue;
     const uword base_lo = PatchToBase(lo);
     if (base_lo + (hi - lo) > base_start_ + base_size_) continue;
     if (memcmp(reinterpret_cast<void*>(lo), reinterpret_cast<void*>(base_lo),
