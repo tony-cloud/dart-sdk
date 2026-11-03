@@ -6982,6 +6982,21 @@ class LoadIndexedInstr : public TemplateDefinition<2, NoThrow> {
 
   virtual bool HasUnknownSideEffects() const { return false; }
 
+  // Shorebird structural patching: the load reads data that does not change
+  // once the isolate runs (the per-class override flags, which are only
+  // written while a patch is installed), so it can be CSE'd and hoisted.
+  virtual bool AllowsCSE() const { return is_immutable_; }
+  void mark_as_immutable() { is_immutable_ = true; }
+  virtual bool AttributesEqual(const Instruction& other) const {
+    auto const other_load = other.AsLoadIndexed();
+    ASSERT(other_load != nullptr);
+    return is_immutable_ == other_load->is_immutable_ &&
+           class_id_ == other_load->class_id_ &&
+           index_scale_ == other_load->index_scale_ &&
+           index_unboxed_ == other_load->index_unboxed_ &&
+           alignment_ == other_load->alignment_;
+  }
+
   virtual Definition* Canonicalize(FlowGraph* flow_graph);
 
   PRINT_OPERANDS_TO_SUPPORT
@@ -6993,7 +7008,8 @@ class LoadIndexedInstr : public TemplateDefinition<2, NoThrow> {
   F(const AlignmentType, alignment_)                                           \
   F(const TokenPosition, token_pos_)                                           \
   /* derived from call */                                                      \
-  F(CompileType*, result_type_)
+  F(CompileType*, result_type_)                                                \
+  F(bool, is_immutable_)
 
   DECLARE_INSTRUCTION_SERIALIZABLE_FIELDS(LoadIndexedInstr,
                                           TemplateDefinition,

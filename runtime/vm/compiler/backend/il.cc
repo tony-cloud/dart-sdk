@@ -7026,7 +7026,8 @@ LoadIndexedInstr::LoadIndexedInstr(Value* array,
       class_id_(class_id),
       alignment_(StrengthenAlignment(class_id, alignment)),
       token_pos_(source.token_pos),
-      result_type_(result_type) {
+      result_type_(result_type),
+      is_immutable_(false) {
   // In particular, notice that kPointerCid is _not_ supported because it gives
   // no information about whether the elements are signed for elements with
   // unboxed integer representations.  The constructor must take that

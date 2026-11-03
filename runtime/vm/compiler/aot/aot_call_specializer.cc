@@ -1409,6 +1409,9 @@ ConditionInstr* AotCallSpecializer::BuildBaseWorldGuardCondition(
       new (Z) Value(load_flags), new (Z) Value(load_cid),
       /*index_unboxed=*/true, /*index_scale=*/1, kExternalTypedDataUint8ArrayCid,
       kAlignedAccess, DeoptId::kNone, call->source());
+  // The flags only change while a patch is installed, before the isolate
+  // runs: the load can be hoisted out of loops.
+  load_flag->mark_as_immutable();
   InsertBefore(call, load_flag, nullptr, FlowGraph::kValue);
   const Representation rep =
       LoadIndexedInstr::ReturnRepresentation(kExternalTypedDataUint8ArrayCid);

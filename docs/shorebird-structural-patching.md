@@ -205,9 +205,12 @@ Design choices and the alternative considered:
   variant inlined by the polymorphic inliner gets its own function guard.
 - **Hoisting.** The guard load is treated as immutable so that the optimizer can
   hoist it out of loops and share it between inlined copies of the same callee.
-  That is sound because bytecode is attached only before the isolate becomes
-  runnable: structural patches already require that, and the runtime rejects any
-  bytecode patch of a structural snapshot once its isolate is runnable.
+  The same holds for the byte load of the per-class override guard (the flags
+  are only written while a structural patch is installed). That is sound because
+  bytecode is attached and override flags are cleared only before the isolate
+  becomes runnable: structural patches already require that, and the runtime
+  rejects any bytecode patch of a structural snapshot once its isolate is
+  runnable.
 - **Constructors.** The optimizer forwarded a load of a final field of a fresh
   allocation from its single initializing store, assuming by construction that
   the store dominates the load. With a guarded constructor the store is only in
