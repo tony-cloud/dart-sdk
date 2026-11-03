@@ -6,6 +6,9 @@
 #if defined(TARGET_ARCH_ARM64)
 
 #include "vm/compiler/backend/flow_graph_compiler.h"
+#if defined(DART_PRECOMPILER)
+#include "vm/compiler/aot/link_info.h"
+#endif
 
 #include "vm/compiler/api/type_check_mode.h"
 #include "vm/compiler/backend/il_printer.h"
@@ -397,7 +400,19 @@ void FlowGraphCompiler::GenerateStaticDartCall(intptr_t deopt_id,
                                                const Function& target,
                                                Code::EntryKind entry_kind) {
   ASSERT(CanCallDart());
-  if (CanPcRelativeCall(target)) {
+  if (FLAG_precompiled_mode && LinkInfo::IsDDTarget(target)) {
+    // DD (dynamic dispatch) slot: call through the target's Function object
+    // in the global object pool instead of a direct pc-relative call, so the
+    // caller's instructions do not depend on the callee's code. The checked
+    // entry is used because the callee may be replaced at run time. The
+    // Function is kept alive through the object pool.
+    ASSERT(is_optimizing());
+    __ LoadObject(FUNCTION_REG, target);
+    __ Call(compiler::FieldAddress(
+        FUNCTION_REG, compiler::target::Function::entry_point_offset()));
+    EmitCallsiteMetadata(source, deopt_id, kind, locs,
+                         pending_deoptimization_env_);
+  } else if (CanPcRelativeCall(target)) {
     __ GenerateUnRelocatedPcRelativeCall();
     AddPcRelativeCallTarget(target, entry_kind);
     EmitCallsiteMetadata(source, deopt_id, kind, locs,

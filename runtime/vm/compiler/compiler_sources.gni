@@ -9,6 +9,8 @@ compiler_sources = [
   "aot/aot_call_specializer.h",
   "aot/dispatch_table_generator.cc",
   "aot/dispatch_table_generator.h",
+  "aot/link_info.cc",
+  "aot/link_info.h",
   "aot/precompiler.cc",
   "aot/precompiler.h",
   "aot/precompiler_tracer.cc",

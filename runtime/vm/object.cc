@@ -24,6 +24,9 @@
 #include "vm/code_descriptors.h"
 #include "vm/code_observers.h"
 #include "vm/compiler/assembler/disassembler.h"
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+#include "vm/compiler/aot/link_info.h"
+#endif
 #include "vm/compiler/assembler/disassembler_kbc.h"
 #include "vm/compiler/jit/compiler.h"
 #include "vm/compiler/method_recognizer.h"
@@ -3538,7 +3541,173 @@ intptr_t Class::UnboxedFieldSizeInBytesByCid(intptr_t cid) {
   }
 }
 
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+// Patch build against a release layout (see vm/compiler/aot/link_info.h).
+// Fields known to the release keep their release offsets when the words are
+// free; type arguments likewise. Everything else (new fields, fields whose
+// representation changed, fields whose release words are taken) is placed
+// after the release end of this class's whole subtree, so it cannot collide
+// with a release field of any subclass. Holes are left as tagged words that
+// are initialized to null on allocation.
+UnboxedFieldBitmap Class::CalculateFieldOffsetsFromLinkBase() const {
+  Thread* thread = Thread::Current();
+  Zone* zone = thread->zone();
+  const Array& flds = Array::Handle(zone, fields());
+  const Class& super = Class::Handle(zone, SuperClass());
+  const intptr_t word = kCompressedWordSize;
+  UnboxedFieldBitmap bitmap{};
+  intptr_t start = 0;
+  intptr_t type_args_offset = kNoTypeArguments;
+  if (super.IsNull()) {
+    start = Instance::NextFieldOffset();
+  } else {
+    ASSERT(super.is_finalized() || super.is_prefinalized());
+    type_args_offset = super.host_type_arguments_field_offset();
+    start = super.host_next_field_offset();
+    ASSERT(num_native_fields() == 0);
+    const intptr_t num_native_fields = super.num_native_fields();
+    set_num_native_fields(num_native_fields);
+    if (num_native_fields > 0 || is_isolate_unsendable_due_to_pragma()) {
+      set_is_isolate_unsendable(true);
+    }
+    bitmap =
+        IsolateGroup::Current()->class_table()->GetUnboxedFieldsMapAt(super.id());
+  }
+
+  GrowableArray<bool> used;
+  auto mark = [&](intptr_t offset, intptr_t size) {
+    for (intptr_t o = offset; o < offset + size; o += word) {
+      const intptr_t index = o / word;
+      while (used.length() <= index) used.Add(false);
+      used[index] = true;
+    }
+  };
+  auto is_free = [&](intptr_t offset, intptr_t size) {
+    if (offset < Instance::NextFieldOffset() || (offset % word) != 0) {
+      return false;
+    }
+    for (intptr_t o = offset; o < offset + size; o += word) {
+      const intptr_t index = o / word;
+      if (index < used.length() && used[index]) return false;
+    }
+    return true;
+  };
+  auto field_size = [&](const Field& field) {
+    return field.is_unboxed()
+               ? UnboxedFieldSizeInBytesByCid(field.guarded_cid())
+               : word;
+  };
+  auto fits_bitmap = [&](intptr_t offset, intptr_t size) {
+    return (offset + size) / word <= UnboxedFieldBitmap::Length();
+  };
+  auto set_bits = [&](intptr_t offset, intptr_t size) {
+    for (intptr_t o = offset; o < offset + size; o += word) {
+      bitmap.Set(o / word);
+    }
+  };
+
+  mark(0, Instance::NextFieldOffset());
+  {
+    Class& cls = Class::Handle(zone, super.ptr());
+    Array& ancestor_fields = Array::Handle(zone);
+    Field& field = Field::Handle(zone);
+    for (; !cls.IsNull(); cls = cls.SuperClass()) {
+      if (cls.host_type_arguments_field_offset() != kNoTypeArguments) {
+        mark(cls.host_type_arguments_field_offset(), word);
+      }
+      ancestor_fields = cls.fields();
+      if (ancestor_fields.IsNull()) continue;
+      for (intptr_t i = 0; i < ancestor_fields.Length(); i++) {
+        field ^= ancestor_fields.At(i);
+        if (field.is_static()) continue;
+        mark(field.HostOffset(), field_size(field));
+      }
+    }
+  }
+
+  const char* class_key = LinkInfo::ClassKey(*this);
+  intptr_t end = start;
+  bool defer_type_args = false;
+  if (type_args_offset == kNoTypeArguments && IsGeneric()) {
+    const intptr_t base = LinkInfo::BaseTypeArgumentsOffset(class_key);
+    if (base > 0 && base != kNoTypeArguments && is_free(base, word)) {
+      type_args_offset = base;
+      mark(base, word);
+      end = Utils::Maximum(end, base + word);
+    } else {
+      defer_type_args = true;
+    }
+  }
+
+  Field& field = Field::Handle(zone);
+  GrowableArray<intptr_t> deferred;
+  for (intptr_t i = 0; i < flds.Length(); i++) {
+    field ^= flds.At(i);
+    if (field.is_static()) continue;
+    ASSERT(field.HostOffset() == 0);
+    const intptr_t size = field_size(field);
+    intptr_t base_offset = 0;
+    intptr_t base_unboxed = 0;
+    const char* key = LinkInfo::FieldKey(field);
+    if (LinkInfo::BaseFieldLayout(key, &base_offset, &base_unboxed) &&
+        base_unboxed == (field.is_unboxed() ? size : 0) &&
+        is_free(base_offset, size) &&
+        (!field.is_unboxed() || fits_bitmap(base_offset, size))) {
+      field.SetOffset(base_offset, base_offset);
+      mark(base_offset, size);
+      if (field.is_unboxed()) set_bits(base_offset, size);
+      end = Utils::Maximum(end, base_offset + size);
+    } else {
+      deferred.Add(i);
+    }
+  }
+
+  if (defer_type_args || deferred.length() > 0) {
+    const intptr_t subtree_end = LinkInfo::BaseSubtreeEnd(class_key);
+    intptr_t cursor = Utils::Maximum(Utils::Maximum(start, end), subtree_end);
+    cursor = Utils::RoundUp(cursor, word);
+    if (defer_type_args) {
+      LinkInfo::NoteMismatch("link: type arguments of %s moved to %" Pd,
+                             class_key, cursor);
+      type_args_offset = cursor;
+      cursor += word;
+    }
+    for (intptr_t i = 0; i < deferred.length(); i++) {
+      field ^= flds.At(deferred[i]);
+      intptr_t size = field_size(field);
+      if (field.is_unboxed() && !fits_bitmap(cursor, size)) {
+        field.set_is_unboxed(false);
+        size = word;
+      }
+      LinkInfo::NoteMismatch("link: field %s placed at new offset %" Pd,
+                             LinkInfo::FieldKey(field), cursor);
+      field.SetOffset(cursor, cursor);
+      if (field.is_unboxed()) set_bits(cursor, size);
+      cursor += size;
+    }
+    end = Utils::Maximum(end, cursor);
+  }
+
+  set_type_arguments_field_offset(type_args_offset, type_args_offset);
+  const intptr_t host_instance_size = RoundedAllocationSize(end);
+  const intptr_t target_instance_size =
+      compiler::target::RoundedAllocationSize(end);
+  if (!Utils::IsInt(32, target_instance_size)) {
+    FATAL("Too many fields in %s\n", UserVisibleNameCString());
+  }
+  set_instance_size(host_instance_size, target_instance_size);
+  set_next_field_offset(end, end);
+  return bitmap;
+}
+#endif  // defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+
 UnboxedFieldBitmap Class::CalculateFieldOffsets() const {
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+  if (LinkInfo::HasBase() &&
+      kCompressedWordSize == compiler::target::kCompressedWordSize) {
+    return CalculateFieldOffsetsFromLinkBase();
+  }
+#endif
   Array& flds = Array::Handle(fields());
   const Class& super = Class::Handle(SuperClass());
   intptr_t host_offset = 0;

@@ -14,6 +14,7 @@
 #include "vm/code_patcher.h"
 #include "vm/compiler/aot/aot_call_specializer.h"
 #include "vm/compiler/aot/precompiler_tracer.h"
+#include "vm/compiler/aot/link_info.h"
 #include "vm/compiler/assembler/assembler.h"
 #include "vm/compiler/assembler/disassembler.h"
 #include "vm/compiler/backend/branch_optimizer.h"
@@ -511,6 +512,10 @@ void Precompiler::DoCompileAll() {
       }
 
       ClassFinalizer::SortClasses();
+      LinkInfo::RemapStaticFieldIds(IG);
+      // Record the layout before tree shaking: fields and classes that are
+      // dropped later still determine offsets of compiled code.
+      LinkInfo::RecordProgramTables(IG);
 
       // Collects type usage information which allows us to decide when/how to
       // optimize runtime type tests.
@@ -553,6 +558,10 @@ void Precompiler::DoCompileAll() {
 
         global_object_pool_builder()->Reset();
         stub_pool.CopyInto(global_object_pool_builder());
+        LinkInfo::ResetPoolKeys();
+        LinkInfo::RecordMeta("stub_pool_length",
+                             global_object_pool_builder()->CurrentLength());
+        global_object_pool_builder()->ReserveLinkBaseSlots();
       }
 
       CollectDynamicFunctionNames();
@@ -593,6 +602,7 @@ void Precompiler::DoCompileAll() {
         const auto& pool = ObjectPool::Handle(
             ObjectPool::NewFromBuilder(*global_object_pool_builder()));
         IG->object_store()->set_global_object_pool(pool);
+        LinkInfo::RecordPool(global_object_pool_builder());
         global_object_pool_builder()->Reset();
 
         if (FLAG_disassemble) {
@@ -938,6 +948,7 @@ void Precompiler::CollectCallbackFields() {
 void Precompiler::ProcessFunction(const Function& function) {
   HANDLESCOPE(T);
   const intptr_t gop_offset = global_object_pool_builder()->CurrentLength();
+  link_pin_mark_ = global_object_pool_builder()->link_pin_count();
   RELEASE_ASSERT(!function.HasCode());
   // Ffi trampoline functions have no signature.
   ASSERT(function.kind() == UntaggedFunction::kFfiTrampoline ||
@@ -1032,6 +1043,17 @@ void Precompiler::AddCalleesOf(const Function& function, intptr_t gop_offset) {
     for (intptr_t i = gop_offset;
          i < global_object_pool_builder()->CurrentLength(); i++) {
       const auto& wrapper_entry = global_object_pool_builder()->EntryAt(i);
+      if (wrapper_entry.type() ==
+          compiler::ObjectPoolBuilderEntry::kTaggedObject) {
+        const auto& entry = *wrapper_entry.obj_;
+        AddCalleesOfHelper(entry, &selector, &cls);
+      }
+    }
+    // Entries placed at release pool slots (patch builds, see link_info.h).
+    for (intptr_t i = link_pin_mark_;
+         i < global_object_pool_builder()->link_pin_count(); i++) {
+      const auto& wrapper_entry = global_object_pool_builder()->EntryAt(
+          global_object_pool_builder()->link_pin_at(i));
       if (wrapper_entry.type() ==
           compiler::ObjectPoolBuilderEntry::kTaggedObject) {
         const auto& entry = *wrapper_entry.obj_;
@@ -3683,6 +3705,15 @@ bool PrecompileParsedFunctionHelper::GenerateCode(FlowGraph* flow_graph) {
       // (See TryCommitToParent invocation below).
       compiler::ObjectPoolBuilder object_pool_builder(
           precompiler_->global_object_pool_builder());
+      const char* link_key = nullptr;
+      if (LinkInfo::IsActive() &&
+          precompiler_->phase() ==
+              Precompiler::Phase::kFixpointCodeGeneration) {
+        link_key = OS::SCreate(
+            thread()->zone(), "fn:%s",
+            LinkInfo::FunctionKey(parsed_function()->function()));
+        object_pool_builder.SetLinkContext(link_key);
+      }
       compiler::Assembler assembler(&object_pool_builder, far_branch_level);
 
       CodeStatistics* function_stats = nullptr;
@@ -3743,6 +3774,9 @@ bool PrecompileParsedFunctionHelper::GenerateCode(FlowGraph* flow_graph) {
       if (!object_pool_builder.TryCommitToParent()) {
         done = false;
         continue;
+      }
+      if (link_key != nullptr) {
+        LinkInfo::RecordPoolUses(link_key, object_pool_builder.link_uses());
       }
       // Exit the loop and the function with the correct result value.
       is_compiled = true;

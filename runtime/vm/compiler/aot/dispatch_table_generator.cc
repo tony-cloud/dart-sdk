@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "vm/compiler/aot/link_info.h"
 #include "vm/compiler/frontend/kernel_translation_helper.h"
 #include "vm/dispatch_table.h"
 #include "vm/stub_code.h"
@@ -547,6 +548,41 @@ void DispatchTableGenerator::SetupSelectorRows() {
     }
   }
 
+  // Selector keys: member name, function kind and the set of declaring
+  // classes (smallest class key plus a hash of all of them). Remaining
+  // collisions are numbered in selector id order. Keys only steer placement;
+  // they are never needed for correctness.
+  selector_link_keys_ = Z->Alloc<const char*>(num_selectors_);
+  const char** selector_min_class = Z->Alloc<const char*>(num_selectors_);
+  uint64_t* selector_class_hash = Z->Alloc<uint64_t>(num_selectors_);
+  int* selector_kind = Z->Alloc<int>(num_selectors_);
+  for (intptr_t i = 0; i < num_selectors_; i++) {
+    selector_link_keys_[i] = nullptr;
+    selector_min_class[i] = nullptr;
+    selector_class_hash[i] = 0;
+    selector_kind[i] = -1;
+  }
+  const bool link_active = LinkInfo::IsActive();
+  auto note_selector_key = [&](int32_t sid, const Class& owner,
+                               const Function& function) {
+    if (!link_active) return;
+    const char* class_key = LinkInfo::ClassKey(owner);
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (const char* p = class_key; *p != '\0'; p++) {
+      h = (h ^ static_cast<uint8_t>(*p)) * 0x100000001b3ULL;
+    }
+    selector_class_hash[sid] += h;  // Order independent.
+    if (selector_min_class[sid] == nullptr ||
+        strcmp(class_key, selector_min_class[sid]) < 0) {
+      selector_min_class[sid] = class_key;
+    }
+    if (selector_link_keys_[sid] == nullptr) {
+      const String& name = String::Handle(Z, function.name());
+      selector_link_keys_[sid] = String::ScrubName(name);
+      selector_kind[sid] = static_cast<int>(function.kind());
+    }
+  };
+
   // Initialize selector rows.
   SelectorRow* selector_rows = Z->Alloc<SelectorRow>(num_selectors_);
   for (intptr_t i = 0; i < num_selectors_; i++) {
@@ -586,6 +622,7 @@ void DispatchTableGenerator::SetupSelectorRows() {
                 }
               };
               MakeIntervals(function, sid);
+              note_selector_key(sid, klass, function);
 
               if (selector_map_.selectors_[sid].torn_off) {
                 const String& method_name = String::Handle(Z, function.name());
@@ -597,12 +634,29 @@ void DispatchTableGenerator::SetupSelectorRows() {
 
                 if (tearoff_sid != SelectorMap::kInvalidSelectorId) {
                   MakeIntervals(tearoff, tearoff_sid);
+                  note_selector_key(tearoff_sid, klass, tearoff);
                 }
               }
             }
           }
         }
       }
+    }
+  }
+
+  if (link_active) {
+    CStringIntMap seen(Z);
+    for (intptr_t i = 0; i < num_selectors_; i++) {
+      if (selector_link_keys_[i] == nullptr) continue;
+      const char* key = OS::SCreate(
+          Z, "%s|%d|%s|%016" Px64, selector_link_keys_[i], selector_kind[i],
+          selector_min_class[i], selector_class_hash[i]);
+      const intptr_t count = seen.LookupValue(key);
+      const intptr_t n =
+          count == CStringIntMapKeyValueTrait::kNoValue ? 0 : count;
+      seen.Update({key, n + 1});
+      selector_link_keys_[i] =
+          n == 0 ? key : OS::SCreate(Z, "%s#%" Pd, key, n);
     }
   }
 
@@ -627,6 +681,29 @@ void DispatchTableGenerator::ComputeSelectorOffsets() {
     }
   };
   table_rows_.Sort(PopularitySorter::Compare);
+
+  // Patch build: keep the release offset of every selector whose row still
+  // fits there (most popular first).
+  if (LinkInfo::HasBase()) {
+    intptr_t kept = 0;
+    for (intptr_t i = 0; i < table_rows_.length(); i++) {
+      SelectorRow* row = table_rows_[i];
+      const char* key = selector_link_keys_[row->selector()->id];
+      const intptr_t offset = LinkInfo::BaseSelectorOffset(key);
+      if (offset == LinkInfo::kNone) continue;
+      fitter.FitAndAllocate(row, offset, offset);
+      if (row->IsAllocated()) {
+        kept++;
+      } else {
+        LinkInfo::NoteMismatch("link: selector %s cannot keep offset %" Pd,
+                               key, offset);
+      }
+    }
+    if (FLAG_trace_link_info) {
+      OS::PrintErr("link: selector offsets kept %" Pd " of %" Pd " rows\n",
+                   kept, table_rows_.length());
+    }
+  }
 
   // Try to allocate at optimal offset.
   const int32_t optimal_offset = DispatchTable::kOriginElement;
@@ -664,6 +741,16 @@ void DispatchTableGenerator::ComputeSelectorOffsets() {
   }
 
   table_size_ = fitter.TableSize();
+
+  if (LinkInfo::IsRecording()) {
+    for (intptr_t i = 0; i < table_rows_.length(); i++) {
+      const TableSelector* selector = table_rows_[i]->selector();
+      const char* key = selector_link_keys_[selector->id];
+      LinkInfo::RecordSelector(selector->id, selector->offset,
+                               key == nullptr ? "?" : key);
+    }
+    LinkInfo::RecordMeta("dispatch_table_size", table_size_);
+  }
 }
 
 ArrayPtr DispatchTableGenerator::BuildCodeArray() {

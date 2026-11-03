@@ -74,6 +74,7 @@
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
 #include "vm/compiler/aot/precompiler.h"
+#include "vm/compiler/aot/link_info.h"
 #include "vm/kernel_loader.h"
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
@@ -7051,6 +7052,7 @@ static void CreateAppAOTSnapshotHelper(
       writer.WriteUnitSnapshot(units, unit, program_hash);
     }
     image_writer->Finalize();
+    LinkInfo::Flush();
   };
 
   Dwarf* const dwarf =

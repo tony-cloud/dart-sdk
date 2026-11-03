@@ -11,6 +11,9 @@
 #include "vm/canonical_tables.h"
 #include "vm/closure_functions_cache.h"
 #include "vm/compiler/jit/compiler.h"
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+#include "vm/compiler/aot/link_info.h"
+#endif
 #include "vm/flags.h"
 #include "vm/hash_table.h"
 #include "vm/heap/heap.h"
@@ -954,6 +957,17 @@ void ClassFinalizer::SortClasses() {
   ClassTable* table = IG->class_table();
   intptr_t num_cids = table->NumCids();
 
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+  if (LinkInfo::HasBase()) {
+    AssignClassIdsFromLinkBase(table);
+    // Types use cid's as part of their hashes.
+    RehashTypes();
+    // Const objects use cid's as part of their hashes.
+    IG->RehashConstants(nullptr);
+    return;
+  }
+#endif
+
   std::unique_ptr<intptr_t[]> old_to_new_cid(new intptr_t[num_cids]);
 
   for (intptr_t cid = 0; cid < kNumPredefinedCids; cid++) {
@@ -1022,6 +1036,109 @@ void ClassFinalizer::SortClasses() {
   // Const objects use cid's as part of their hashes.
   IG->RehashConstants(nullptr);
 }
+
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+// Patch build against a release layout: classes known to the release keep
+// their release class ids, all other classes get ids after the release's
+// range (in hierarchy preorder), and release ids that are not used by the
+// new program stay as holes. Compiled code that tests class ids or ranges
+// is compared against the patch's own compilation by the linker, so the
+// assignment only affects how much code can be reused, never correctness.
+void ClassFinalizer::AssignClassIdsFromLinkBase(ClassTable* table) {
+  Thread* T = Thread::Current();
+  Zone* Z = T->zone();
+  IsolateGroup* IG = T->isolate_group();
+  const intptr_t num_cids = table->NumCids();
+  const intptr_t base_num_cids = LinkInfo::BaseNumCids();
+  const intptr_t capacity =
+      Utils::Maximum(num_cids, base_num_cids) + num_cids + 1;
+
+  std::unique_ptr<intptr_t[]> old_to_new(new intptr_t[num_cids]);
+  std::unique_ptr<bool[]> taken(new bool[capacity]);
+  for (intptr_t i = 0; i < capacity; i++) taken[i] = false;
+  for (intptr_t cid = 0; cid < num_cids; cid++) {
+    old_to_new[cid] = cid < kNumPredefinedCids ? cid : -1;
+  }
+  for (intptr_t cid = 0; cid < kNumPredefinedCids; cid++) taken[cid] = true;
+
+  Class& cls = Class::Handle(Z);
+  intptr_t kept = 0;
+  intptr_t considered = 0;
+  for (intptr_t cid = kNumPredefinedCids; cid < num_cids; cid++) {
+    if (!table->HasValidClassAt(cid)) continue;
+    cls = table->At(cid);
+    considered++;
+    const intptr_t base_cid = LinkInfo::BaseCid(LinkInfo::ClassKey(cls));
+    if (base_cid >= kNumPredefinedCids && base_cid < base_num_cids &&
+        !taken[base_cid]) {
+      old_to_new[cid] = base_cid;
+      taken[base_cid] = true;
+      kept++;
+    }
+  }
+
+  intptr_t next = Utils::Maximum<intptr_t>(base_num_cids, kNumPredefinedCids);
+  auto assign = [&](intptr_t cid) {
+    if (old_to_new[cid] != -1) return;
+    while (taken[next]) next++;
+    old_to_new[cid] = next;
+    taken[next] = true;
+  };
+
+  // New classes: hierarchy preorder, as in SortClasses.
+  GrowableArray<intptr_t> dfs_stack;
+  GrowableObjectArray& subclasses = GrowableObjectArray::Handle(Z);
+  for (intptr_t cid = kNumPredefinedCids; cid < num_cids; cid++) {
+    if (!table->HasValidClassAt(cid)) continue;
+    cls = table->At(cid);
+    if (!cls.is_declaration_loaded()) continue;
+    if (cls.SuperClass() == IG->object_store()->object_class()) {
+      dfs_stack.Add(cid);
+    }
+  }
+  while (dfs_stack.length() > 0) {
+    const intptr_t cid = dfs_stack.RemoveLast();
+    cls = table->At(cid);
+    assign(cid);
+    subclasses = cls.direct_subclasses();
+    if (!subclasses.IsNull()) {
+      for (intptr_t i = 0; i < subclasses.Length(); i++) {
+        cls ^= subclasses.At(i);
+        dfs_stack.Add(cls.id());
+      }
+    }
+  }
+  for (intptr_t cid = kNumPredefinedCids; cid < num_cids; cid++) {
+    assign(cid);
+  }
+
+  intptr_t new_num_cids = base_num_cids;
+  for (intptr_t cid = 0; cid < num_cids; cid++) {
+    new_num_cids = Utils::Maximum(new_num_cids, old_to_new[cid] + 1);
+  }
+  if (new_num_cids > num_cids) {
+    table->AllocateIndex(new_num_cids - 1);
+  }
+  ASSERT(table->NumCids() == new_num_cids);
+  // Complete the permutation: the added (empty) rows fill the holes.
+  std::unique_ptr<intptr_t[]> permutation(new intptr_t[new_num_cids]);
+  for (intptr_t cid = 0; cid < num_cids; cid++) {
+    permutation[cid] = old_to_new[cid];
+  }
+  intptr_t hole = kNumPredefinedCids;
+  for (intptr_t cid = num_cids; cid < new_num_cids; cid++) {
+    while (taken[hole]) hole++;
+    permutation[cid] = hole;
+    taken[hole] = true;
+  }
+  if (FLAG_trace_class_finalization || FLAG_trace_link_info) {
+    OS::PrintErr("link: class ids kept %" Pd " of %" Pd
+                 " classes (release %" Pd " cids, now %" Pd ")\n",
+                 kept, considered, base_num_cids, new_num_cids);
+  }
+  RemapClassIds(permutation.get());
+}
+#endif  // defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
 
 class CidRewriteVisitor : public ObjectVisitor {
  public:
