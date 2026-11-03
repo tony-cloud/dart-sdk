@@ -2139,6 +2139,9 @@ class Class : public Object {
 
   // Returns the bitmap of unboxed fields
   UnboxedFieldBitmap CalculateFieldOffsets() const;
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+  UnboxedFieldBitmap CalculateFieldOffsetsFromLinkBase() const;
+#endif
 
   // functions_hash_table is in use iff there are at least this many functions.
   static constexpr intptr_t kFunctionLookupHashThreshold = 16;

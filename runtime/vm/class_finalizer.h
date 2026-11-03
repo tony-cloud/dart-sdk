@@ -15,6 +15,8 @@ namespace dart {
 
 // Traverses all pending, unfinalized classes, validates and marks them as
 // finalized.
+class ClassTable;
+
 class ClassFinalizer : public AllStatic {
  public:
   // Modes for finalization. The ordering is relevant.
@@ -35,6 +37,9 @@ class ClassFinalizer : public AllStatic {
   // Useful for sorting classes to make dispatch faster.
   static void SortClasses();
   static void RemapClassIds(intptr_t* old_to_new_cid);
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+  static void AssignClassIdsFromLinkBase(ClassTable* table);
+#endif
   static void RehashTypes();
   static void ClearAllCode(bool including_nonchanging_cids = false);
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)

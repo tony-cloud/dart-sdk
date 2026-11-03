@@ -11,6 +11,9 @@
 #include "vm/bss_relocs.h"
 #include "vm/class_id.h"
 #include "vm/compiler/runtime_api.h"
+#if defined(DART_PRECOMPILER)
+#include "vm/compiler/aot/link_info.h"
+#endif
 #include "vm/dwarf.h"
 #include "vm/elf.h"
 #include "vm/hash.h"
@@ -937,6 +940,10 @@ void ImageWriter::WriteText() {
     // 2. Add a symbol for the code at the entry point in precompiled snapshots.
     // Linux's perf uses these labels.
     AddCodeSymbol(code, object_name, text_offset);
+    if (FLAG_precompiled_mode && LinkInfo::IsRecording()) {
+      LinkInfo::RecordCode(instructions_symbol, code, text_offset,
+                           insns.Size());
+    }
 #endif
 
 #if defined(EMIT_UNWIND_DIRECTIVES_PER_FUNCTION)

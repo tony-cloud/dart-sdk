@@ -271,6 +271,22 @@ class ObjectPoolBuilder : public ValueObject {
 
   intptr_t AddObject(ObjectPoolBuilderEntry entry);
 
+  // ---- Release/patch link layout support (AOT, see aot/link_info.h) ----
+  //
+  // Sets the key of the function whose code is generated with this builder.
+  // Enables recording of the sequence of pool indices requested by that code
+  // and keys call-site specific entries by their position in it.
+  void SetLinkContext(const char* key) { link_context_ = key; }
+  const GrowableArray<intptr_t>& link_uses() const { return link_uses_; }
+  // On the global pool: reserves the slots of the release pool after the
+  // shared stub entries so that entries known to the release can be placed
+  // at their release index. Unused reserved slots hold an immediate 0.
+  void ReserveLinkBaseSlots();
+  // Slots of the reserved region filled so far, in placement order. Entries
+  // placed there are not appended, so code tracing must look at them too.
+  intptr_t link_pin_count() const { return link_pins_.length(); }
+  intptr_t link_pin_at(intptr_t i) const { return link_pins_[i]; }
+
   // Try appending all entries from this pool into the parent pool.
   // This might fail if parent pool was modified invalidating indices which
   // we produced. In this case this function will return false.
@@ -280,6 +296,44 @@ class ObjectPoolBuilder : public ValueObject {
 
  private:
   intptr_t FindObject(ObjectPoolBuilderEntry entry);
+  intptr_t AddObjectImpl(ObjectPoolBuilderEntry entry, bool allow_link);
+
+  ObjectPoolBuilder* link_root() { return parent_ != nullptr ? parent_ : this; }
+  bool IsFreeLinkSlot(intptr_t index) const;
+  void PlaceAtLinkSlot(intptr_t index, const ObjectPoolBuilderEntry& entry);
+  intptr_t TryPlaceAtLinkSlot(const ObjectPoolBuilderEntry& entry);
+  void RecordLinkKey(intptr_t index, const ObjectPoolBuilderEntry& entry);
+
+  class LinkUseScope {
+   public:
+    explicit LinkUseScope(ObjectPoolBuilder* builder) : builder_(builder) {
+      if (builder_->link_depth_++ == 0) {
+        builder_->link_ordinal_ = builder_->link_uses_.length();
+      }
+    }
+    ~LinkUseScope() { builder_->link_depth_--; }
+    intptr_t Record(intptr_t index) {
+      if (builder_->link_depth_ == 1 && builder_->link_context_ != nullptr) {
+        builder_->link_uses_.Add(index);
+      }
+      return index;
+    }
+
+   private:
+    ObjectPoolBuilder* builder_;
+  };
+
+  const char* link_context_ = nullptr;
+  intptr_t link_depth_ = 0;
+  intptr_t link_ordinal_ = 0;
+  GrowableArray<intptr_t> link_uses_;
+  intptr_t link_reserved_start_ = 0;
+  intptr_t link_reserved_end_ = 0;
+  GrowableArray<bool> link_slot_used_;
+  GrowableArray<intptr_t> link_pins_;
+  intptr_t link_pair_index_ = -1;
+  intptr_t link_pair_ordinal_ = -1;
+  intptr_t link_appended_patchable_ordinal_ = -2;
 
   // Parent pool into which all entries from this pool will be added at
   // the end of the successful compilation.

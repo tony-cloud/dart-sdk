@@ -112,6 +112,8 @@ class DispatchTableGenerator {
   int32_t table_size_;
 
   GrowableArray<SelectorRow*> table_rows_;
+  // Stable identity of each selector id (see aot/link_info.h).
+  const char** selector_link_keys_ = nullptr;
 
   SelectorMap selector_map_;
 };

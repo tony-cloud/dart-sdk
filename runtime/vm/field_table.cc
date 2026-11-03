@@ -100,6 +100,42 @@ void FieldTable::AllocateIndex(intptr_t index) {
   }
 }
 
+void FieldTable::Remap(const intptr_t* old_to_new,
+                       intptr_t old_count,
+                       intptr_t new_count) {
+  ASSERT(old_count == top_);
+  ASSERT(free_head_ < 0);
+  const intptr_t new_capacity =
+      Utils::Maximum(capacity_, new_count + kCapacityIncrement);
+  auto new_table = static_cast<ObjectPtr*>(
+      malloc(new_capacity * sizeof(ObjectPtr)));  // NOLINT
+  for (intptr_t i = 0; i < new_count; i++) {
+    new_table[i] = Object::sentinel().ptr();
+  }
+  for (intptr_t i = new_count; i < new_capacity; i++) {
+    new_table[i] = ObjectPtr();
+  }
+  for (intptr_t i = 0; i < old_count; i++) {
+    ASSERT(old_to_new[i] >= 0 && old_to_new[i] < new_count);
+    new_table[old_to_new[i]] = table_[i];
+  }
+  if (table_ != nullptr) old_tables_->Add(table_);
+  capacity_ = new_capacity;
+  top_ = new_count;
+  std::atomic_ref(table_).store(new_table, std::memory_order_release);
+  if (isolate_group_ != nullptr) {
+    isolate_group_->ForEachIsolate(
+        [&](Isolate* isolate) {
+          if (isolate->mutator_thread() != nullptr) {
+            isolate->mutator_thread()->shared_field_table_values_ = table_;
+          }
+        },
+        /*at_safepoint=*/false);
+  } else if (isolate_ != nullptr && isolate_->mutator_thread() != nullptr) {
+    isolate_->mutator_thread()->field_table_values_ = table_;
+  }
+}
+
 void FieldTable::Grow(intptr_t new_capacity) {
   ASSERT(new_capacity > capacity_);
 

@@ -54,6 +54,13 @@ class FieldTable {
   bool Register(const Field& field, intptr_t expected_field_id = -1);
   void AllocateIndex(intptr_t index);
 
+  // Moves the value of field id i to old_to_new[i] for i < old_count and
+  // sets the number of field ids to new_count. Unused ids hold the sentinel.
+  // Only used before any code referring to field ids exists (AOT link
+  // layout stabilization).
+  void Remap(const intptr_t* old_to_new, intptr_t old_count,
+             intptr_t new_count);
+
   // Static field elements are being freed only during isolate reload
   // when initially created static field have to get remapped to point
   // to an existing static field value.

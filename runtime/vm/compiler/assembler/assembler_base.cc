@@ -6,6 +6,9 @@
 
 #include "platform/utils.h"
 #include "vm/compiler/assembler/object_pool_builder.h"
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+#include "vm/compiler/aot/link_info.h"
+#endif
 #include "vm/compiler/backend/slot.h"
 #include "vm/cpu.h"
 #include "vm/flags.h"
@@ -666,6 +669,132 @@ void ObjectPoolBuilder::Reset() {
 
   object_pool_.Clear();
   object_pool_index_table_.Clear();
+  link_reserved_start_ = link_reserved_end_ = 0;
+  link_slot_used_.Clear();
+  link_pins_.Clear();
+}
+
+void ObjectPoolBuilder::ReserveLinkBaseSlots() {
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+  ASSERT(parent_ == nullptr);
+  if (!LinkInfo::HasBase()) return;
+  const intptr_t start = CurrentLength();
+  const intptr_t end = LinkInfo::BasePoolLength();
+  if (LinkInfo::BaseStubPoolLength() != start) {
+    LinkInfo::NoteMismatch("link: stub pool length %" Pd " differs from "
+                           "release %" Pd "; object pool is not pinned",
+                           start, LinkInfo::BaseStubPoolLength());
+    return;
+  }
+  for (intptr_t i = start; i < end; i++) {
+    object_pool_.Add(ObjectPoolBuilderEntry(
+        0, ObjectPoolBuilderEntry::kImmediate,
+        ObjectPoolBuilderEntry::kNotPatchable));
+    link_slot_used_.Add(false);
+  }
+  link_reserved_start_ = start;
+  link_reserved_end_ = end > start ? end : 0;
+#endif
+}
+
+bool ObjectPoolBuilder::IsFreeLinkSlot(intptr_t index) const {
+  return index >= link_reserved_start_ && index < link_reserved_end_ &&
+         !link_slot_used_[index - link_reserved_start_];
+}
+
+void ObjectPoolBuilder::PlaceAtLinkSlot(intptr_t index,
+                                        const ObjectPoolBuilderEntry& entry) {
+  ASSERT(parent_ == nullptr);
+  ASSERT(IsFreeLinkSlot(index));
+  ObjectPoolBuilderEntry copy = entry;
+  if (copy.type() == ObjectPoolBuilderEntry::kTaggedObject && zone_ != nullptr) {
+    copy.obj_ = &NewZoneHandle(zone_, *copy.obj_);
+    if (copy.equivalence_ != nullptr) {
+      copy.equivalence_ = &NewZoneHandle(zone_, *copy.equivalence_);
+    }
+  }
+  object_pool_[index] = copy;
+  link_slot_used_[index - link_reserved_start_] = true;
+  link_pins_.Add(index);
+  if (copy.patchable() == ObjectPoolBuilderEntry::kNotPatchable) {
+    object_pool_index_table_.Insert(ObjIndexPair(copy, index));
+  }
+}
+
+intptr_t ObjectPoolBuilder::TryPlaceAtLinkSlot(
+    const ObjectPoolBuilderEntry& entry) {
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+  ObjectPoolBuilder* root = link_root();
+  if (root->link_reserved_end_ == 0) return -1;
+  if (entry.type() != ObjectPoolBuilderEntry::kImmediate &&
+      entry.type() != ObjectPoolBuilderEntry::kTaggedObject) {
+    return -1;
+  }
+  const bool patchable =
+      entry.patchable() == ObjectPoolBuilderEntry::kPatchable;
+  const char* key =
+      LinkInfo::PoolEntryKey(entry, link_context_, link_ordinal_);
+  if (patchable) {
+    // Patchable entries are allocated in adjacent pairs (switchable calls,
+    // type tests) that are loaded with a single instruction, so a pair must
+    // either be placed together or appended together.
+    if (link_context_ == nullptr) return -1;
+    if (link_pair_index_ >= 0 && link_pair_ordinal_ == link_ordinal_ - 1) {
+      // Second half of a pinned pair: always adjacent to the first.
+      const intptr_t index = link_pair_index_ + 1;
+      link_pair_index_ = -1;
+      ASSERT(root->IsFreeLinkSlot(index));
+      root->PlaceAtLinkSlot(index, entry);
+  // The per-code pool built from this builder records which global entries
+  // the code uses (snapshot reachability), so include placed entries.
+  if (parent_ != nullptr) used_from_parent_.Add(index);
+      LinkInfo::RecordPoolKey(index, key);
+      return index;
+    }
+    link_pair_index_ = -1;
+    if (link_appended_patchable_ordinal_ == link_ordinal_ - 1) {
+      // Possibly the second half of an appended pair.
+      link_appended_patchable_ordinal_ = link_ordinal_;
+      return -1;
+    }
+    const intptr_t index = LinkInfo::BasePoolIndex(key);
+    const char* next_key =
+        LinkInfo::PoolEntryKey(entry, link_context_, link_ordinal_ + 1);
+    if (index == LinkInfo::kNone || !root->IsFreeLinkSlot(index) ||
+        LinkInfo::BasePoolIndex(next_key) != index + 1 ||
+        !root->IsFreeLinkSlot(index + 1)) {
+      link_appended_patchable_ordinal_ = link_ordinal_;
+      return -1;
+    }
+    link_pair_index_ = index;
+    link_pair_ordinal_ = link_ordinal_;
+    root->PlaceAtLinkSlot(index, entry);
+  // The per-code pool built from this builder records which global entries
+  // the code uses (snapshot reachability), so include placed entries.
+  if (parent_ != nullptr) used_from_parent_.Add(index);
+    LinkInfo::RecordPoolKey(index, key);
+    return index;
+  }
+  const intptr_t index = LinkInfo::BasePoolIndex(key);
+  if (index == LinkInfo::kNone || !root->IsFreeLinkSlot(index)) return -1;
+  root->PlaceAtLinkSlot(index, entry);
+  // The per-code pool built from this builder records which global entries
+  // the code uses (snapshot reachability), so include placed entries.
+  if (parent_ != nullptr) used_from_parent_.Add(index);
+  LinkInfo::RecordPoolKey(index, key);
+  return index;
+#else
+  return -1;
+#endif
+}
+
+void ObjectPoolBuilder::RecordLinkKey(intptr_t index,
+                                      const ObjectPoolBuilderEntry& entry) {
+#if defined(DART_PRECOMPILER) && !defined(DART_PRECOMPILED_RUNTIME)
+  if (!LinkInfo::IsRecording()) return;
+  LinkInfo::RecordPoolKey(
+      index, LinkInfo::PoolEntryKey(entry, link_context_, link_ordinal_));
+#endif
 }
 
 intptr_t ObjectPoolBuilder::AddObject(
@@ -673,15 +802,20 @@ intptr_t ObjectPoolBuilder::AddObject(
     ObjectPoolBuilderEntry::Patchability patchable,
     ObjectPoolBuilderEntry::SnapshotBehavior snapshot_behavior) {
   DEBUG_ASSERT(IsNotTemporaryScopedHandle(obj));
-  return AddObject(ObjectPoolBuilderEntry(&obj, patchable, snapshot_behavior));
+  LinkUseScope scope(this);
+  return scope.Record(AddObjectImpl(
+      ObjectPoolBuilderEntry(&obj, patchable, snapshot_behavior), true));
 }
 
 intptr_t ObjectPoolBuilder::AddImmediate(
     uword imm,
     ObjectPoolBuilderEntry::Patchability patchable,
     ObjectPoolBuilderEntry::SnapshotBehavior snapshotability) {
-  return AddObject(ObjectPoolBuilderEntry(
-      imm, ObjectPoolBuilderEntry::kImmediate, patchable, snapshotability));
+  LinkUseScope scope(this);
+  return scope.Record(AddObjectImpl(
+      ObjectPoolBuilderEntry(imm, ObjectPoolBuilderEntry::kImmediate,
+                             patchable, snapshotability),
+      true));
 }
 
 intptr_t ObjectPoolBuilder::AddImmediate64(uint64_t imm) {
@@ -695,12 +829,19 @@ intptr_t ObjectPoolBuilder::AddImmediate64(uint64_t imm) {
 }
 
 intptr_t ObjectPoolBuilder::AddImmediate128(simd128_value_t imm) {
-  return AddObject(
+  LinkUseScope scope(this);
+  return scope.Record(AddObjectImpl(
       ObjectPoolBuilderEntry(imm, ObjectPoolBuilderEntry::kImmediate128,
-                             ObjectPoolBuilderEntry::kNotPatchable));
+                             ObjectPoolBuilderEntry::kNotPatchable),
+      true));
 }
 
 intptr_t ObjectPoolBuilder::AddObject(ObjectPoolBuilderEntry entry) {
+  return AddObjectImpl(entry, /*allow_link=*/false);
+}
+
+intptr_t ObjectPoolBuilder::AddObjectImpl(ObjectPoolBuilderEntry entry,
+                                          bool allow_link) {
   DEBUG_ASSERT((entry.type() != ObjectPoolBuilderEntry::kTaggedObject) ||
                (IsNotTemporaryScopedHandle(*entry.obj_) &&
                 (entry.equivalence_ == nullptr ||
@@ -744,15 +885,26 @@ intptr_t ObjectPoolBuilder::AddObject(ObjectPoolBuilderEntry entry) {
     uword hi64 =
         (static_cast<uword>(entry.imm128_.int_storage[2]) & 0xffffffff) |
         (static_cast<uword>(entry.imm128_.int_storage[3]) << 32);
-    intptr_t idx = AddImmediate(lo64);
-    AddImmediate(hi64);
+    intptr_t idx = AddObjectImpl(
+        ObjectPoolBuilderEntry(lo64, ObjectPoolBuilderEntry::kImmediate,
+                               ObjectPoolBuilderEntry::kNotPatchable),
+        false);
+    AddObjectImpl(
+        ObjectPoolBuilderEntry(hi64, ObjectPoolBuilderEntry::kImmediate,
+                               ObjectPoolBuilderEntry::kNotPatchable),
+        false);
     object_pool_index_table_.Insert(ObjIndexPair(entry, idx));
     return idx;
   }
 #endif
 
+  if (allow_link) {
+    const intptr_t pinned = TryPlaceAtLinkSlot(entry);
+    if (pinned >= 0) return pinned;
+  }
   const intptr_t idx = base_index_ + object_pool_.length();
   object_pool_.Add(entry);
+  if (allow_link) RecordLinkKey(idx, entry);
   if (entry.patchable() == ObjectPoolBuilderEntry::kNotPatchable) {
     // The object isn't patchable. Record the index for fast lookup.
     object_pool_index_table_.Insert(ObjIndexPair(entry, idx));
@@ -761,6 +913,7 @@ intptr_t ObjectPoolBuilder::AddObject(ObjectPoolBuilderEntry entry) {
 }
 
 intptr_t ObjectPoolBuilder::FindObject(ObjectPoolBuilderEntry entry) {
+  LinkUseScope scope(this);
   // If the object is not patchable, check if we've already got it in the
   // object pool.
   if (entry.patchable() == ObjectPoolBuilderEntry::kNotPatchable) {
@@ -769,16 +922,16 @@ intptr_t ObjectPoolBuilder::FindObject(ObjectPoolBuilderEntry entry) {
       const intptr_t idx = parent_->object_pool_index_table_.LookupValue(entry);
       if (idx != ObjIndexPair::kNoIndex) {
         used_from_parent_.Add(idx);
-        return idx;
+        return scope.Record(idx);
       }
     }
 
     const intptr_t idx = object_pool_index_table_.LookupValue(entry);
     if (idx != ObjIndexPair::kNoIndex) {
-      return idx;
+      return scope.Record(idx);
     }
   }
-  return AddObject(entry);
+  return scope.Record(AddObjectImpl(entry, /*allow_link=*/true));
 }
 
 intptr_t ObjectPoolBuilder::FindObject(

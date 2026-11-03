@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "vm/compiler/aot/link_info.h"
 #include "vm/compiler/frontend/kernel_translation_helper.h"
 #include "vm/dispatch_table.h"
 #include "vm/stub_code.h"
@@ -547,6 +548,23 @@ void DispatchTableGenerator::SetupSelectorRows() {
     }
   }
 
+  // Selector keys: member name plus the smallest declaring class key. Keys
+  // only steer placement; they are never needed for correctness.
+  selector_link_keys_ = Z->Alloc<const char*>(num_selectors_);
+  for (intptr_t i = 0; i < num_selectors_; i++) selector_link_keys_[i] = nullptr;
+  const bool link_active = LinkInfo::IsActive();
+  auto note_selector_key = [&](int32_t sid, const Class& owner,
+                               const Function& function) {
+    if (!link_active) return;
+    const String& name = String::Handle(Z, function.name());
+    const char* key = OS::SCreate(Z, "%s|%s", String::ScrubName(name),
+                                  LinkInfo::ClassKey(owner));
+    if (selector_link_keys_[sid] == nullptr ||
+        strcmp(key, selector_link_keys_[sid]) < 0) {
+      selector_link_keys_[sid] = key;
+    }
+  };
+
   // Initialize selector rows.
   SelectorRow* selector_rows = Z->Alloc<SelectorRow>(num_selectors_);
   for (intptr_t i = 0; i < num_selectors_; i++) {
@@ -586,6 +604,7 @@ void DispatchTableGenerator::SetupSelectorRows() {
                 }
               };
               MakeIntervals(function, sid);
+              note_selector_key(sid, klass, function);
 
               if (selector_map_.selectors_[sid].torn_off) {
                 const String& method_name = String::Handle(Z, function.name());
@@ -597,6 +616,7 @@ void DispatchTableGenerator::SetupSelectorRows() {
 
                 if (tearoff_sid != SelectorMap::kInvalidSelectorId) {
                   MakeIntervals(tearoff, tearoff_sid);
+                  note_selector_key(tearoff_sid, klass, tearoff);
                 }
               }
             }
@@ -627,6 +647,29 @@ void DispatchTableGenerator::ComputeSelectorOffsets() {
     }
   };
   table_rows_.Sort(PopularitySorter::Compare);
+
+  // Patch build: keep the release offset of every selector whose row still
+  // fits there (most popular first).
+  if (LinkInfo::HasBase()) {
+    intptr_t kept = 0;
+    for (intptr_t i = 0; i < table_rows_.length(); i++) {
+      SelectorRow* row = table_rows_[i];
+      const char* key = selector_link_keys_[row->selector()->id];
+      const intptr_t offset = LinkInfo::BaseSelectorOffset(key);
+      if (offset == LinkInfo::kNone) continue;
+      fitter.FitAndAllocate(row, offset, offset);
+      if (row->IsAllocated()) {
+        kept++;
+      } else {
+        LinkInfo::NoteMismatch("link: selector %s cannot keep offset %" Pd,
+                               key, offset);
+      }
+    }
+    if (FLAG_trace_link_info) {
+      OS::PrintErr("link: selector offsets kept %" Pd " of %" Pd " rows\n",
+                   kept, table_rows_.length());
+    }
+  }
 
   // Try to allocate at optimal offset.
   const int32_t optimal_offset = DispatchTable::kOriginElement;
@@ -664,6 +707,16 @@ void DispatchTableGenerator::ComputeSelectorOffsets() {
   }
 
   table_size_ = fitter.TableSize();
+
+  if (LinkInfo::IsRecording()) {
+    for (intptr_t i = 0; i < table_rows_.length(); i++) {
+      const TableSelector* selector = table_rows_[i]->selector();
+      const char* key = selector_link_keys_[selector->id];
+      LinkInfo::RecordSelector(selector->id, selector->offset,
+                               key == nullptr ? "?" : key);
+    }
+    LinkInfo::RecordMeta("dispatch_table_size", table_size_);
+  }
 }
 
 ArrayPtr DispatchTableGenerator::BuildCodeArray() {

@@ -315,6 +315,7 @@ class Precompiler : public ValueObject {
   void AddTypeParameters(const TypeParameters& params);
   void AddTypeArguments(const TypeArguments& args);
   void AddCalleesOf(const Function& function, intptr_t gop_offset);
+  intptr_t link_pin_mark_ = 0;
   void AddCalleesOfHelper(const Object& entry,
                           String* temp_selector,
                           Class* temp_cls);
