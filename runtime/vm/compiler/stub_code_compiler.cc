@@ -3313,14 +3313,15 @@ void StubCodeCompiler::GenerateSubtypeTestCacheSearch(
 
   // Fill in all the STC input registers.
   Label initialized, not_closure;
-  if (n >= 3) {
-    __ LoadClassIdMayBeSmi(instance_cid_or_sig_reg, TypeTestABI::kInstanceReg);
-  } else {
-    // If the type is fully instantiated, then it can be determined at compile
-    // time whether Smi is a subtype of the type or not. Thus, this code should
-    // never be called with a Smi instance.
-    __ LoadClassId(instance_cid_or_sig_reg, TypeTestABI::kInstanceReg);
-  }
+  // The instance may be a Smi for every number of inputs. For a fully
+  // instantiated type the call site normally decides at compile time whether a
+  // Smi is a subtype, and the type testing stub of a type whose subtypes are
+  // all known never reaches the slow path with a positive answer, so such a
+  // cache is never created. A Shorebird structural patch can add classes that
+  // implement a base class or interface: they pass through the slow type test
+  // and create (and populate) the call site's cache, and a later Smi that is
+  // not a subtype takes the same path.
+  __ LoadClassIdMayBeSmi(instance_cid_or_sig_reg, TypeTestABI::kInstanceReg);
   __ CompareImmediate(instance_cid_or_sig_reg, kClosureCid);
   __ BranchIf(NOT_EQUAL, &not_closure, Assembler::kNearJump);
 

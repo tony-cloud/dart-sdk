@@ -243,6 +243,13 @@ Build matching `dart`, `gen_snapshot`, and `dart_engine_aot_shared` with
 - `tools/test_aot_structural_closed_world.py --build-dir <build>` checks the
   closed-world devirtualization, base-world type checks and the override guard
   (see "Closed world over the base class hierarchy").
+- `tools/test_aot_structural_smi_cast.py --build-dir <build>` checks that a
+  failing `as` cast of a Smi (or any non-subtype) after a cast that a
+  patch-added class passed throws `TypeError`. The slow type test caches that
+  positive answer in the call site's SubtypeTestCache and the 1/2-input cache
+  lookup stubs used to load the class id of a Smi as a heap object (SIGSEGV).
+  The same crash reproduces in stock AOT (upstream Dart, with and without TFA),
+  which the test also covers.
 - `tools/test_aot_patchable_direct_calls.py --build-dir <build>` checks that AOT
   callers of patchable static, constructor, tear-off and `super` targets call
   through `Function::entry_point` (no `CallStaticFunction` stub) and observe the
