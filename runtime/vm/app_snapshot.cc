@@ -856,7 +856,7 @@ class Deserializer : public ThreadStackResource {
 
     ObjectPtr null() const { return null_; }
 
-   private:
+ private:
     Deserializer* const d_;
     const ArrayPtr refs_;
     const ObjectPtr null_;
@@ -881,6 +881,14 @@ class Deserializer : public ThreadStackResource {
   intptr_t unknown_dart_code_index_ = 0;
   intptr_t instructions_index_ = 0;
   DeserializationCluster** clusters_;
+#if defined(DART_MIXED_MODE)
+  const char* mixed_error_ = nullptr;
+
+ public:
+  const char* mixed_error() const { return mixed_error_; }
+
+ private:
+#endif
   const bool is_non_root_unit_;
   InstructionsTable& instructions_table_;
 };
@@ -9971,6 +9979,28 @@ void Deserializer::Deserialize(DeserializationRoots* roots) {
   const uint32_t instruction_table_data_offset = ReadUnsigned();
   USE(instruction_table_data_offset);
 
+#if defined(DART_PRECOMPILED_RUNTIME) && defined(DART_MIXED_MODE)
+  // Link the patch before anything is allocated, so that a rejected patch
+  // leaves no trace and the embedder can boot the release instead.
+  if (instructions_table_len > 0 && instruction_table_data_offset != 0 &&
+      MixedMode::IsPatchImage(image_reader_->instructions_image())) {
+    const UntaggedInstructionsTable::Data* rodata;
+    {
+      NoSafepointScope no_safepoint;
+      rodata = reinterpret_cast<const UntaggedInstructionsTable::Data*>(
+          OneByteString::DataStart(String::Handle(static_cast<StringPtr>(
+              image_reader_->GetObjectAt(instruction_table_data_offset)))));
+    }
+    static_assert(sizeof(UntaggedInstructionsTable::DataEntry) ==
+                  2 * sizeof(uint32_t));
+    mixed_error_ = MixedMode::LinkImage(
+        image_reader_->GetBareInstructionsAt(0),
+        image_reader_->GetBareInstructionsEnd(), rodata->length,
+        &rodata->entries()[0].pc_offset, 2);
+    if (mixed_error_ != nullptr) return;
+  }
+#endif
+
   clusters_ = new DeserializationCluster*[num_clusters_];
   refs = Array::New(num_objects_ + kFirstReference, Heap::kOld);
 
@@ -9991,18 +10021,6 @@ void Deserializer::Deserialize(DeserializationRoots* roots) {
     }
     instructions_table_ = InstructionsTable::New(
         instructions_table_len, start_pc, end_pc, instruction_table_data);
-#if defined(DART_MIXED_MODE)
-    if (MixedMode::IsPatchImage(image_reader_->instructions_image()) &&
-        instruction_table_data != 0) {
-      const auto* rodata =
-          reinterpret_cast<const UntaggedInstructionsTable::Data*>(
-              instruction_table_data);
-      static_assert(sizeof(UntaggedInstructionsTable::DataEntry) ==
-                    2 * sizeof(uint32_t));
-      MixedMode::LinkImage(start_pc, end_pc, rodata->length,
-                           &rodata->entries()[0].pc_offset, 2);
-    }
-#endif
   }
 #else
   ASSERT(instructions_table_len == 0);
@@ -10326,6 +10344,19 @@ char* FullSnapshotReader::ReadProgramSnapshot() {
 
   ProgramDeserializationRoots roots(thread_->isolate_group()->object_store());
   deserializer.Deserialize(&roots);
+#if defined(DART_MIXED_MODE)
+  if (deserializer.mixed_error() != nullptr) {
+    return Utils::SCreate("mixed-mode patch rejected: %s",
+                          deserializer.mixed_error());
+  }
+  if (MixedMode::active()) {
+    if (const char* error = MixedMode::CheckNativeOnlyEntries()) {
+      // Nothing has run yet: the embedder can still boot the release.
+      MixedMode::Deactivate();
+      return Utils::SCreate("mixed-mode patch rejected: %s", error);
+    }
+  }
+#endif
 
   if (Snapshot::IncludesCode(kind_)) {
     const auto& units = Array::Handle(

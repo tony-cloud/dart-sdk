@@ -8538,9 +8538,17 @@ void ThrowCantRunWithoutIsolateError() {
 }  // namespace dart
 
 #if defined(DART_MIXED_MODE)
-DART_EXPORT void Dart_MixedModeRegisterImages(const uint8_t* patch_text,
-                                              const uint8_t* base_text) {
-  dart::MixedMode::RegisterImages(patch_text, base_text);
+DART_EXPORT bool Dart_MixedModeRegisterImages(const uint8_t* patch_text,
+                                              const uint8_t* base_text,
+                                              const uint8_t* link_table,
+                                              intptr_t link_table_size,
+                                              const char** error) {
+  return dart::MixedMode::RegisterImages(patch_text, base_text, link_table,
+                                         link_table_size, error);
+}
+
+DART_EXPORT void Dart_MixedModeDeactivate() {
+  dart::MixedMode::Deactivate();
 }
 
 DART_EXPORT void Dart_MixedModePrintStats() {

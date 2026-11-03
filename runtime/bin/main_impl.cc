@@ -52,8 +52,12 @@ extern void kDartCoreSnapshotText();
 
 #if defined(DART_MIXED_MODE)
 #include "bin/elf_loader.h"
-DART_EXPORT void Dart_MixedModeRegisterImages(const uint8_t* patch_text,
-                                              const uint8_t* base_text);
+DART_EXPORT bool Dart_MixedModeRegisterImages(const uint8_t* patch_text,
+                                              const uint8_t* base_text,
+                                              const uint8_t* link_table,
+                                              intptr_t link_table_size,
+                                              const char** error);
+DART_EXPORT void Dart_MixedModeDeactivate();
 DART_EXPORT void Dart_MixedModePrintStats();
 #endif
 
@@ -78,6 +82,21 @@ static bool vm_run_app_snapshot = false;
 static char* app_script_uri = nullptr;
 static const uint8_t* app_snapshot_data = nullptr;
 static const uint8_t* app_snapshot_text = nullptr;
+#if defined(DART_MIXED_MODE)
+// The release snapshot, booted unpatched if the patch is rejected.
+static const uint8_t* mixed_release_data = nullptr;
+static const uint8_t* mixed_release_text = nullptr;
+
+static void MixedModeFallBackToRelease(const char* reason) {
+  Syslog::PrintErr("mixed: patch rejected (%s); running the release\n",
+                   reason);
+  Dart_MixedModeDeactivate();
+  app_snapshot_data = mixed_release_data;
+  app_snapshot_text = mixed_release_text;
+  mixed_release_data = nullptr;
+  mixed_release_text = nullptr;
+}
+#endif
 static bool kernel_isolate_is_running = false;
 
 static Dart_Isolate main_isolate = nullptr;
@@ -1146,6 +1165,21 @@ void RunMainIsolate(const char* script_name,
       Options::packages_file() == nullptr ? package_config_override
                                           : Options::packages_file(),
       &flags, nullptr /* callback_data */, &error, &exit_code);
+#if defined(DART_MIXED_MODE)
+  if (isolate == nullptr && mixed_release_data != nullptr &&
+      error != nullptr && strstr(error, "mixed-mode patch rejected") != nullptr) {
+    // The link table did not match the patch snapshot: boot the release.
+    MixedModeFallBackToRelease(error);
+    free(error);
+    error = nullptr;
+    exit_code = 0;
+    isolate = CreateIsolateGroupAndSetupHelper(
+        /* is_main_isolate */ true, script_name, asset_resolution_base, "main",
+        Options::packages_file() == nullptr ? package_config_override
+                                            : Options::packages_file(),
+        &flags, nullptr /* callback_data */, &error, &exit_code);
+  }
+#endif
 
   if (isolate == nullptr) {
     Syslog::PrintErr("%s\n", error);
@@ -1431,18 +1465,56 @@ void main(int argc, char** argv) {
       // permission (see TryReadAppSnapshot below); code identical to the
       // release runs from the release's text, the rest is simulated.
       // DART_MIXED_BASE=none simulates all code.
+      // DART_MIXED_LINK_TABLE=<file> supplies the linker's table (otherwise
+      // the runtime links by identity). If the patch is rejected for any
+      // reason, the release runs unpatched (fail closed).
+      // DART_MIXED_TEST_UNMAP_BASE=1 (testing) hides the release image from
+      // the patch while keeping it available for the fallback.
       if (const char* base_path = getenv("DART_MIXED_BASE")) {
         const uint8_t* base_text = nullptr;
         if (strcmp(base_path, "none") != 0) {
           AppSnapshot* base = Snapshot::TryReadAppSnapshot(base_path, false);
           if (base == nullptr || !base->IsAOT()) {
-            Syslog::PrintErr("Cannot load mixed-mode base %s\n", base_path);
+            Syslog::PrintErr("Cannot load mixed-mode release %s\n",
+                             base_path);
             Platform::Exit(kErrorExitCode);
           }
-          const uint8_t* base_data = nullptr;
-          base->SetBuffers(&base_data, &base_text);  // Leaked: stays mapped.
+          // Leaked: the release stays mapped for the process lifetime.
+          base->SetBuffers(&mixed_release_data, &mixed_release_text);
+          base_text = mixed_release_text;
         }
-        Dart_MixedModeRegisterImages(app_snapshot_text, base_text);
+        uint8_t* table = nullptr;
+        intptr_t table_size = 0;
+        const char* table_error = nullptr;
+        if (const char* table_path = getenv("DART_MIXED_LINK_TABLE")) {
+          File* file = File::Open(nullptr, table_path, File::kRead);
+          if (file == nullptr) {
+            table_error = "cannot open the link table";
+          } else {
+            table_size = file->Length();
+            table = reinterpret_cast<uint8_t*>(malloc(table_size + 1));
+            if (!file->ReadFully(table, table_size)) {
+              table_error = "cannot read the link table";
+            }
+            file->Release();
+          }
+        }
+        const char* error = table_error;
+        const char* unmap = getenv("DART_MIXED_TEST_UNMAP_BASE");
+        if (unmap != nullptr && unmap[0] == '1') base_text = nullptr;
+        if (error == nullptr &&
+            Dart_MixedModeRegisterImages(app_snapshot_text, base_text, table,
+                                         table_size, &error)) {
+          // Patch accepted for now; LinkImage may still reject it while the
+          // isolate group is created (see RunMainIsolate).
+        } else if (mixed_release_data != nullptr) {
+          MixedModeFallBackToRelease(error);
+        } else {
+          Syslog::PrintErr("mixed: patch rejected (%s) and no release\n",
+                           error);
+          Platform::Exit(kErrorExitCode);
+        }
+        free(table);
       }
 #endif
     } else if (app_snapshot == nullptr && Dart_IsPrecompiledRuntime()) {

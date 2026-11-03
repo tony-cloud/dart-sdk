@@ -50,14 +50,48 @@ struct MixedRegs {
 };
 static_assert(sizeof(MixedRegs) == 800, "Keep in sync with the gate asm");
 
+// On-disk link table (version 1, little endian), produced by the patch
+// linker and consumed by RegisterImages/LinkImage. Offsets are relative to the
+// start of the respective instructions image (_kDartSnapshotText).
+struct MixedLinkTableHeader {
+  static constexpr uint32_t kMagic = 0x544C4D44;  // "DMLT"
+  static constexpr uint32_t kVersion = 1;
+  uint32_t magic;
+  uint32_t version;
+  uint64_t base_size;    // Size of the release instructions image.
+  uint64_t base_hash;    // MixedMode::HashImage of that image.
+  uint64_t patch_size;   // Size of the patch instructions image.
+  uint32_t entry_count;  // Must equal the patch's instructions-table length.
+  uint32_t reserved;
+};
+struct MixedLinkTableEntry {
+  static constexpr uint32_t kUnlinked = 0xFFFFFFFF;
+  uint32_t patch_offset;
+  uint32_t size;
+  uint32_t base_offset;  // kUnlinked, or where the identical code lives.
+};
+static_assert(sizeof(MixedLinkTableHeader) == 40, "packed layout");
+static_assert(sizeof(MixedLinkTableEntry) == 12, "packed layout");
+
 class MixedMode : public AllStatic {
  public:
   // Called by the embedder before the patch snapshot is deserialized.
   // `patch_text` is the instructions image of the patch (readable, not
   // executable); `base_text` is the instructions image of the release
-  // (executable). Pass base_text == nullptr to simulate everything.
-  static void RegisterImages(const uint8_t* patch_text,
-                             const uint8_t* base_text);
+  // (executable), or nullptr if none is mapped. `link_table` may be nullptr:
+  // then the runtime links by identity (equal bytes at equal offsets), which
+  // is only valid for two compiles that share one layout (spike/testing).
+  //
+  // Returns false (and sets *error) if the patch must not be used; the
+  // embedder must then run the release unpatched. Mixed mode stays inactive.
+  static bool RegisterImages(const uint8_t* patch_text,
+                             const uint8_t* base_text,
+                             const uint8_t* link_table,
+                             intptr_t link_table_size,
+                             const char** error);
+
+  // Undoes RegisterImages after a failure (before any code was entered).
+  static void Deactivate();
 
   // True once a patch image has been linked.
   static bool active() { return active_; }
@@ -69,12 +103,18 @@ class MixedMode : public AllStatic {
   }
 
   // Decides, for every entry of the patch's instructions table, whether it
-  // is linked. Called by the deserializer once the table exists.
-  static void LinkImage(uword start_pc,
-                        uword end_pc,
-                        intptr_t length,
-                        const uint32_t* pc_offsets,
-                        intptr_t pc_offset_stride);
+  // is linked, and validates the link table against it. Called by the
+  // deserializer before any object is allocated. Returns nullptr on success,
+  // otherwise an error message; mixed mode is then deactivated.
+  static const char* LinkImage(uword start_pc,
+                               uword end_pc,
+                               intptr_t length,
+                               const uint32_t* pc_offsets,
+                               intptr_t pc_offset_stride);
+
+  // After deserialization: rejects the patch if a stub that C++ enters
+  // directly (without THR in its register) would be entered through a gate.
+  static const char* CheckNativeOnlyEntries();
 
   // Native-callable address for the patch entry point `patch_entry`, which
   // belongs to instructions table entry `index`.
@@ -87,7 +127,7 @@ class MixedMode : public AllStatic {
       return gate_target_[(pc - gates_start_) >> kGateSizeLog2];
     }
     if (pc - base_start_ < base_size_) {
-      return pc - base_start_ + patch_start_;
+      return BaseToPatch(pc);
     }
     return pc;
   }
@@ -113,9 +153,13 @@ class MixedMode : public AllStatic {
   // [*lo, *hi) to the entry's range and *linked.
   static bool LookupEntry(uword pc, uword* lo, uword* hi, bool* linked);
 
-  static inline uword PatchToBase(uword patch_pc) {
-    return patch_pc - patch_start_ + base_start_;
-  }
+  // Release address of the linked patch pc `patch_pc`.
+  static uword PatchToBase(uword patch_pc);
+  // Patch pc for a pc inside linked release code.
+  static uword BaseToPatch(uword base_pc);
+
+  // 64-bit FNV-1a over an instructions image (header included).
+  static uint64_t HashImage(const uint8_t* image);
 
   // Allocates the per-thread register area and side stack.
   static MixedRegs* NewThreadArea();
@@ -127,6 +171,9 @@ class MixedMode : public AllStatic {
   static void PrintStats();
 
   static constexpr intptr_t kGateSizeLog2 = 3;
+  // Gates reserved for exception-handler pcs and other lazily bound targets
+  // that the link-time budget cannot count exactly.
+  static constexpr intptr_t kGateReserve = 1024;
 
   static uword gates_start_;
   static uword gates_size_;
