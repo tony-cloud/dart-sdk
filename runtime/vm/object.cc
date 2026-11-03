@@ -3570,15 +3570,16 @@ UnboxedFieldBitmap Class::CalculateFieldOffsetsFromLinkBase() const {
     if (num_native_fields > 0 || is_isolate_unsendable_due_to_pragma()) {
       set_is_isolate_unsendable(true);
     }
-    bitmap =
-        IsolateGroup::Current()->class_table()->GetUnboxedFieldsMapAt(super.id());
+    bitmap = IsolateGroup::Current()->class_table()->GetUnboxedFieldsMapAt(
+        super.id());
   }
 
   GrowableArray<bool> used;
   auto mark = [&](intptr_t offset, intptr_t size) {
     for (intptr_t o = offset; o < offset + size; o += word) {
       const intptr_t index = o / word;
-      while (used.length() <= index) used.Add(false);
+      while (used.length() <= index)
+        used.Add(false);
       used[index] = true;
     }
   };
@@ -3645,12 +3646,20 @@ UnboxedFieldBitmap Class::CalculateFieldOffsetsFromLinkBase() const {
     field ^= flds.At(i);
     if (field.is_static()) continue;
     ASSERT(field.HostOffset() == 0);
-    const intptr_t size = field_size(field);
     intptr_t base_offset = 0;
     intptr_t base_unboxed = 0;
     const char* key = LinkInfo::FieldKey(field);
-    if (LinkInfo::BaseFieldLayout(key, &base_offset, &base_unboxed) &&
-        base_unboxed == (field.is_unboxed() ? size : 0) &&
+    const bool in_base =
+        LinkInfo::BaseFieldLayout(key, &base_offset, &base_unboxed);
+    // The release boxed this field although it is unboxable here, e.g. the
+    // stock layout boxes unboxable fields past the end of the unboxed-field
+    // bitmap (256 bytes with compressed pointers). Boxing is always valid,
+    // so follow the release.
+    if (in_base && base_unboxed == 0 && field.is_unboxed()) {
+      field.set_is_unboxed(false);
+    }
+    const intptr_t size = field_size(field);
+    if (in_base && base_unboxed == (field.is_unboxed() ? size : 0) &&
         is_free(base_offset, size) &&
         (!field.is_unboxed() || fits_bitmap(base_offset, size))) {
       field.SetOffset(base_offset, base_offset);

@@ -990,6 +990,11 @@ void ImageWriter::WriteText() {
       compiler::target::ObjectAlignment::kObjectAlignment, text_offset);
 
   ASSERT_EQUAL(text_offset, image_size);
+#if defined(DART_PRECOMPILER)
+  if (FLAG_precompiled_mode && LinkInfo::IsRecording()) {
+    LinkInfo::RecordMeta("text_image_size", image_size);
+  }
+#endif
 
 #if !defined(EMIT_UNWIND_DIRECTIVES_PER_FUNCTION)
   FrameUnwindEpilogue();
