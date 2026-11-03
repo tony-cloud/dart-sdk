@@ -36,6 +36,7 @@ HARNESS = r'''
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <unistd.h>
 #include <vector>
 #include "include/dart_api.h"
 #include "include/dart_engine.h"
@@ -56,8 +57,11 @@ int64_t Probe(const char* name) {
   return result;
 }
 
-// usage: harness <snapshot> <patch> <probe>...
-// Prints "<phase> <probe> <value>" before and after loading the patch.
+// usage: harness <snapshot> <patch> <step>...
+// A step is a probe name (prints "<phase> <probe> <value>", phase is "before"
+// until the patch is loaded and "after" once it is), "@name" (invokes an async
+// entry point and pumps the message and microtask queues, e.g. loadLibrary), or "+"
+// (loads the bytecode patch).
 int main(int argc, char** argv) {
   if (argc < 4 || !Dart_IsPrecompiledRuntime()) return 2;
   char* error = nullptr;
@@ -67,18 +71,36 @@ int main(int argc, char** argv) {
   if (error) { std::cerr << error << std::endl; return 1; }
   DartEngine_AcquireIsolate(isolate);
   Dart_EnterScope();
+  const char* phase = "before";
   for (int i = 3; i < argc; ++i) {
-    std::cout << "before " << argv[i] << " " << Probe(argv[i]) << std::endl;
-  }
-  std::ifstream input(argv[2], std::ios::binary);
-  std::vector<uint8_t> patch((std::istreambuf_iterator<char>(input)), {});
-  auto result = Dart_ReloadBytecodePatch(patch.data(), patch.size());
-  if (Dart_IsError(result)) {
-    std::cerr << Dart_GetError(result) << std::endl;
-    return 4;
-  }
-  for (int i = 3; i < argc; ++i) {
-    std::cout << "after " << argv[i] << " " << Probe(argv[i]) << std::endl;
+    if (!strcmp(argv[i], "+")) {
+      std::ifstream input(argv[2], std::ios::binary);
+      std::vector<uint8_t> patch((std::istreambuf_iterator<char>(input)), {});
+      auto result = Dart_ReloadBytecodePatch(patch.data(), patch.size());
+      if (Dart_IsError(result)) {
+        std::cerr << Dart_GetError(result) << std::endl;
+        return 4;
+      }
+      phase = "after";
+    } else if (argv[i][0] == '@') {
+      Check(Dart_Invoke(Dart_RootLibrary(),
+                        Dart_NewStringFromCString(argv[i] + 1), 0, nullptr));
+      Check(DartEngine_DrainMicrotasksQueue());
+      // loadLibrary completes through a zero-duration timer: leave the isolate
+      // and pump its messages (DartEngine_HandleMessage enters it itself) for
+      // a bounded time.
+      Dart_ExitScope();
+      DartEngine_ReleaseIsolate();
+      for (int spin = 0; spin < 200; ++spin) {
+        DartEngine_HandleMessage(isolate);
+        usleep(1000);
+      }
+      DartEngine_AcquireIsolate(isolate);
+      Dart_EnterScope();
+    } else {
+      std::cout << phase << " " << argv[i] << " " << Probe(argv[i])
+                << std::endl;
+    }
   }
   Dart_ExitScope();
   DartEngine_ReleaseIsolate();
@@ -120,8 +142,20 @@ class SuperCtor extends Box {{
 '''
 
 
+def deferred_body(value):
+    return f'''
+int dtarget(int x) => x + {value};
+
+class DBox {{
+  final int v;
+  factory DBox.make(int x) => DBox._(x + {value});
+  DBox._(this.v);
+}}
+'''
+
 DRIVER = r'''
 import 'body.dart';
+import 'dbody.dart' deferred as d;
 
 @pragma('vm:never-inline')
 int Function(int) functionTearOff() => target;
@@ -148,6 +182,22 @@ int probeConstructorTearOff() => constructorTearOff()(10).v;
 int probeSuperMethod() => Derived().method(10);
 @pragma('vm:entry-point')
 int probeSuperCtor() => SuperCtor(10).v;
+
+// AOT callers in the root unit of a patchable function in a deferred library.
+@pragma('vm:entry-point')
+int probeDeferredUnloaded() {
+  try {
+    return d.dtarget(10);
+  } catch (e) {
+    return -1;
+  }
+}
+@pragma('vm:entry-point')
+Future<void> loadDeferred() => d.loadLibrary();
+@pragma('vm:entry-point')
+int probeDeferred() => d.dtarget(10);
+@pragma('vm:entry-point')
+int probeDeferredFactory() => d.DBox.make(10).v;
 void main() { print(probeStatic()); }
 '''
 
@@ -192,6 +242,8 @@ def main():
         work = Path(tmp)
         source = work / 'body.dart'
         source.write_text(body(1))
+        deferred_source = work / 'dbody.dart'
+        deferred_source.write_text(deferred_body(1))
         driver = work / 'driver.dart'
         driver.write_text(DRIVER)
         kernel = work / 'base.dill'
@@ -234,6 +286,7 @@ def main():
         baseline = work / 'baseline.bytecode'
         run(*bytecode_command, '-o', baseline, driver)
         source.write_text(body(2))
+        deferred_source.write_text(deferred_body(2))
         patch = work / 'patch.bytecode'
         run(*bytecode_command, f'--patch-base={baseline}', '-o', patch, driver)
 
@@ -245,7 +298,7 @@ def main():
             '-ldart_engine_aot_shared', f'-Wl,-rpath,{build}', '-o', executable)
 
         probes = list(EXPECTED)
-        result = run(executable, snapshot, patch, *probes,
+        result = run(executable, snapshot, patch, *probes, '+', *probes,
                      stdout=subprocess.PIPE, text=True)
         seen = {}
         for line in result.stdout.splitlines():
@@ -258,9 +311,40 @@ def main():
                     raise AssertionError(
                         f'{probe} {phase} patch: got {actual}, expected '
                         f'{expected(number)}')
-        print('AOT callers of patchable static, constructor, tear-off and super '
-              'targets ran AOT bodies, then the patched replacements, without '
-              'the CallStaticFunction stub.')
+
+        # Deferred library: callers in the root unit call patchable functions
+        # in a deferred library before loadLibrary (the deferred-load check
+        # throws, the Function entry point is not reached), after loadLibrary,
+        # and after a patch, in either order of patching and loading.
+        def steps(*tokens):
+            lines = run(executable, snapshot, patch, *tokens,
+                        stdout=subprocess.PIPE, text=True).stdout.splitlines()
+            return [(phase, probe, int(value)) for phase, probe, value in
+                    (line.split() for line in lines)]
+
+        unloaded = 'probeDeferredUnloaded'
+        actual = steps(unloaded, '@loadDeferred', 'probeDeferred',
+                       'probeDeferredFactory', unloaded, '+', 'probeDeferred',
+                       'probeDeferredFactory', unloaded)
+        expected = [('before', unloaded, -1), ('before', 'probeDeferred', 11),
+                    ('before', 'probeDeferredFactory', 11),
+                    ('before', unloaded, 11), ('after', 'probeDeferred', 12),
+                    ('after', 'probeDeferredFactory', 12),
+                    ('after', unloaded, 12)]
+        if actual != expected:
+            raise AssertionError(
+                f'deferred load then patch: got {actual}, expected {expected}')
+        actual = steps(unloaded, '+', unloaded, '@loadDeferred',
+                       'probeDeferred', 'probeDeferredFactory')
+        expected = [('before', unloaded, -1), ('after', unloaded, -1),
+                    ('after', 'probeDeferred', 12),
+                    ('after', 'probeDeferredFactory', 12)]
+        if actual != expected:
+            raise AssertionError(
+                f'deferred patch then load: got {actual}, expected {expected}')
+        print('AOT callers of patchable static, constructor, tear-off, super and '
+              'deferred-library targets ran AOT bodies, then the patched '
+              'replacements, without the CallStaticFunction stub.')
 
 
 if __name__ == '__main__':
