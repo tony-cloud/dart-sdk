@@ -23,15 +23,18 @@ one layout and the runtime may link by identity. Checks:
 
 Part B, the patch linker (--linker PATH/ios_linker.dart): builds pure-Dart
 release/patch pairs with gen_snapshot link layout support and the linker
-(link info, pass 1, pool hints, constrained final build, link, check), runs
-the vmcode with the mixed runtime, and requires its output to equal a stock
-build of the patch and its linked entry count to equal the linker's report.
+(link info, pass 1, pool hints, constrained final build, link, check). The
+release is a stripped, signed Mach-O dylib, the linker's --base input, as an
+App.framework is on iOS. Runs the vmcode with the mixed runtime and requires
+the vmcode's release hash to match the dylib text, the output to equal a
+stock build of the patch, and the runtime's linked/unlinked entry counts to
+equal the linker's report.
 Pairs: the template (K=3 -> K=5) and a pure-Dart port of the linker's
 80/320-caller fixture (docs/ios-linker/COMPILER_LINKER.md section 9).
 
 Usage:
-  tools/test_aot_mixed_mode.py --release-dir xcodebuild/ProductARM64C \\
-      --mixed-dir xcodebuild/ProductMixedARM64C \\
+  tools/test_aot_mixed_mode.py --release-dir xcodebuild/ProductARM64 \\
+      --mixed-dir xcodebuild/ProductMixedARM64 \\
       [--linker .../tools/ios_linker/bin/ios_linker.dart --dart DART] \\
       [--bench [--runs 3] [-n 20000000]]
 The release dir provides gen_snapshot, dartaotruntime and vm_platform.dill
@@ -159,16 +162,6 @@ def macho_text(dylib, elf_text):
     return text
 
 
-def restamp_release_hash(vmcode, release_text):
-    """Replaces the release hash of a linker-produced vmcode (computed from
-    the ELF) with the hash of the shipped Mach-O release text."""
-    data = bytearray(open(vmcode, 'rb').read())
-    if struct.unpack_from('<I', data, 112)[0] != len(release_text):
-        raise RuntimeError('%s: release text size mismatch' % vmcode)
-    data[48:80] = hashlib.sha256(release_text).digest()
-    open(vmcode, 'wb').write(bytes(data))
-
-
 def encode_vmcode(links, patch_elf_bytes, release_text, patch_text_size,
                   header_patch=None):
     """vmcode v1 (COMPILER_LINKER.md section 6) from (p, r, size, flags)."""
@@ -236,6 +229,10 @@ class Toolchain:
     def dylib(self, dill, out, extra=()):
         self.gen(['--snapshot_kind=app-aot-macho-dylib', '--macho=' + out] +
                  list(extra) + [dill])
+        if '--strip' in extra:
+            # gen_snapshot keeps local function symbols in a Mach-O dylib;
+            # an App.framework ships without them (Xcode strips it).
+            run(['strip', '-x', out])
         run(['codesign', '-f', '-s', '-', out])
 
 
@@ -552,6 +549,11 @@ def fixture_cases(fanout):
     ]
 
 
+# Release builds ship stripped (the linker locates the text image by its
+# symbol and the sidecar's size).
+STRIP = ['--strip']
+
+
 def part_b(tc, mixed, out, linker, dart):
     log('== Part B: patch linker (%s)' % out)
     template = open(TEMPLATE).read()
@@ -572,10 +574,11 @@ def part_b(tc, mixed, out, linker, dart):
         tc.kernel(release_src, fixture, rel_dill)
         app_link = os.path.join(d, 'App.link')
         tc.elf(rel_dill, os.path.join(d, 'App.aot'),
-               ['--print_link_info_to=' + app_link])
-        tc.dylib(rel_dill, os.path.join(d, 'App.dylib'))
-        release_text = macho_text(os.path.join(d, 'App.dylib'),
-                                  text_image(os.path.join(d, 'App.aot')))
+               STRIP + ['--print_link_info_to=' + app_link])
+        release = os.path.join(d, 'App.dylib')
+        tc.dylib(rel_dill, release, STRIP)
+        release_text = macho_text(release, text_image(os.path.join(d,
+                                                                   'App.aot')))
         args = [arg] if arg else []
         release_out = stable_output(
             run([tc.runtime, os.path.join(d, 'App.dylib')] + args).stdout)
@@ -584,8 +587,8 @@ def part_b(tc, mixed, out, linker, dart):
             os.makedirs(c, exist_ok=True)
             dill = os.path.join(c, 'patch.dill')
             tc.kernel(patch_src, fixture, dill)
-            tc.dylib(dill, os.path.join(c, 'stock.dylib'))
-            tc.elf(dill, os.path.join(c, 'pass1.aot'), [
+            tc.dylib(dill, os.path.join(c, 'stock.dylib'), STRIP)
+            tc.elf(dill, os.path.join(c, 'pass1.aot'), STRIP + [
                 '--link_base=' + app_link,
                 '--print_link_info_to=' + os.path.join(c, 'pass1.link')
             ])
@@ -594,25 +597,26 @@ def part_b(tc, mixed, out, linker, dart):
                 os.path.join(c, 'pass1.link'), '--out',
                 os.path.join(c, 'constraints.link')
             ])
-            tc.elf(dill, os.path.join(c, 'out.aot'), [
+            tc.elf(dill, os.path.join(c, 'out.aot'), STRIP + [
                 '--link_base=' + os.path.join(c, 'constraints.link'),
                 '--print_link_info_to=' + os.path.join(c, 'out.link')
             ])
             report = os.path.join(c, 'report.json')
             vm = os.path.join(c, 'out.vmcode')
+            # The release input is the shipped Mach-O, whose text the vmcode
+            # hashes (COMPILER_LINKER.md section 6.1).
             tool([
-                'link', '--base-elf',
-                os.path.join(d, 'App.aot'), '--base-link', app_link,
+                'link', '--base', release, '--base-link', app_link,
                 '--patch-elf',
                 os.path.join(c, 'out.aot'), '--patch-link',
                 os.path.join(c, 'out.link'), '--out', vm, '--report', report
             ])
             check = tool([
-                'check', '--vmcode', vm, '--base-elf',
-                os.path.join(d, 'App.aot'), '--patch-elf',
+                'check', '--vmcode', vm, '--base', release, '--patch-elf',
                 os.path.join(c, 'out.aot')
             ]).stdout.strip()
-            restamp_release_hash(vm, release_text)
+            header = open(vm, 'rb').read(128)
+            hash_ok = (header[48:80] == hashlib.sha256(release_text).digest())
             rep = json.load(open(report))
             stock = stable_output(
                 run([tc.runtime, os.path.join(c, 'stock.dylib')] +
@@ -623,20 +627,21 @@ def part_b(tc, mixed, out, linker, dart):
             },
                        check=False)
             stats = link_stats(proc.stderr)
-            ok = (proc.returncode == 0 and stable_output(proc.stdout) == stock and
+            ok = (hash_ok and proc.returncode == 0 and stable_output(proc.stdout) == stock and
                   'patch rejected' not in proc.stderr and stats is not None and
                   stats[0] == rep['linked_entries'] and
                   stats[1] == rep['unlinked_entries'])
             record(
                 '%s/%s' % (pair_name, case_name), ok,
                 ': linker linked=%d unlinked=%d (%.2f%% bytes); runtime %s; '
-                'output %s stock%s; check: %s' %
+                'output %s stock%s; release hash %s; check: %s' %
                 (rep['linked_entries'], rep['unlinked_entries'],
                  100.0 * rep['linked_code_bytes'] /
                  max(1, rep['linked_code_bytes'] + rep['unlinked_code_bytes']),
                  'linked=%d unlinked=%d' % stats[:2] if stats else '?',
                  '==' if stable_output(proc.stdout) == stock else '!=',
                  ' (release differs)' if stock != release_out else '',
+                 'ok' if hash_ok else 'MISMATCH',
                  check[:120]))
             if not ok:
                 log(proc.stderr[-1500:])
