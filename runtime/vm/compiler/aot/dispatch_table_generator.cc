@@ -548,20 +548,38 @@ void DispatchTableGenerator::SetupSelectorRows() {
     }
   }
 
-  // Selector keys: member name plus the smallest declaring class key. Keys
-  // only steer placement; they are never needed for correctness.
+  // Selector keys: member name, function kind and the set of declaring
+  // classes (smallest class key plus a hash of all of them). Remaining
+  // collisions are numbered in selector id order. Keys only steer placement;
+  // they are never needed for correctness.
   selector_link_keys_ = Z->Alloc<const char*>(num_selectors_);
-  for (intptr_t i = 0; i < num_selectors_; i++) selector_link_keys_[i] = nullptr;
+  const char** selector_min_class = Z->Alloc<const char*>(num_selectors_);
+  uint64_t* selector_class_hash = Z->Alloc<uint64_t>(num_selectors_);
+  int* selector_kind = Z->Alloc<int>(num_selectors_);
+  for (intptr_t i = 0; i < num_selectors_; i++) {
+    selector_link_keys_[i] = nullptr;
+    selector_min_class[i] = nullptr;
+    selector_class_hash[i] = 0;
+    selector_kind[i] = -1;
+  }
   const bool link_active = LinkInfo::IsActive();
   auto note_selector_key = [&](int32_t sid, const Class& owner,
                                const Function& function) {
     if (!link_active) return;
-    const String& name = String::Handle(Z, function.name());
-    const char* key = OS::SCreate(Z, "%s|%s", String::ScrubName(name),
-                                  LinkInfo::ClassKey(owner));
-    if (selector_link_keys_[sid] == nullptr ||
-        strcmp(key, selector_link_keys_[sid]) < 0) {
-      selector_link_keys_[sid] = key;
+    const char* class_key = LinkInfo::ClassKey(owner);
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (const char* p = class_key; *p != '\0'; p++) {
+      h = (h ^ static_cast<uint8_t>(*p)) * 0x100000001b3ULL;
+    }
+    selector_class_hash[sid] += h;  // Order independent.
+    if (selector_min_class[sid] == nullptr ||
+        strcmp(class_key, selector_min_class[sid]) < 0) {
+      selector_min_class[sid] = class_key;
+    }
+    if (selector_link_keys_[sid] == nullptr) {
+      const String& name = String::Handle(Z, function.name());
+      selector_link_keys_[sid] = String::ScrubName(name);
+      selector_kind[sid] = static_cast<int>(function.kind());
     }
   };
 
@@ -623,6 +641,22 @@ void DispatchTableGenerator::SetupSelectorRows() {
           }
         }
       }
+    }
+  }
+
+  if (link_active) {
+    CStringIntMap seen(Z);
+    for (intptr_t i = 0; i < num_selectors_; i++) {
+      if (selector_link_keys_[i] == nullptr) continue;
+      const char* key = OS::SCreate(
+          Z, "%s|%d|%s|%016" Px64, selector_link_keys_[i], selector_kind[i],
+          selector_min_class[i], selector_class_hash[i]);
+      const intptr_t count = seen.LookupValue(key);
+      const intptr_t n =
+          count == CStringIntMapKeyValueTrait::kNoValue ? 0 : count;
+      seen.Update({key, n + 1});
+      selector_link_keys_[i] =
+          n == 0 ? key : OS::SCreate(Z, "%s#%" Pd, key, n);
     }
   }
 

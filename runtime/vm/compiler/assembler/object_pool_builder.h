@@ -285,6 +285,8 @@ class ObjectPoolBuilder : public ValueObject {
   // Slots of the reserved region filled so far, in placement order. Entries
   // placed there are not appended, so code tracing must look at them too.
   intptr_t link_pin_count() const { return link_pins_.length(); }
+  // Whether [index] is a reserved release slot that nothing was placed in.
+  bool IsLinkHole(intptr_t index) const { return IsFreeLinkSlot(index); }
   intptr_t link_pin_at(intptr_t i) const { return link_pins_[i]; }
 
   // Try appending all entries from this pool into the parent pool.

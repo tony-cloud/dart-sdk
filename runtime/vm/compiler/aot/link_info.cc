@@ -38,6 +38,13 @@ DEFINE_FLAG(charp,
             "Compile against the release layout recorded in the given link "
             "info file, keeping class ids, field offsets, static field ids, "
             "dispatch table offsets and object pool slots where possible.");
+DEFINE_FLAG(charp,
+            link_dd_targets,
+            nullptr,
+            "File with one function key per line. Static calls to these "
+            "functions go through the function's object pool slot (DD) "
+            "instead of a direct call. Must be the same for a release and "
+            "its patches.");
 DEFINE_FLAG(bool,
             trace_link_info,
             false,
@@ -235,6 +242,33 @@ const char* ScrubbedName(Zone* zone, const String& name) {
   return String::ScrubName(name);
 }
 
+// Every static field object (including clones) in the heap whose id is
+// below [count], so that no Field is missed or left with a stale id.
+void CollectStaticFields(Thread* thread,
+                         intptr_t count,
+                         GrowableArray<const Field*>* out) {
+  class FieldCollector : public ObjectVisitor {
+   public:
+    FieldCollector(Zone* zone, intptr_t count, GrowableArray<const Field*>* out)
+        : zone_(zone), count_(count), out_(out) {}
+    void VisitObject(ObjectPtr obj) override {
+      if (!obj->IsField()) return;
+      const auto& field = Field::Handle(zone_, Field::RawCast(obj));
+      if (!field.is_static() || field.is_shared()) return;
+      if (field.field_id() < 0 || field.field_id() >= count_) return;
+      out_->Add(&Field::ZoneHandle(zone_, field.ptr()));
+    }
+
+   private:
+    Zone* zone_;
+    intptr_t count_;
+    GrowableArray<const Field*>* out_;
+  };
+  HeapIterationScope iteration(thread);
+  FieldCollector collector(thread->zone(), count, out);
+  iteration.IterateObjects(&collector);
+}
+
 void Emit(const char* format, ...) PRINTF_ATTRIBUTE(1, 2);
 void Emit(const char* format, ...) {
   if (output == nullptr) return;
@@ -245,6 +279,46 @@ void Emit(const char* format, ...) {
 }
 
 }  // namespace
+
+namespace {
+CStringIntMap* dd_targets = nullptr;
+bool dd_loaded = false;
+
+void LoadDDTargets() {
+  if (dd_loaded) return;
+  dd_loaded = true;
+  if (FLAG_link_dd_targets == nullptr) return;
+  auto open = Dart::file_open_callback();
+  auto read = Dart::file_read_callback();
+  auto close = Dart::file_close_callback();
+  void* file = open(FLAG_link_dd_targets, /*write=*/false);
+  if (file == nullptr) FATAL("--link_dd_targets: cannot open file");
+  uint8_t* data = nullptr;
+  intptr_t length = 0;
+  read(&data, &length, file);
+  close(file);
+  char* text = reinterpret_cast<char*>(malloc(length + 1));
+  memmove(text, data, length);
+  text[length] = '\0';
+  free(data);
+  dd_targets = new CStringIntMap();
+  char* line = text;
+  while (line != nullptr && *line != '\0') {
+    char* next = strchr(line, '\n');
+    if (next != nullptr) *next++ = '\0';
+    if (*line != '\0' && *line != '#') InsertKey(dd_targets, line, 1);
+    line = next;
+  }
+  free(text);
+}
+}  // namespace
+
+bool LinkInfo::IsDDTarget(const Function& function) {
+  LoadDDTargets();
+  if (dd_targets == nullptr || function.IsNull()) return false;
+  if (function.IsClosureFunction()) return false;
+  return Lookup(*dd_targets, FunctionKey(function)) != kNone;
+}
 
 bool LinkInfo::HasBase() {
   return FLAG_link_base != nullptr && Base() != nullptr;
@@ -578,36 +652,12 @@ const char* LinkInfo::PoolEntryKey(
 void LinkInfo::RemapStaticFieldIds(IsolateGroup* IG) {
   if (!HasBase()) return;
   Thread* thread = Thread::Current();
-  Zone* zone = thread->zone();
   FieldTable* initial = IG->initial_field_table();
   const intptr_t old_count = initial->NumFieldIds();
   const intptr_t base_count = BaseNumStaticFields();
 
-  // Collect every static field object (including clones) from the heap, so
-  // that no Field is left with a stale id.
-  class FieldCollector : public ObjectVisitor {
-   public:
-    FieldCollector(Zone* zone, intptr_t count, GrowableArray<const Field*>* out)
-        : zone_(zone), count_(count), out_(out) {}
-    void VisitObject(ObjectPtr obj) override {
-      if (!obj->IsField()) return;
-      const auto& field = Field::Handle(zone_, Field::RawCast(obj));
-      if (!field.is_static() || field.is_shared()) return;
-      if (field.field_id() < 0 || field.field_id() >= count_) return;
-      out_->Add(&Field::ZoneHandle(zone_, field.ptr()));
-    }
-
-   private:
-    Zone* zone_;
-    intptr_t count_;
-    GrowableArray<const Field*>* out_;
-  };
   GrowableArray<const Field*> fields;
-  {
-    HeapIterationScope iteration(thread);
-    FieldCollector collector(zone, old_count, &fields);
-    iteration.IterateObjects(&collector);
-  }
+  CollectStaticFields(thread, old_count, &fields);
 
   std::unique_ptr<intptr_t[]> old_to_new(new intptr_t[old_count]);
   for (intptr_t i = 0; i < old_count; i++) old_to_new[i] = -1;
@@ -711,7 +761,9 @@ void LinkInfo::RecordPool(compiler::ObjectPoolBuilder* pool) {
     if (pool_keys != nullptr && i < pool_keys->length()) {
       key = (*pool_keys)[i];
     }
-    if (key == nullptr) {
+    if (pool->IsLinkHole(i)) {
+      key = "";  // Unused release slot (filler).
+    } else if (key == nullptr) {
       key = PoolEntryKey(entry, nullptr, 0);
     }
     Emit("pool\t%" Pd "\t%d\t%d\t%s\n", i, static_cast<int>(entry.type()),
@@ -777,24 +829,18 @@ void LinkInfo::RecordProgramTables(IsolateGroup* IG) {
     }
   }
 
-  // Static fields (including those of top-level classes).
-  RecordMeta("num_statics", IG->initial_field_table()->NumFieldIds());
-  const auto& libs =
-      GrowableObjectArray::Handle(zone, IG->object_store()->libraries());
-  auto& lib = Library::Handle(zone);
-  for (intptr_t i = 0; i < libs.Length(); i++) {
-    lib ^= libs.At(i);
-    ClassDictionaryIterator it(lib, ClassDictionaryIterator::kIteratePrivate);
-    while (it.HasNext()) {
-      cls = it.GetNextClass();
-      fields = cls.fields();
-      if (fields.IsNull()) continue;
-      for (intptr_t j = 0; j < fields.Length(); j++) {
-        field ^= fields.At(j);
-        if (!field.is_static() || field.is_shared()) continue;
-        Emit("static\t%" Pd "\t%s\n", field.field_id(), FieldKey(field));
-      }
-    }
+  // Static fields (all Field objects, so clones and fields outside library
+  // dictionaries are included). One line per field id.
+  const intptr_t num_statics = IG->initial_field_table()->NumFieldIds();
+  RecordMeta("num_statics", num_statics);
+  GrowableArray<const Field*> statics;
+  CollectStaticFields(thread, num_statics, &statics);
+  std::unique_ptr<bool[]> emitted(new bool[num_statics]);
+  for (intptr_t i = 0; i < num_statics; i++) emitted[i] = false;
+  for (auto f : statics) {
+    if (emitted[f->field_id()]) continue;
+    emitted[f->field_id()] = true;
+    Emit("static\t%" Pd "\t%s\n", f->field_id(), FieldKey(*f));
   }
 }
 

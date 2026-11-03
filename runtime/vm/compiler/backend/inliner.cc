@@ -6,6 +6,7 @@
 
 #include "vm/compiler/aot/aot_call_specializer.h"
 #include "vm/compiler/aot/precompiler.h"
+#include "vm/compiler/aot/link_info.h"
 #include "vm/compiler/backend/block_scheduler.h"
 #include "vm/compiler/backend/branch_optimizer.h"
 #include "vm/compiler/backend/flow_graph_checker.h"
@@ -1165,6 +1166,11 @@ class CallSiteInliner : public ValueObject {
       return false;
     }
 #endif
+    // DD targets are indirection boundaries: inlining them would make the
+    // caller's code depend on the callee again.
+    if (CompilerState::Current().is_aot() && LinkInfo::IsDDTarget(function)) {
+      return false;
+    }
     if (trace_inlining()) {
       String& name = String::Handle(function.QualifiedUserVisibleName());
       THR_Print("  => %s (deopt count %d)\n", name.ToCString(),

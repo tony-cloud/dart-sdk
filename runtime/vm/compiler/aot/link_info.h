@@ -90,6 +90,10 @@ class LinkInfo : public AllStatic {
   static intptr_t BasePoolIndex(const char* pool_key);
   static intptr_t BaseStubPoolLength();
 
+  // Whether static calls to [function] go through a DD slot (release DD
+  // selection given with --link_dd_targets).
+  static bool IsDDTarget(const Function& function);
+
   // Remaps static field ids of the current isolate group so that fields
   // known to the release keep their release ids. Must run before any code is
   // compiled.
