@@ -69,6 +69,74 @@ the flow graph builder already clears unchecked-entry use for patchable targets.
 `tools/test_aot_patchable_direct_calls.py` checks the generated code (no
 `CallStaticFunction` stub references) and the AOT/patched results.
 
+## Closed world over the base class hierarchy
+
+The profile compiles app classes as open: a patch can add subclasses. Treating
+them as open for every call and type check is expensive (about 60% of the gap to
+a TFA build in a Flutter-like workload: slow type tests and lost devirtualization
+and field-accessor inlining), so `gen_snapshot --shorebird-structural-patching`
+instead optimizes over the **base class hierarchy**: the classes of the snapshot,
+i.e. class ids below `L = ClassTable::NumCids()` at snapshot time (persisted in
+`ObjectStore::shorebird_base_num_cids`). This is sound because
+
+- patches cannot change the superclass, interfaces or type parameters of an
+  existing class, nor its fields or the signature of its functions (function
+  bodies change through `Function::entry_point`); and
+- every class a patch adds gets a class id `>= L`.
+
+So, for class ids `< L`, the subtype relation and the set of subclasses are exactly
+those of the snapshot. Code compiled over the base hierarchy:
+
+- **Type testing stubs** (`as`, argument checks), and the inline fast path in front
+  of their call at assignability checks, use class id ranges for open
+  classes too. A stub only treats a range hit as success; every other class id
+  (including the ids of patch-added classes) takes the slow type test, which sees
+  the patch's classes. `is` tests against an open class with a single range are
+  lowered to `cid in range ? true : (cid < L ? false : generic test)`.
+- **Calls** whose receiver static type is a class with a closed set of concrete
+  base subclasses are devirtualized over those subclasses (a direct call, an
+  inlined implicit field accessor, or a polymorphic call with per-class targets).
+  Receivers of patch-added classes miss the guard below and take the generic
+  switchable call, which resolves the patch's overrides. Calls to patched function
+  bodies still go through `Function::entry_point`.
+
+### The per-class override guard
+
+One hole remains: a patch may add an instance member (method, getter, setter,
+operator, or a field and its implicit accessors) to an **existing** class that
+overrides an inherited member. That is accepted (it is not a rejection and not a
+global switch): the runtime keeps a byte array indexed by class id
+(`IsolateGroup::shorebird_overridden_cids`, reachable from
+`Thread::shorebird_overridden_cids_`; zero-initialized memory of which only the
+touched pages are resident). The byte of every base class id is 1 and that of
+patch-added class ids stays 0. Each devirtualized site first tests
+`flag[cid(receiver)] != 0` (one load and compare) and takes the generic path
+otherwise. When a structural patch is installed and an added member of an
+existing class `C` overrides an inherited one (resolved in `C`'s superclass
+chain, including mixins), the byte is cleared for `C` and for every base subclass
+of `C` that does not itself declare that member (subclasses that do keep their
+fast path). Setting `DART_TRACE_SHOREBIRD_STRUCTURAL_PATCHING=1` or
+`--trace_shorebird_structural_patching` prints the classes cleared per member.
+
+User-visible behavior: **patches that add overrides to existing classes are
+allowed**, are dispatched correctly, and those classes (and the subclasses
+inheriting the override) fall back to generic dispatch at call sites compiled in
+the base snapshot (a small slowdown there). Unrelated classes keep the fast
+path. `dart2bytecode --patch-base ... --structural-patch-report=<file>` writes
+the instance members the patch adds to existing classes as JSON so tools can
+warn that devirtualized calls on those classes fall back.
+
+Limits: a polymorphic call over more than `--max_exhaustive_polymorphic_checks`
+classes with different targets stays generic. Existing optimizations that depend
+on the exact class of a receiver (allocation sites) use the same guard, and the
+`==`-to-identity rewrite is not applied to patchable classes. Range analysis,
+`has_dynamically_extendable_classes()` and the monomorphic checked entries are
+unchanged. `tools/test_aot_structural_closed_world.py` covers added subclasses,
+added implementors through `is`/`as`, patched devirtualized bodies, added
+overrides (method, getter, operator, field getter, added field) on existing
+classes and on a superclass with base subclasses, and that only the expected
+classes are cleared.
+
 ## Retention rule for `dart:` libraries
 
 Patches cannot add code to `dart:` libraries and can never name their private
@@ -172,6 +240,9 @@ Build matching `dart`, `gen_snapshot`, and `dart_engine_aot_shared` with
   and a real isolate round trip with cycles, backreferences, and sender isolation.
   It checks profile/boot/repeated-install guards and failure-group teardown with
   a clean baseline in the same VM process.
+- `tools/test_aot_structural_closed_world.py --build-dir <build>` checks the
+  closed-world devirtualization, base-world type checks and the override guard
+  (see "Closed world over the base class hierarchy").
 - `tools/test_aot_patchable_direct_calls.py --build-dir <build>` checks that AOT
   callers of patchable static, constructor, tear-off and `super` targets call
   through `Function::entry_point` (no `CallStaticFunction` stub) and observe the

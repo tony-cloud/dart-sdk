@@ -3,6 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert' show JsonEncoder;
 import 'dart:io' as io show exitCode, File, IOSink;
 
 import 'package:args/args.dart' show ArgParser, ArgResults;
@@ -73,6 +74,15 @@ final ArgParser _argParser = ArgParser(allowTrailingOptions: true)
   ..addOption(
     'patch-base',
     help: 'Full release bytecode baseline; emit a compatible bytecode delta',
+  )
+  ..addOption(
+    'structural-patch-report',
+    help:
+        'With --patch-base and --shorebird-structural-patching: write a JSON '
+        'report of the instance members the patch adds to existing classes. '
+        'Such a member that overrides an inherited one makes calls on that '
+        'class (and its subclasses) use the generic dispatch path instead of '
+        'the devirtualized one compiled into the base snapshot.',
   )
   ..addFlag(
     'shorebird-structural-patching',
@@ -275,6 +285,7 @@ Future<int> runCompilerWithCommandLineArguments(List<String> arguments) async {
     allowDynamicCallsInDynamicModules: allowDynamicCallsInDynamicModules,
     dynamicCallsSelectorAllowList: dynamicCallsSelectorAllowList,
     patchBase: options['patch-base'],
+    structuralPatchReport: options['structural-patch-report'],
     shorebirdStructuralPatching: options['shorebird-structural-patching'],
     shorebirdFullReplacement: options['shorebird-full-replacement'],
     shorebirdHostAbi: options['shorebird-host-abi'],
@@ -311,6 +322,7 @@ Future<int> runCompilerWithOptions({
   bool allowDynamicCallsInDynamicModules = false,
   List<String> dynamicCallsSelectorAllowList = const [],
   String? patchBase,
+  String? structuralPatchReport,
   bool shorebirdStructuralPatching = false,
   bool shorebirdFullReplacement = false,
   String? shorebirdHostAbi,
@@ -481,6 +493,7 @@ Future<int> runCompilerWithOptions({
     final output = io.File(outputFileName);
     try {
       final updated = await output.readAsBytes();
+      final addedExistingClassMembers = <String>[];
       final delta = shorebirdFullReplacement
           ? createShorebirdFullReplacement(
               updated,
@@ -500,8 +513,16 @@ Future<int> runCompilerWithOptions({
               await io.File(patchBase!).readAsBytes(),
               updated,
               shorebirdStructuralPatching: shorebirdStructuralPatching,
+              addedExistingClassMembers: addedExistingClassMembers,
             );
       await output.writeAsBytes(delta);
+      if (structuralPatchReport != null) {
+        await io.File(structuralPatchReport).writeAsString(
+          const JsonEncoder.withIndent('  ').convert({
+            'addedInstanceMembersOnExistingClasses': addedExistingClassMembers,
+          }),
+        );
+      }
     } on FormatException catch (error) {
       await output.delete();
       printMessage(error.message);

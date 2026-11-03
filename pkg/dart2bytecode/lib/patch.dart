@@ -15,10 +15,19 @@ import 'exceptions.dart';
 /// package identities and source URIs. Structural patches require both inputs
 /// to use the explicit structural profile. Existing declarations cannot be
 /// removed or change their signatures, inheritance or field definitions.
+///
+/// For a structural patch, [addedExistingClassMembers] (if given) receives
+/// `<library>::<class>::<member>` for every instance field and function the
+/// patch adds to an existing class. The patch is accepted either way; when such
+/// a member overrides an inherited one, the runtime marks the class and its
+/// subclasses so that calls on them use the generic dispatch path instead of
+/// the devirtualized one compiled into the base snapshot (the program stays
+/// correct, those calls just lose the base snapshot's call-site optimization).
 Uint8List createBytecodePatch(
   List<int> baseline,
   List<int> updated, {
   bool shorebirdStructuralPatching = false,
+  List<String>? addedExistingClassMembers,
 }) {
   final base = Component.read(BufferedReader(LinkReader(), baseline));
   final patch = Component.read(BufferedReader(LinkReader(), updated));
@@ -139,6 +148,11 @@ Uint8List createBytecodePatch(
             );
           }
           addedFields.add(field);
+          if ((flags & FieldDeclaration.isStaticFlag) == 0) {
+            addedExistingClassMembers?.add(
+              _memberName(library, cls, field.name),
+            );
+          }
           keepCode(field.initializerCode);
           continue;
         }
@@ -163,6 +177,11 @@ Uint8List createBytecodePatch(
         if (old == null) {
           changedFunctions.add(function);
           keepCode(function.code);
+          if ((function.flags & FunctionDeclaration.isStaticFlag) == 0) {
+            addedExistingClassMembers?.add(
+              _memberName(library, cls, function.name),
+            );
+          }
           continue;
         }
         _require(
@@ -214,6 +233,14 @@ Uint8List createBytecodePatch(
   patch.write(writer);
   return writer.getContents();
 }
+
+String _memberName(
+  LibraryDeclaration library,
+  ClassDeclaration cls,
+  Object? member,
+) => '${library.importUri}::${_plain(cls.name)}::${_plain(member)}';
+
+String _plain(Object? name) => name.toString().replaceAll("'", '');
 
 void _requireStructuralProfile(LibraryDeclaration library) {
   if ((library.flags & LibraryDeclaration.shorebirdStructuralPatchingFlag) ==

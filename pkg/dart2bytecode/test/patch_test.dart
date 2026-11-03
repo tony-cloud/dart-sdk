@@ -190,6 +190,40 @@ void main() { print(changed()); }
     );
   });
 
+  test('structural patches report members added to existing classes', () async {
+    final baseline = await compile('''
+class Base { int f() => 1; }
+class Sub extends Base { int g() => 2; }
+void main() {}
+''', structural: true);
+    final updated = await compile('''
+class Base { int f() => 1; }
+class Sub extends Base {
+  int g() => 2;
+  int f() => 3;
+  int get h => 4;
+  int extra = 5;
+  static int total = 6;
+  static void helper() {}
+}
+class New { int f() => 7; }
+void main() {}
+''', structural: true);
+    final added = <String>[];
+    createBytecodePatch(
+      baseline,
+      updated,
+      shorebirdStructuralPatching: true,
+      addedExistingClassMembers: added,
+    );
+    // Overrides are accepted and recorded; statics and new classes are not.
+    expect(added.map((entry) => entry.split('::').skip(1).join('::')).toSet(), {
+      'Sub::extra',
+      'Sub::f',
+      'Sub::get:h',
+    });
+  });
+
   test(
     'new helpers retain forward, recursive and tear-off references',
     () async {
