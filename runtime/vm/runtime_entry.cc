@@ -2534,20 +2534,7 @@ DEFINE_RUNTIME_ENTRY(ReThrow, 3) {
 // Patches static call in optimized code with the target's entry point.
 // Compiles target if necessary.
 DEFINE_RUNTIME_ENTRY(PatchStaticCall, 0) {
-#if defined(DART_PRECOMPILED_RUNTIME) && defined(DART_SHOREBIRD_INTERPRETER)
-  DartFrameIterator iterator(thread,
-                             StackFrameIterator::kNoCrossThreadIteration);
-  StackFrame* caller_frame = iterator.NextFrame();
-  ASSERT(caller_frame != nullptr);
-  ASSERT(!caller_frame->is_interpreted());
-  const Code& caller_code = Code::Handle(zone, caller_frame->LookupDartCode());
-  ASSERT(!caller_code.IsNull());
-  const Function& target_function = Function::Handle(
-      zone, caller_code.GetStaticCallTargetFunctionAt(caller_frame->pc()));
-  RELEASE_ASSERT(!target_function.IsNull());
-  ASSERT(target_function.HasCode());
-  arguments.SetReturn(target_function);
-#elif !defined(DART_PRECOMPILED_RUNTIME)
+#if !defined(DART_PRECOMPILED_RUNTIME)
   DartFrameIterator iterator(thread,
                              StackFrameIterator::kNoCrossThreadIteration);
   StackFrame* caller_frame = iterator.NextFrame();

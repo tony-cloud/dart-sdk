@@ -2595,11 +2595,6 @@ class CodeSerializationCluster : public SerializationCluster {
 #if defined(DART_PRECOMPILER)
       auto const calls_array = code->untag()->static_calls_target_table_;
       if (calls_array != Array::null()) {
-#if defined(DART_SHOREBIRD_INTERPRETER)
-        // Keep the full table in Shorebird interpreter snapshots. Runtime
-        // static-call resolution needs Function targets, not just Code reachability.
-        s->Push(calls_array);
-#else
         // Some Code entries in the static calls target table may only be
         // accessible via here, so push the Code objects.
         array_ = calls_array;
@@ -2621,7 +2616,6 @@ class CodeSerializationCluster : public SerializationCluster {
               s->Push(destination);
           }
         }
-#endif  // defined(DART_SHOREBIRD_INTERPRETER)
       }
 #else
       UNREACHABLE();
@@ -2928,10 +2922,6 @@ class CodeSerializationCluster : public SerializationCluster {
     if (kind == Snapshot::kFullJIT) {
       WriteField(code, deopt_info_array_);
       WriteField(code, static_calls_target_table_);
-#if defined(DART_SHOREBIRD_INTERPRETER)
-    } else if (kind == Snapshot::kFullAOT) {
-      WriteField(code, static_calls_target_table_);
-#endif
     }
 
 #if !defined(PRODUCT)
@@ -3060,8 +3050,11 @@ class CodeDeserializationCluster : public DeserializationCluster {
           static_cast<ArrayPtr>(d->ReadRef());
 #elif defined(DART_SHOREBIRD_INTERPRETER)
       ASSERT(d->kind() == Snapshot::kFullAOT);
-      code->untag()->static_calls_target_table_ =
-          static_cast<ArrayPtr>(d->ReadRef());
+      // AOT call sites to patchable functions load the Function from the
+      // object pool, so the table is neither written nor consulted. The slot
+      // stays in the precompiled layout only to keep the generated offsets
+      // table (runtime_offsets_extracted.h) valid.
+      code->untag()->static_calls_target_table_ = Array::null();
 #endif  // !DART_PRECOMPILED_RUNTIME
 
 #if !defined(PRODUCT)

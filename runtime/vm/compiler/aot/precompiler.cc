@@ -2207,19 +2207,6 @@ void Precompiler::ReplaceFunctionStaticCallEntries() {
 
         ASSERT(view.Get<Code::kSCallTableCodeOrTypeTarget>() == Code::null());
         ASSERT(target_function_.HasCode());
-#if defined(DART_SHOREBIRD_INTERPRETER)
-        if (target_function_.IsShorebirdPatchable()) {
-          // Keep patchable functions as Function targets. Runtime dispatch will
-          // read the current Function::entry_point, which can point at
-          // InterpretCall after a bytecode patch is loaded.
-          if (FLAG_trace_precompiler) {
-            THR_Print("Kept patchable static call entry for %s in \"%s\"\n",
-                      target_function_.ToFullyQualifiedCString(),
-                      code.ToCString());
-          }
-          continue;
-        }
-#endif
         target_code_ = target_function_.CurrentCode();
         ASSERT(!target_code_.IsStubCode());
         view.Set<Code::kSCallTableCodeOrTypeTarget>(target_code_);

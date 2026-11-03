@@ -407,6 +407,25 @@ void FlowGraphCompiler::GenerateStaticDartCall(intptr_t deopt_id,
     AddPcRelativeCallTarget(target, entry_kind);
     EmitCallsiteMetadata(source, deopt_id, kind, locs,
                          pending_deoptimization_env_);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  } else if (FLAG_precompiled_mode && target.IsShorebirdPatchable()) {
+    // Shorebird patchable targets can have their Function::entry_point swapped
+    // at runtime (AttachBytecode points it at the InterpretCall stub, which
+    // needs the Function in FUNCTION_REG and the arguments descriptor in
+    // ARGS_DESC_REG). Call through the Function directly instead of going
+    // through the CallStaticFunction stub and a PatchStaticCall runtime call.
+    // The checked entry is used on purpose: use_unchecked_entry is already
+    // cleared for patchable targets in the flow graph builder and an
+    // interpreted replacement is only entered through Function::entry_point.
+    // No static call table entry is needed: the call is not patched and the
+    // Function is kept alive through the object pool.
+    ASSERT(is_optimizing());
+    __ LoadObject(FUNCTION_REG, target);
+    __ Call(compiler::FieldAddress(
+        FUNCTION_REG, compiler::target::Function::entry_point_offset()));
+    EmitCallsiteMetadata(source, deopt_id, kind, locs,
+                         pending_deoptimization_env_);
+#endif  // defined(DART_SHOREBIRD_INTERPRETER)
   } else {
     // Call sites to the same target can share object pool entries. These
     // call sites are never patched for breakpoints: the function is deoptimized

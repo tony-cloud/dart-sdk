@@ -55,6 +55,24 @@ and canonicalization contract. New native/external functions and replacement
 `dart:` libraries are rejected. These limitations mean this additive profile is
 not full structural replacement parity.
 
+## Call path to patchable functions
+
+Calls from AOT code to a patchable function (static calls, constructors,
+factories, tear-off forwarders and `super` calls) load the target `Function`
+from the object pool into `FUNCTION_REG`, keep the arguments descriptor in
+`ARGS_DESC_REG`, and call through `Function::entry_point`. Installing a bytecode
+patch only swaps that entry point to the `InterpretCall` stub (which needs the
+`Function` and the arguments descriptor), so no executable AOT code is rewritten
+and no runtime call is made per call. The checked entry point is always used:
+the flow graph builder already clears unchecked-entry use for patchable targets.
+`tools/test_aot_patchable_direct_calls.py` checks the generated code (no
+`CallStaticFunction` stub references) and the AOT/patched results.
+
+The annotator only keeps the host hierarchy open where a patch could use it:
+private, `final` and `sealed` classes in `dart:` libraries (and their members)
+are marked callable but not extendable or overridable, because patches cannot add
+code to `dart:` libraries and the language forbids those subclasses.
+
 ## Installation and failure boundary
 
 The existing `Dart_ReloadBytecodePatch` ABI recognizes the profile marker. Install
@@ -94,6 +112,10 @@ Build matching `dart`, `gen_snapshot`, and `dart_engine_aot_shared` with
   and a real isolate round trip with cycles, backreferences, and sender isolation.
   It checks profile/boot/repeated-install guards and failure-group teardown with
   a clean baseline in the same VM process.
+- `tools/test_aot_patchable_direct_calls.py --build-dir <build>` checks that AOT
+  callers of patchable static, constructor, tear-off and `super` targets call
+  through `Function::entry_point` (no `CallStaticFunction` stub) and observe the
+  AOT bodies before, and the interpreted replacements after, a patch.
 - `tools/test_aot_bytecode_patch.py --build-dir <build>` covers ordinary body-only
   dispatch, rejected patch preservation, FFI callbacks, constructor retention,
   and ConstFinder compatibility.

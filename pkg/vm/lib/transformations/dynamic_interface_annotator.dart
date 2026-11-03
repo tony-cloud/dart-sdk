@@ -25,6 +25,13 @@ import 'package:vm/modular/transformations/pragma.dart'
 /// Include private declarations: a patch can add code in an existing library.
 /// These annotations constrain compiler assumptions; Dart language restrictions
 /// on extending classes and overriding members still apply to patch sources.
+///
+/// Patches cannot add code to `dart:` libraries, and the language forbids
+/// extending, implementing or mixing in a private, `final` or `sealed` class
+/// from another library. Such `dart:` classes (and their members) are therefore
+/// only marked callable: leaving them closed lets the compiler keep its
+/// closed-world assumptions about their hierarchy (for example devirtualizing
+/// calls on core types). Public open `dart:` classes and interfaces stay open.
 void annotateShorebirdStructuralComponent(
   Component component,
   CoreTypes coreTypes,
@@ -40,13 +47,19 @@ void annotateShorebirdStructuralComponent(
     dynModuleDynamicallyCallablePragmaName,
   );
   for (final library in component.libraries) {
+    final isCoreLibrary = library.importUri.isScheme('dart');
     for (final cls in library.classes) {
-      cls.addAnnotation(ConstantExpression(extendable));
+      final canBeSubtyped = !(isCoreLibrary && _isClosedToPatches(cls));
+      if (canBeSubtyped) {
+        cls.addAnnotation(ConstantExpression(extendable));
+      }
       cls.addAnnotation(ConstantExpression(callable));
       for (final member in cls.members) {
         member.addAnnotation(ConstantExpression(callable));
         if (member.isInstanceMember) {
-          member.addAnnotation(ConstantExpression(overridable));
+          if (canBeSubtyped) {
+            member.addAnnotation(ConstantExpression(overridable));
+          }
           member.addAnnotation(ConstantExpression(dynamicCallable));
         }
       }
@@ -56,6 +69,10 @@ void annotateShorebirdStructuralComponent(
     }
   }
 }
+
+/// Whether code outside the declaring `dart:` library can never subtype [cls].
+bool _isClosedToPatches(Class cls) =>
+    cls.name.startsWith('_') || cls.isFinal || cls.isSealed;
 
 void annotateComponent(
   String dynamicInterfaceSpecification,
