@@ -1505,6 +1505,19 @@ JoinEntryInstr* AotCallSpecializer::BuildDiamond(InstanceCallInstr* call,
   false_target->LinkTo(false_goto);
   false_target->set_last_instruction(false_goto);
 
+  // Branches, gotos and block entries of the diamond must carry an environment
+  // like the ones the graph builder creates: passes that run before
+  // EliminateEnvironments (e.g. EliminateRedundantBranches, which replaces a
+  // branch by a goto that inherits the branch's deopt target for LICM) require
+  // it. Copy the call's, as the polymorphic inliner does for its decision graph.
+  ASSERT(call->env() != nullptr);
+  branch->InheritDeoptTarget(Z, call);
+  true_target->InheritDeoptTarget(Z, call);
+  false_target->InheritDeoptTarget(Z, call);
+  join->InheritDeoptTarget(Z, call);
+  true_goto->InheritDeoptTarget(Z, call);
+  false_goto->InheritDeoptTarget(Z, call);
+
   // Attach the new definition first: its environment is a copy of the call's.
   Definition* other = (true_def == call) ? false_def : true_def;
   GotoInstr* other_goto = (true_def == call) ? false_goto : true_goto;
