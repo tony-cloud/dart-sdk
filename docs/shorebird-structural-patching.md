@@ -137,6 +137,109 @@ overrides (method, getter, operator, field getter, added field) on existing
 classes and on a superclass with base subclasses, and that only the expected
 classes are cleared.
 
+## Inlining patchable functions behind a per-function guard
+
+Every application function is patchable, so the AOT inliner historically
+refused all of them: a patch can replace the body of any of them. That left
+small getters, methods and constructors as calls through `Function::entry_point`
+on every hot path (a `Chip.weight` getter loop ran 3.9x slower than a TFA build
+on device even after the closed-world work). `gen_snapshot
+--shorebird-structural-patching` therefore inlines small patchable callees, but
+each inlined copy runs only while the callee is unpatched:
+
+    if (Function(f).ic_data_array_or_bytecode == null) {
+      <inlined body of f>
+    } else {
+      f(<the arguments of the original call>)   // through f's entry point
+    }
+
+`Function::AttachBytecode` is the only way a patch changes which code a base
+function runs, and it is also what sets `ic_data_array_or_bytecode` (to the
+bytecode; it is null for every function of an AOT snapshot). So the guard is
+exactly "this function has not been patched", and the code above is equivalent
+to the non-inlined call it replaces: before a patch the inlined copy is the AOT
+body; after one the fallback is the original direct call through
+`Function::entry_point` into the interpreter.
+
+Design choices and the alternative considered:
+
+- **No inlining dependency map.** The alternative was to inline without a guard
+  and record callee to inlining callers in the release (a gen_snapshot side file
+  or an ObjectStore table), have the patch tool add the bytecode of every caller
+  that inlined a changed callee (transitively) and the runtime verify that every
+  such caller is patched. It was not chosen: changing a small hot callee would
+  move all of its callers (and their whole bodies, not just the inlined part) to
+  the interpreter, which is 20x to 45x slower on device, the patch would grow with
+  the fan-out (getters such as `Widget.key` have hundreds of inlining callers),
+  and the map would have to travel through gen_snapshot, the release artifacts,
+  the CLI and the patch tool and still be checked by the runtime. The guard costs
+  a load, a compare and a branch per inlined call site (the load is hoisted out
+  of loops) and the code size of the retained fallback call, needs no new release
+  artifact, keeps patches unchanged, and only the functions a patch changes run
+  interpreted, as in upstream Shorebird.
+- **What is guarded.** Regular methods, getters, setters, operators, static
+  functions, factories and generative constructors of application libraries
+  (the `kRegularFunction`, `kGetterFunction`, `kSetterFunction` and
+  `kConstructor` kinds built from a kernel body). Implicit field accessors
+  (`kImplicitGetter`, `kImplicitSetter`, `kImplicitStaticGetter`) are inlined
+  without a guard: patches cannot change existing fields, and the bytecode a
+  patch attaches to accessors is only for fields it adds (new `Function`
+  objects that no AOT code calls). Not inlined (as before): local closures and
+  implicit closure (tear-off) functions, generic functions, native, external
+  and FFI functions, async/sync*/async* functions, dispatchers and forwarders.
+- **Arguments of the fallback.** The fallback passes exactly the arguments of the
+  original call (same positional count, same named arguments in the same order),
+  not the inliner's expansion with the callee's default values: default values
+  are part of the patchable body (a patch may change them) and the interpreted
+  body must apply its own.
+- **Stack traces.** The fallback call is attributed to the original call site
+  (inlining id and token position of the call), so a stack trace through a
+  patched callee shows the same frames as the non-inlined call.
+- **Transitive inlining.** Each inlined copy carries its own guard. If `A`
+  inlines `B` which inlines `C`, and a patch changes only `C`, `A` keeps `B`'s
+  inlined body and only the inner guard falls back to calling `C` interpreted.
+  No caller is ever re-routed because of a callee.
+- **Closed-world guard and polymorphic inlining.** The function guard sits inside
+  the per-class guard of a devirtualized call: an added override fails the class
+  guard (generic dispatch), a patched body fails the function guard. Every
+  variant inlined by the polymorphic inliner gets its own function guard.
+- **Hoisting.** The guard load is treated as immutable so that the optimizer can
+  hoist it out of loops and share it between inlined copies of the same callee.
+  That is sound because bytecode is attached only before the isolate becomes
+  runnable: structural patches already require that, and the runtime rejects any
+  bytecode patch of a structural snapshot once its isolate is runnable.
+- **Constructors.** The optimizer forwarded a load of a final field of a fresh
+  allocation from its single initializing store, assuming by construction that
+  the store dominates the load. With a guarded constructor the store is only in
+  the inlined arm (the fallback arm initializes the field inside the call), so
+  the forwarding now requires the store to dominate the load.
+- **Heuristics.** The usual inlining heuristics apply to the callee's own body:
+  the guard (load, branch, fallback call) is not counted. In the structural
+  profile, two kinds of instructions that the closed-world work introduced are
+  also not counted as call sites (they are counted as code): the generic
+  fallback call of a per-class guarded devirtualization (only taken for classes
+  a patch adds or overrides in) and a static call of an implicit field accessor
+  (inlined into a field load or store). Otherwise a getter such as
+  `int dot(Point o) => x * o.x + y * o.y` counted four call sites and was never
+  inlined. On top of that a patchable callee is only inlined when its optimized
+  body has at most `--shorebird_patchable_inlining_size_threshold` instructions
+  (default 50; the general limit is 160), which bounds the code size of the
+  inlined copies that keep a fallback call. `--no-shorebird_inline_patchable`
+  restores the previous behavior (no patchable callee is inlined).
+- **Patch size and runtime work.** None: patches and the installer are
+  unchanged. `--trace_shorebird_patchable_inlining` (gen_snapshot) prints every
+  guarded inlining decision.
+
+`tools/test_aot_structural_inlining.py` checks with
+`--trace_shorebird_patchable_inlining` that the callees under test are inlined
+in the base snapshot, that the unpatched snapshot computes the base results, and
+that a patch changing only the callees is observed at every former inline site:
+static function, getter in a loop (hoisted guard), setter, operator,
+constructor, instance method, both targets of a polymorphic call, omitted
+optional positional and named arguments whose default value the patch changes,
+a callee inlined into an inlined callee (changing the inner or the middle
+function), and a stack trace through a patched inlined callee.
+
 ## Retention rule for `dart:` libraries
 
 Patches cannot add code to `dart:` libraries and can never name their private

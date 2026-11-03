@@ -63,6 +63,7 @@ class ParsedFunction;
   V(FinalizerEntry, UntaggedFinalizerEntry, finalizer, FinalizerBase, WEAK)    \
   V(FinalizerEntry, UntaggedFinalizerEntry, next, FinalizerEntry, VAR)         \
   V(Function, UntaggedFunction, signature, FunctionType, FINAL)                \
+  V(Function, UntaggedFunction, ic_data_array_or_bytecode, Dynamic, FINAL)     \
   V(Context, UntaggedContext, parent, Context, FINAL)                          \
   V(FunctionType, UntaggedFunctionType, type_parameters, TypeParameters,       \
     FINAL)                                                                     \

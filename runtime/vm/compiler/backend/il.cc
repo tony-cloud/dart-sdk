@@ -3098,11 +3098,14 @@ Definition* LoadFieldInstr::Canonicalize(FlowGraph* flow_graph) {
       }
     }
 
-    // If we find an initializing store then it *must* by construction
-    // dominate the load.
+    // An initializing store normally dominates the load by construction
+    // (the inlined constructor body follows the allocation). With Shorebird
+    // guarded inlining of a patchable constructor, the inlined body is only
+    // one arm of a diamond whose other arm calls the constructor, which also
+    // initializes the field: forward only from a dominating store.
     if (initializing_store != nullptr &&
-        initializing_store->is_initialization()) {
-      ASSERT(IsDominatedBy(initializing_store));
+        initializing_store->is_initialization() &&
+        IsDominatedBy(initializing_store)) {
       return initializing_store->value()->definition();
     }
   }

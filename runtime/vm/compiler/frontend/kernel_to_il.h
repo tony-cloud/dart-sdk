@@ -75,7 +75,35 @@ class FlowGraphBuilder : public BaseFlowGraphBuilder {
     RelinkToOsrEntry(this, info);
   }
 
+  // Shorebird structural patching: the shape of the call whose callee graph
+  // this builder builds for guarded inlining of a patchable function (see
+  // "Inlining patchable functions behind a per-function guard" in
+  // docs/shorebird-structural-patching.md).
+  struct ShorebirdPatchGuard {
+    // Position of the inlined call (the fallback call is attributed to it).
+    TokenPosition call_position;
+    // Number of arguments of the call, including the receiver and named
+    // arguments, excluding the type arguments vector.
+    intptr_t argument_count;
+    // Names of the named arguments, in call order (or null).
+    const Array* argument_names;
+  };
+
+  // Builds the callee graph so that it starts with
+  //   if (function has bytecode) return function(<arguments of the call>);
+  // where the call is marked as a Shorebird patch fallback.
+  void set_shorebird_patch_guard(const ShorebirdPatchGuard* guard) {
+    shorebird_patch_guard_ = guard;
+  }
+
  private:
+  // See set_shorebird_patch_guard. Returns the fragment that tests the guard
+  // and returns the fallback call's result; it continues (is open) on the
+  // path where the function has not been patched.
+  Fragment BuildShorebirdPatchGuard();
+
+  const ShorebirdPatchGuard* shorebird_patch_guard_ = nullptr;
+
   BlockEntryInstr* BuildPrologue(BlockEntryInstr* normal_entry,
                                  PrologueInfo* prologue_info);
 

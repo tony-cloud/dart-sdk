@@ -876,6 +876,15 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraphOfFunction(
                             regular_prologue, type_args_handling);
 
   Fragment function(instruction_cursor);
+  if (B->shorebird_patch_guard_ != nullptr) {
+    // Guarded inlining of a patchable function: the inlined body runs only
+    // while the function has no bytecode; otherwise the original call is made.
+    // Calls to patchable functions always use the checked entry, so a single
+    // entry suffices.
+    ASSERT(instruction_cursor == normal_entry);
+    function += B->BuildShorebirdPatchGuard();
+    extra_entry_point_style = UncheckedEntryPointStyle::kNone;
+  }
   FunctionEntryInstr* extra_entry = nullptr;
   switch (extra_entry_point_style) {
     case UncheckedEntryPointStyle::kNone: {

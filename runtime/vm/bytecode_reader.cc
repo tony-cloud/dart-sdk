@@ -3611,6 +3611,20 @@ void BytecodeReaderHelper::ReadStructuralBytecodePatch(intptr_t num_libraries) {
 
 intptr_t BytecodeReaderHelper::ReadLoadedLibraryBytecodePatch(
     intptr_t num_libraries) {
+#if defined(DART_SHOREBIRD_INTERPRETER) && defined(DART_PRECOMPILED_RUNTIME)
+  {
+    // A structural snapshot inlines patchable functions behind guards that the
+    // compiled code may evaluate once (e.g. hoisted out of a loop), relying on
+    // bytecode being attached only before the isolate runs.
+    const auto& root = Library::Handle(Z, IG->object_store()->root_library());
+    if (!root.IsNull() && root.is_shorebird_structural_patchable() &&
+        thread_->isolate()->is_runnable()) {
+      RejectBytecodePatch(
+          "Bytecode patches of a structural snapshot must be installed before "
+          "the isolate is runnable.");
+    }
+  }
+#endif
   staged_patches_ = &GrowableObjectArray::Handle(Z, GrowableObjectArray::New());
   intptr_t installed_functions = 0;
   auto& library = Library::Handle(Z);

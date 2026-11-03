@@ -213,6 +213,7 @@
   FIELD(Function, data_offset)                                                 \
   RANGE(Function, entry_point_offset, CodeEntryKind, CodeEntryKind::kNormal,   \
         CodeEntryKind::kUnchecked, [](CodeEntryKind value) { return true; })   \
+  FIELD(Function, ic_data_array_or_bytecode_offset)                            \
   FIELD(Function, kind_tag_offset)                                             \
   FIELD(Function, signature_offset)                                            \
   FIELD(FutureOr, type_arguments_offset)                                       \

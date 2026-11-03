@@ -143,6 +143,7 @@ base class VMOffsets {
   int get Field_kind_bits_offset => throw 'Unknown';
   int get Function_code_offset => throw 'Unknown';
   int get Function_data_offset => throw 'Unknown';
+  int get Function_ic_data_array_or_bytecode_offset => throw 'Unknown';
   int get Function_kind_tag_offset => throw 'Unknown';
   int get Function_signature_offset => throw 'Unknown';
   int get FutureOr_type_arguments_offset => throw 'Unknown';
@@ -892,6 +893,8 @@ final class Arm64VMOffsets extends VMOffsets {
   int get Function_data_offset => 0x30;
   @override
   List<int> get Function_entry_point_offset => [0x8, 0x10];
+  @override
+  int get Function_ic_data_array_or_bytecode_offset => 0x38;
   @override
   int get Function_kind_tag_offset => 0x68;
   @override
@@ -1915,6 +1918,8 @@ final class Arm64ProductVMOffsets extends VMOffsets {
   int get Function_data_offset => 0x30;
   @override
   List<int> get Function_entry_point_offset => [0x8, 0x10];
+  @override
+  int get Function_ic_data_array_or_bytecode_offset => 0x38;
   @override
   int get Function_kind_tag_offset => 0x68;
   @override

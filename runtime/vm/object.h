@@ -3232,6 +3232,11 @@ class Function : public Object {
 #endif
 
   static intptr_t code_offset() { return OFFSET_OF(UntaggedFunction, code_); }
+  // Null until a bytecode patch attaches bytecode (Shorebird: tested by the
+  // guard of inlined patchable functions).
+  static intptr_t ic_data_array_or_bytecode_offset() {
+    return OFFSET_OF(UntaggedFunction, ic_data_array_or_bytecode_);
+  }
 
   uword entry_point() const { return EntryPointOf(ptr()); }
   static uword EntryPointOf(const FunctionPtr function) {

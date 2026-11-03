@@ -2523,6 +2523,55 @@ void FlowGraphBuilder::BuildArgumentTypeChecks(
   }
 }
 
+Fragment FlowGraphBuilder::BuildShorebirdPatchGuard() {
+  ASSERT(shorebird_patch_guard_ != nullptr);
+  ASSERT(IsInlining());
+  const Function& function = parsed_function_->function();
+  ASSERT(!function.IsGeneric() && !function.IsClosureFunction());
+  const ShorebirdPatchGuard& guard = *shorebird_patch_guard_;
+  const Array& names = *guard.argument_names;
+  const intptr_t num_named = names.IsNull() ? 0 : names.Length();
+  const intptr_t num_positional = guard.argument_count - num_named;
+  ASSERT(num_positional >= function.num_fixed_parameters());
+  ASSERT(num_positional <= function.num_fixed_parameters() +
+                               function.NumOptionalPositionalParameters());
+
+  TargetEntryInstr* unpatched;
+  TargetEntryInstr* patched;
+  Fragment test;
+  test += Constant(function);
+  test += LoadNativeField(Slot::Function_ic_data_array_or_bytecode());
+  test += BranchIfNull(&unpatched, &patched);
+
+  // The original call: the supplied arguments only, so that the patched body
+  // applies its own default values to omitted optional parameters.
+  Fragment fallback(patched);
+  for (intptr_t i = 0; i < num_positional; ++i) {
+    fallback += LoadLocal(parsed_function_->RawParameterVariable(i));
+  }
+  String& name = String::Handle(Z);
+  for (intptr_t i = 0; i < num_named; ++i) {
+    name ^= names.At(i);
+    intptr_t index = -1;
+    for (intptr_t j = function.num_fixed_parameters(),
+                  n = function.NumParameters();
+         j < n; ++j) {
+      if (function.ParameterNameAt(j) == name.ptr()) {
+        index = j;
+        break;
+      }
+    }
+    RELEASE_ASSERT(index >= 0);
+    fallback += LoadLocal(parsed_function_->RawParameterVariable(index));
+  }
+  fallback += StaticCall(guard.call_position, function, guard.argument_count,
+                         names, ICData::kNoRebind);
+  fallback.current->AsStaticCall()->mark_as_shorebird_patch_fallback();
+  fallback += Return(TokenPosition::kNoSource, /*omit_result_type_check=*/true);
+
+  return Fragment(test.entry, unpatched);
+}
+
 BlockEntryInstr* FlowGraphBuilder::BuildPrologue(BlockEntryInstr* normal_entry,
                                                  PrologueInfo* prologue_info) {
   const bool compiling_for_osr = IsCompiledForOsr();

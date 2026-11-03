@@ -80,6 +80,23 @@ DEFINE_FLAG(int,
             "Max. number of inlined calls per depth");
 DEFINE_FLAG(bool, print_inlining_tree, false, "Print inlining tree");
 
+#if defined(DART_SHOREBIRD_INTERPRETER)
+DEFINE_FLAG(bool,
+            shorebird_inline_patchable,
+            true,
+            "With --shorebird-structural-patching, inline small patchable "
+            "functions behind a guard that calls them once a patch attached "
+            "bytecode to them.");
+DEFINE_FLAG(int,
+            shorebird_patchable_inlining_size_threshold,
+            50,
+            "Do not inline patchable callees larger than threshold.");
+DEFINE_FLAG(bool,
+            trace_shorebird_patchable_inlining,
+            false,
+            "Print guarded inlinings of patchable functions.");
+#endif
+
 DECLARE_FLAG(int, max_deoptimization_counter_threshold);
 DECLARE_FLAG(bool, print_flow_graph);
 DECLARE_FLAG(bool, print_flow_graph_optimized);
@@ -148,6 +165,51 @@ class CalleeGraphValidator : public AllStatic {
 
 // Helper to collect information about a callee graph when considering it for
 // inlining.
+// Shorebird structural patching: instructions that the guard of an inlined
+// patchable function adds to its callee graph (see
+// FlowGraphBuilder::BuildShorebirdPatchGuard): the load of the function's
+// bytecode, the branch on it and the fallback call that replaces the inlined
+// call. The inlining heuristics ignore them so that they judge the callee's
+// own body as for any other function.
+static bool IsShorebirdPatchGuardInstruction(Instruction* instr) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  auto is_guard_load = [](Definition* def) {
+    auto load = def->AsLoadField();
+    return load != nullptr &&
+           load->slot().IsIdentical(Slot::Function_ic_data_array_or_bytecode());
+  };
+  if (auto call = instr->AsStaticCall()) {
+    return call->is_shorebird_patch_fallback();
+  }
+  if (auto load = instr->AsLoadField()) {
+    return is_guard_load(load);
+  }
+  if (auto branch = instr->AsBranch()) {
+    auto compare = branch->condition()->AsStrictCompare();
+    return compare != nullptr &&
+           (is_guard_load(compare->left()->definition()) ||
+            is_guard_load(compare->right()->definition()));
+  }
+#endif
+  return false;
+}
+
+// Shorebird structural patching: a static call of an implicit instance field
+// accessor of an application class (the devirtualized form of a field access
+// over the base class hierarchy). The inliner always inlines it into a field
+// load or store, so the heuristics count it as such rather than as a call.
+static bool IsShorebirdFieldAccessorCall(Instruction* instr) {
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  if (!FLAG_shorebird_structural_patching) return false;
+  auto call = instr->AsStaticCall();
+  return call != nullptr && call->function().IsImplicitGetterOrSetter() &&
+         !call->function().is_static() &&
+         call->function().IsShorebirdPatchable();
+#else
+  return false;
+#endif
+}
+
 class GraphInfoCollector : public ValueObject {
  public:
   GraphInfoCollector() : call_site_count_(0), instruction_count_(0) {}
@@ -171,6 +233,7 @@ class GraphInfoCollector : public ValueObject {
         if (current->IsRedefinition()) {
           continue;
         }
+        if (IsShorebirdPatchGuardInstruction(current)) continue;
         // UnboxedConstant is often folded into the indexing
         // instructions (similar to Constant instructions which
         // belong to initial definitions and not counted here).
@@ -189,6 +252,13 @@ class GraphInfoCollector : public ValueObject {
           ASSERT(!current->HasMoveArguments());
           instruction_count_ += current->ArgumentCount();
         }
+        if (auto call = current->AsInstanceCall()) {
+          // The generic path of a devirtualization over the Shorebird base
+          // class hierarchy only runs for classes a patch adds or overrides
+          // in: it is code, but not a call site of the (base) program.
+          if (call->is_base_world_guard_fallback()) continue;
+        }
+        if (IsShorebirdFieldAccessorCall(current)) continue;
         if (current->IsInstanceCall() || current->IsStaticCall() ||
             current->IsClosureCall() || current->IsDispatchTableCall()) {
           ++call_site_count_;
@@ -609,6 +679,9 @@ class CallSites : public ValueObject {
                         intptr_t depth,
                         intptr_t nesting_depth,
                         GrowableArray<InlinedInfo>* inlined_info) {
+    if (static_call->is_shorebird_patch_fallback()) {
+      return false;
+    }
     const Function& function = static_call->function();
     if (!inline_only_profitable_methods || function.IsRecognized() ||
         function.IsDispatcherOrImplicitAccessor() ||
@@ -669,7 +742,19 @@ static bool IsSmallLeafOrReduction(int inlining_depth,
       Instruction* current = it.Current();
       if (current->IsDartReturn()) continue;
       ASSERT(!current->IsNativeReturn());
+      if (IsShorebirdPatchGuardInstruction(current)) continue;
       ++instruction_count;
+      if (IsShorebirdFieldAccessorCall(current)) {
+        // A field load or store once inlined (see GraphInfoCollector).
+        continue;
+      }
+      if (current->IsInstanceCall() &&
+          current->AsInstanceCall()->is_base_world_guard_fallback()) {
+        // Only taken for classes a Shorebird patch adds or overrides in (see
+        // GraphInfoCollector): code, but not a call of the base program.
+        instruction_count += current->ArgumentCount();
+        continue;
+      }
       if (current->IsInstanceCall() || current->IsPolymorphicInstanceCall() ||
           current->IsClosureCall()) {
         return false;
@@ -1156,20 +1241,120 @@ class CallSiteInliner : public ValueObject {
     return success;
   }
 
+#if defined(DART_SHOREBIRD_INTERPRETER)
+  // Shorebird structural patching: whether the patchable [function] can be
+  // inlined behind a guard (see "Inlining patchable functions behind a
+  // per-function guard" in docs/shorebird-structural-patching.md). The guard
+  // is only sound for the structural profile, where bytecode is attached
+  // before the isolate runs (so its load can be hoisted).
+  //
+  // Implicit field accessors are inlined without a guard: patches cannot
+  // change existing fields, and bytecode for accessors is only created for
+  // fields a patch adds (new Function objects that no AOT code calls).
+  enum class ShorebirdInlining { kRefuse, kGuarded, kUnguarded };
+  ShorebirdInlining ClassifyShorebirdPatchable(const Function& function,
+                                               InlinedCallData* call_data) {
+    const char* reason = nullptr;
+    bool guarded = true;
+    if (!FLAG_shorebird_structural_patching ||
+        !FLAG_shorebird_inline_patchable) {
+      reason = "not enabled";
+    } else if (call_data->call->IsStaticCall() &&
+               call_data->call->AsStaticCall()->is_shorebird_patch_fallback()) {
+      reason = "fallback call";
+    } else {
+      switch (function.kind()) {
+        case UntaggedFunction::kRegularFunction:
+        case UntaggedFunction::kGetterFunction:
+        case UntaggedFunction::kSetterFunction:
+        case UntaggedFunction::kConstructor:
+          break;
+        case UntaggedFunction::kImplicitGetter:
+        case UntaggedFunction::kImplicitSetter:
+        case UntaggedFunction::kImplicitStaticGetter:
+          guarded = false;
+          break;
+        default:
+          reason = "function kind";
+          break;
+      }
+      if (reason != nullptr) {
+        // Not inlinable kind.
+      } else if (function.IsGeneric()) {
+        reason = "generic";
+      } else if (function.is_native() || function.is_external() ||
+                 function.is_ffi_native() ||
+                 function.IsFfiCallbackTrampoline()) {
+        reason = "native";
+      } else if (function.IsSuspendableFunction() ||
+                 function.IsSyncGenerator()) {
+        reason = "suspendable";
+      } else if (kernel::FlowGraphBuilder::IsRecognizedMethodForFlowGraph(
+                     function)) {
+        reason = "recognized";
+      } else if (call_data->first_arg_index != 0) {
+        reason = "type arguments";
+      }
+    }
+    if (reason != nullptr) {
+      TRACE_INLINING(
+          THR_Print("     Bailout: Shorebird patchable (%s)\n", reason));
+      PRINT_INLINING_TREE("Shorebird patchable", &call_data->caller, &function,
+                          call_data->call);
+      return ShorebirdInlining::kRefuse;
+    }
+    return guarded ? ShorebirdInlining::kGuarded
+                   : ShorebirdInlining::kUnguarded;
+  }
+
+  // The fallback call of a guarded inlining replaces [call]: give it the
+  // inlining id (and, from the builder, the position) of [call] so that stack
+  // traces through a patched callee are those of the non-inlined call.
+  static void AttributeShorebirdFallbackToCallSite(FlowGraph* callee_graph,
+                                                   Definition* call) {
+    const Function& function = callee_graph->function();
+    for (BlockIterator block_it = callee_graph->postorder_iterator();
+         !block_it.Done(); block_it.Advance()) {
+      for (ForwardInstructionIterator it(block_it.Current()); !it.Done();
+           it.Advance()) {
+        StaticCallInstr* fallback = it.Current()->AsStaticCall();
+        if (fallback != nullptr && fallback->is_shorebird_patch_fallback() &&
+            fallback->function().ptr() == function.ptr()) {
+          fallback->set_inlining_id(call->inlining_id());
+        }
+      }
+    }
+  }
+#endif
+
   bool TryInliningImpl(const Function& function,
                        const Array& argument_names,
                        InlinedCallData* call_data,
                        bool stricter_heuristic) {
-#if defined(DART_SHOREBIRD_INTERPRETER)
-    if (CompilerState::Current().is_aot() && function.IsShorebirdPatchable()) {
-      return false;
-    }
-#endif
     if (trace_inlining()) {
       String& name = String::Handle(function.QualifiedUserVisibleName());
       THR_Print("  => %s (deopt count %d)\n", name.ToCString(),
                 function.deoptimization_counter());
     }
+
+#if defined(DART_SHOREBIRD_INTERPRETER)
+    // A patch can replace the body of a patchable function (attaching
+    // bytecode to it). Such a function is only inlined behind a guard that
+    // makes the original call once the function has bytecode (see
+    // ClassifyShorebirdPatchable).
+    bool shorebird_guard = false;
+    if (CompilerState::Current().is_aot() && function.IsShorebirdPatchable()) {
+      switch (ClassifyShorebirdPatchable(function, call_data)) {
+        case ShorebirdInlining::kRefuse:
+          return false;
+        case ShorebirdInlining::kGuarded:
+          shorebird_guard = true;
+          break;
+        case ShorebirdInlining::kUnguarded:
+          break;
+      }
+    }
+#endif
 
     // Abort if the inlinable bit on the function is low.
     if (!function.CanBeInlined()) {
@@ -1321,6 +1506,16 @@ class CallSiteInliner : public ValueObject {
             /*optimizing=*/true, Compiler::kNoOSRDeoptId,
             caller_graph_->max_block_id() + 1,
             entry_kind == Code::EntryKind::kUnchecked, &call_data->caller);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+        // The shape of the original call, before AdjustForOptionalParameters
+        // below fills in the default values of omitted parameters.
+        kernel::FlowGraphBuilder::ShorebirdPatchGuard patch_guard = {
+            call->token_pos(), arguments->length() - call_data->first_arg_index,
+            &argument_names};
+        if (shorebird_guard) {
+          builder.set_shorebird_patch_guard(&patch_guard);
+        }
+#endif
         {
           COMPILER_TIMINGS_TIMER_SCOPE(thread(), BuildGraph);
           callee_graph = builder.BuildGraph();
@@ -1468,6 +1663,15 @@ class CallSiteInliner : public ValueObject {
           COMPILER_TIMINGS_TIMER_SCOPE(thread(), MakeInliningDecision);
           InliningDecision decision =
               ShouldWeInline(function, instruction_count, call_site_count);
+#if defined(DART_SHOREBIRD_INTERPRETER)
+          if (decision.value && shorebird_guard &&
+              (instruction_count >
+               FLAG_shorebird_patchable_inlining_size_threshold) &&
+              !inliner_->AlwaysInline(function)) {
+            decision = InliningDecision::No(
+                "--shorebird-patchable-inlining-size-threshold");
+          }
+#endif
           if (!decision.value) {
             // If size is larger than all thresholds, don't consider it again.
 
@@ -1562,6 +1766,18 @@ class CallSiteInliner : public ValueObject {
                                      call_data->call->source()),
               call_data->call->GetBlock()->try_index());
         }
+#if defined(DART_SHOREBIRD_INTERPRETER)
+        if (shorebird_guard) {
+          AttributeShorebirdFallbackToCallSite(callee_graph, call);
+          if (FLAG_trace_shorebird_patchable_inlining) {
+            THR_Print(
+                "Shorebird guarded inlining: %s into %s (size %" Pd ")\n",
+                function.QualifiedUserVisibleNameCString(),
+                caller_graph_->function().QualifiedUserVisibleNameCString(),
+                instruction_count);
+          }
+        }
+#endif
         TRACE_INLINING(THR_Print("     Success\n"));
         TRACE_INLINING(THR_Print(
             "       with reason %s, code size %" Pd ", call sites: %" Pd "\n",

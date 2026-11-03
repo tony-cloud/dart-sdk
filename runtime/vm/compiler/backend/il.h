@@ -5622,7 +5622,8 @@ class StaticCallInstr : public TemplateDartCall<0> {
         result_type_(nullptr),
         is_known_list_constructor_(false),
         entry_kind_(Code::EntryKind::kNormal),
-        identity_(AliasIdentity::Unknown()) {
+        identity_(AliasIdentity::Unknown()),
+        is_shorebird_patch_fallback_(false) {
     DEBUG_ASSERT(function.IsNotTemporaryScopedHandle());
     ASSERT(!function.IsNull());
   }
@@ -5647,7 +5648,8 @@ class StaticCallInstr : public TemplateDartCall<0> {
         result_type_(nullptr),
         is_known_list_constructor_(false),
         entry_kind_(Code::EntryKind::kNormal),
-        identity_(AliasIdentity::Unknown()) {
+        identity_(AliasIdentity::Unknown()),
+        is_shorebird_patch_fallback_(false) {
     DEBUG_ASSERT(function.IsNotTemporaryScopedHandle());
     ASSERT(!function.IsNull());
   }
@@ -5743,6 +5745,16 @@ class StaticCallInstr : public TemplateDartCall<0> {
 
   bool IsRecognizedFactory() const { return is_known_list_constructor(); }
 
+  // Shorebird structural patching: this call is the fallback of an inlined
+  // patchable function (taken once a patch attached bytecode to it). It must
+  // stay a call: the inliner leaves it alone.
+  bool is_shorebird_patch_fallback() const {
+    return is_shorebird_patch_fallback_;
+  }
+  void mark_as_shorebird_patch_fallback() {
+    is_shorebird_patch_fallback_ = true;
+  }
+
   virtual intptr_t ArgumentsSize() const;
 
   virtual Representation RequiredInputRepresentation(intptr_t idx) const;
@@ -5769,7 +5781,8 @@ class StaticCallInstr : public TemplateDartCall<0> {
   /* 'True' for recognized list constructors. */                               \
   F(bool, is_known_list_constructor_)                                          \
   F(Code::EntryKind, entry_kind_)                                              \
-  F(AliasIdentity, identity_)
+  F(AliasIdentity, identity_)                                                  \
+  F(bool, is_shorebird_patch_fallback_)
 
   DECLARE_INSTRUCTION_SERIALIZABLE_FIELDS(StaticCallInstr,
                                           TemplateDartCall,
