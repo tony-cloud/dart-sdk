@@ -216,6 +216,15 @@ CodePtr TypeTestingStubGenerator::OptimizedCodeForType(
 #if !defined(TARGET_ARCH_IA32)
 #if !defined(DART_PRECOMPILED_RUNTIME)
 
+// Shorebird structural patching: a type testing stub treats a class id range
+// hit as success and sends every other class id to the slow type test, so the
+// ranges only need to describe the classes of the base snapshot. Patches cannot
+// change the supertypes of existing classes and the classes they add have class
+// ids above the snapshot's, which miss the ranges and reach the slow path.
+static bool UseBaseWorldRanges() {
+  return FLAG_shorebird_structural_patching;
+}
+
 static CodePtr RetryCompilationWithFarBranches(
     Thread* thread,
     std::function<CodePtr(compiler::Assembler&)> fun) {
@@ -248,9 +257,9 @@ CodePtr TypeTestingStubGenerator::BuildCodeForType(const AbstractType& type) {
   HierarchyInfo* hi = thread->hierarchy_info();
   ASSERT(hi != nullptr);
 
-  if (!hi->CanUseSubtypeRangeCheckFor(type) &&
-      !hi->CanUseGenericSubtypeRangeCheckFor(type) &&
-      !hi->CanUseRecordSubtypeRangeCheckFor(type)) {
+  if (!hi->CanUseSubtypeRangeCheckFor(type, UseBaseWorldRanges()) &&
+      !hi->CanUseGenericSubtypeRangeCheckFor(type, UseBaseWorldRanges()) &&
+      !hi->CanUseRecordSubtypeRangeCheckFor(type, UseBaseWorldRanges())) {
     return Code::null();
   }
 
@@ -362,7 +371,7 @@ void TypeTestingStubGenerator::BuildOptimizedTypeTestStubFastCases(
   }
 
   // Check the cid ranges which are a subtype of [type].
-  if (hi->CanUseSubtypeRangeCheckFor(type)) {
+  if (hi->CanUseSubtypeRangeCheckFor(type, UseBaseWorldRanges())) {
     const Class& type_class = Class::Handle(type.type_class());
     ASSERT(!type_class.IsNull());
     const CidRangeVector& ranges = hi->SubtypeRangesForClass(
@@ -386,12 +395,13 @@ void TypeTestingStubGenerator::BuildOptimizedTypeTestStubFastCases(
     __ Bind(&is_subtype);
     __ Ret();
     __ Bind(&is_not_subtype);
-  } else if (hi->CanUseGenericSubtypeRangeCheckFor(type)) {
+  } else if (hi->CanUseGenericSubtypeRangeCheckFor(type,
+                                                   UseBaseWorldRanges())) {
     const Class& type_class = Class::Handle(type.type_class());
     ASSERT(!type_class.IsNull());
     BuildOptimizedSubclassRangeCheckWithTypeArguments(
         assembler, hi, Type::Cast(type), type_class);
-  } else if (hi->CanUseRecordSubtypeRangeCheckFor(type)) {
+  } else if (hi->CanUseRecordSubtypeRangeCheckFor(type, UseBaseWorldRanges())) {
     BuildOptimizedRecordSubtypeRangeCheck(assembler, hi,
                                           RecordType::Cast(type));
   } else {
@@ -607,7 +617,7 @@ void TypeTestingStubGenerator::
         HierarchyInfo* hi,
         const Type& type,
         const Class& type_class) {
-  ASSERT(hi->CanUseGenericSubtypeRangeCheckFor(type));
+  ASSERT(hi->CanUseGenericSubtypeRangeCheckFor(type, UseBaseWorldRanges()));
   compiler::Label check_failed, load_succeeded;
   // a) First we perform subtype cid-range checks and load the instance type
   // arguments based on which check succeeded.
@@ -670,7 +680,7 @@ void TypeTestingStubGenerator::
 
       type_arg = ta.TypeAt(i);
       ASSERT(type_arg.IsTypeParameter() ||
-             hi->CanUseSubtypeRangeCheckFor(type_arg));
+             hi->CanUseSubtypeRangeCheckFor(type_arg, UseBaseWorldRanges()));
 
       if (type_arg.IsTypeParameter()) {
         BuildOptimizedTypeParameterArgumentValueCheck(
@@ -724,7 +734,7 @@ void TypeTestingStubGenerator::BuildOptimizedRecordSubtypeRangeCheck(
     compiler::Label next;
 
     field_type = type.FieldTypeAt(i);
-    ASSERT(hi->CanUseSubtypeRangeCheckFor(field_type));
+    ASSERT(hi->CanUseSubtypeRangeCheckFor(field_type, UseBaseWorldRanges()));
 
     __ LoadCompressedFieldFromOffset(TTSInternalRegs::kScratchReg,
                                      TypeTestABI::kInstanceReg,

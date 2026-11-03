@@ -1190,6 +1190,7 @@ class Thread : public AllStatic {
   static word dart_stream_offset();
   static word service_extension_stream_offset();
   static word thread_locals_offset();
+  static word shorebird_overridden_cids_offset();
   static word predefined_symbols_address_offset();
   static word optimize_entry_offset();
   static word deoptimize_entry_offset();

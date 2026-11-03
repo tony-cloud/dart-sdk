@@ -587,6 +587,10 @@ class Thread : public ThreadState, public IntrusiveDListEntry<Thread> {
     return OFFSET_OF(Thread, field_table_values_);
   }
 
+  static intptr_t shorebird_overridden_cids_offset() {
+    return OFFSET_OF(Thread, shorebird_overridden_cids_);
+  }
+
   static intptr_t shared_field_table_values_offset() {
     return OFFSET_OF(Thread, shared_field_table_values_);
   }
@@ -1536,6 +1540,9 @@ class Thread : public ThreadState, public IntrusiveDListEntry<Thread> {
   TimelineStream* const dart_stream_;
   StreamInfo* const service_extension_stream_;
   ArrayPtr thread_locals_ = nullptr;
+  // Structural patching: one byte per class id, non-zero while devirtualized
+  // calls may be used for that class. See IsolateGroup.
+  uint8_t* shorebird_overridden_cids_ = nullptr;
 
   // ---- End accessed from generated code. ----
 

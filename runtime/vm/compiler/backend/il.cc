@@ -302,7 +302,8 @@ void HierarchyInfo::BuildRangesFor(ClassTable* table,
   }
 }
 
-bool HierarchyInfo::CanUseSubtypeRangeCheckFor(const AbstractType& type) {
+bool HierarchyInfo::CanUseSubtypeRangeCheckFor(const AbstractType& type,
+                                               bool base_world) {
   ASSERT(type.IsFinalized());
 
   if (!type.IsInstantiated() || !type.IsType()) {
@@ -323,7 +324,7 @@ bool HierarchyInfo::CanUseSubtypeRangeCheckFor(const AbstractType& type) {
 
   Zone* zone = thread()->zone();
   const Class& type_class = Class::Handle(zone, type.type_class());
-  if (type_class.has_dynamically_extendable_subtypes()) {
+  if (!base_world && type_class.has_dynamically_extendable_subtypes()) {
     return false;
   }
 
@@ -345,7 +346,8 @@ bool HierarchyInfo::CanUseSubtypeRangeCheckFor(const AbstractType& type) {
 }
 
 bool HierarchyInfo::CanUseGenericSubtypeRangeCheckFor(
-    const AbstractType& type) {
+    const AbstractType& type,
+    bool base_world) {
   ASSERT(type.IsFinalized());
 
   if (!type.IsType() || type.IsDartFunctionType()) {
@@ -371,7 +373,7 @@ bool HierarchyInfo::CanUseGenericSubtypeRangeCheckFor(
   Zone* zone = thread()->zone();
   const Class& type_class = Class::Handle(zone, type.type_class());
   const intptr_t num_type_parameters = type_class.NumTypeParameters();
-  if (type_class.has_dynamically_extendable_subtypes()) {
+  if (!base_world && type_class.has_dynamically_extendable_subtypes()) {
     return false;
   }
 
@@ -388,7 +390,8 @@ bool HierarchyInfo::CanUseGenericSubtypeRangeCheckFor(
   AbstractType& type_arg = AbstractType::Handle(zone);
   for (intptr_t i = 0; i < num_type_parameters; ++i) {
     type_arg = ta.TypeAt(i);
-    if (!CanUseSubtypeRangeCheckFor(type_arg) && !type_arg.IsTypeParameter()) {
+    if (!CanUseSubtypeRangeCheckFor(type_arg, base_world) &&
+        !type_arg.IsTypeParameter()) {
       return false;
     }
   }
@@ -396,7 +399,8 @@ bool HierarchyInfo::CanUseGenericSubtypeRangeCheckFor(
   return true;
 }
 
-bool HierarchyInfo::CanUseRecordSubtypeRangeCheckFor(const AbstractType& type) {
+bool HierarchyInfo::CanUseRecordSubtypeRangeCheckFor(const AbstractType& type,
+                                                     bool base_world) {
   ASSERT(type.IsFinalized());
   if (!type.IsRecordType()) {
     return false;
@@ -406,7 +410,7 @@ bool HierarchyInfo::CanUseRecordSubtypeRangeCheckFor(const AbstractType& type) {
   auto& field_type = AbstractType::Handle(zone);
   for (intptr_t i = 0, n = rec.NumFields(); i < n; ++i) {
     field_type = rec.FieldTypeAt(i);
-    if (!CanUseSubtypeRangeCheckFor(field_type)) {
+    if (!CanUseSubtypeRangeCheckFor(field_type, base_world)) {
       return false;
     }
   }
@@ -415,7 +419,8 @@ bool HierarchyInfo::CanUseRecordSubtypeRangeCheckFor(const AbstractType& type) {
 
 bool HierarchyInfo::InstanceOfHasClassRange(const AbstractType& type,
                                             intptr_t* lower_limit,
-                                            intptr_t* upper_limit) {
+                                            intptr_t* upper_limit,
+                                            bool base_world) {
   ASSERT(CompilerState::Current().is_aot());
   if (Instance::NullIsAssignableTo(type)) {
     // 'is' test for nullable types should accept null cid in addition to the
@@ -423,7 +428,7 @@ bool HierarchyInfo::InstanceOfHasClassRange(const AbstractType& type,
     // include kNullCid.
     return false;
   }
-  if (CanUseSubtypeRangeCheckFor(type)) {
+  if (CanUseSubtypeRangeCheckFor(type, base_world)) {
     const Class& type_class =
         Class::Handle(thread()->zone(), type.type_class());
     const CidRangeVector& ranges =

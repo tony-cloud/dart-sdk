@@ -215,6 +215,8 @@ class ObjectPointerVisitor;
   RW(GrowableObjectArray, ffi_callback_code)                                   \
   ARW_AR(Class, typed_data_class)                                              \
   RW(TypedData, shorebird_replacement_descriptor)                              \
+  /* ClassTable::NumCids() when gen_snapshot built a structural snapshot. */  \
+  RW(Smi, shorebird_base_num_cids)                                             \
   RW(Array, ffi_callback_functions)                                            \
   /* Roots for JIT/AOT snapshots are up until here (see to_snapshot() below)*/ \
   RW(Array, dispatch_table_code_entries)                                       \

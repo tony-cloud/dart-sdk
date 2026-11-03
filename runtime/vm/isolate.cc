@@ -391,7 +391,23 @@ IsolateGroup::IsolateGroup(std::shared_ptr<IsolateGroupSource> source,
                            Dart_IsolateFlags api_flags)
     : IsolateGroup(source, embedder_data, nullptr, api_flags) {}
 
+void IsolateGroup::InitializeShorebirdOverriddenCids() {
+  if (shorebird_overridden_cids_ != nullptr) return;
+  const SmiPtr base = object_store()->shorebird_base_num_cids();
+  if (base == Smi::null()) return;
+  const intptr_t base_num_cids = Smi::Value(base);
+  const intptr_t size = kClassIdTagMax + 1;
+  RELEASE_ASSERT(base_num_cids > 0 && base_num_cids <= size);
+  // Zero pages stay untouched: only the base prefix is written.
+  uint8_t* flags = reinterpret_cast<uint8_t*>(calloc(size, 1));
+  RELEASE_ASSERT(flags != nullptr);
+  memset(flags, 1, base_num_cids);
+  shorebird_overridden_cids_ = flags;
+}
+
 IsolateGroup::~IsolateGroup() {
+  free(shorebird_overridden_cids_);
+  shorebird_overridden_cids_ = nullptr;
 #if defined(DART_SUPPORT_RELOAD)
   RELEASE_ASSERT(group_reload_context_ == nullptr);
   RELEASE_ASSERT(program_reload_context_ == nullptr);

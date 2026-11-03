@@ -86,9 +86,10 @@ bool CHA::HasSubclasses(intptr_t cid) const {
 }
 
 bool CHA::ConcreteSubclasses(const Class& cls,
-                             GrowableArray<intptr_t>* class_ids) {
+                             GrowableArray<intptr_t>* class_ids,
+                             bool base_world) {
   if (cls.IsObjectClass()) return false;
-  if (cls.has_dynamically_extendable_subtypes()) return false;
+  if (!base_world && cls.has_dynamically_extendable_subtypes()) return false;
 
   if (!cls.is_abstract()) {
     class_ids->Add(cls.id());
@@ -105,7 +106,7 @@ bool CHA::ConcreteSubclasses(const Class& cls,
   Class& subclass = Class::Handle();
   for (intptr_t i = 0; i < direct_subclasses.Length(); i++) {
     subclass ^= direct_subclasses.At(i);
-    if (!ConcreteSubclasses(subclass, class_ids)) {
+    if (!ConcreteSubclasses(subclass, class_ids, base_world)) {
       return false;
     }
   }

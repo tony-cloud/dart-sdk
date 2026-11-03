@@ -280,6 +280,7 @@ class ParsedFunction;
   V(Thread, _, api_top_scope, false, VAR)                                      \
   V(Thread, _, isolate, false, FINAL)                                          \
   V(Thread, _, isolate_group, false, FINAL)                                    \
+  V(Thread, _, shorebird_overridden_cids, false, FINAL)                        \
   V(Thread, _, dart_stream, false, FINAL)                                      \
   V(Thread, _, service_extension_stream, false, FINAL)
 

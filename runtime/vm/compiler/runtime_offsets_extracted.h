@@ -459,6 +459,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x468;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x46c;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x470;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x12c;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -1278,6 +1280,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x8c8;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x8d0;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x8d8;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -2093,6 +2097,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x460;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x464;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x468;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x12c;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -2911,6 +2917,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x910;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x918;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x920;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -3733,6 +3741,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x8d0;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x8d8;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x8e0;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x260;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -4552,6 +4562,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x918;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x920;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x928;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x260;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -5368,6 +5380,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x490;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x494;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x498;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x12c;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -6188,6 +6202,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x900;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x908;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x910;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -6997,6 +7013,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x468;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x46c;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x470;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x12c;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -7808,6 +7826,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x8c8;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x8d0;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x8d8;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -8615,6 +8635,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x460;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x464;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x468;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x12c;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -9425,6 +9447,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x910;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x918;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x920;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -10239,6 +10263,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x8d0;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x8d8;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x8e0;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x260;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -11050,6 +11076,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x918;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x920;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x928;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x260;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -11858,6 +11886,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x490;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x494;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x498;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x12c;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -12670,6 +12700,8 @@ static constexpr dart::compiler::target::word
     Thread_service_extension_stream_offset = 0x900;
 static constexpr dart::compiler::target::word Thread_thread_locals_offset =
     0x908;
+static constexpr dart::compiler::target::word Thread_shorebird_overridden_cids_offset =
+    0x910;
 static constexpr dart::compiler::target::word Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word Thread_optimize_stub_offset =
@@ -13527,6 +13559,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x468;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x46c;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x470;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x12c;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -14439,6 +14473,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x8c8;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x8d0;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x8d8;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -15358,6 +15394,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x910;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x918;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x920;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -16273,6 +16311,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x8d0;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x8d8;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x8e0;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x260;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -17188,6 +17228,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x918;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x920;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x928;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x260;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -18097,6 +18139,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x490;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x494;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x498;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x12c;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -19010,6 +19054,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x900;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x908;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x910;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -19909,6 +19955,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x468;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x46c;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x470;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x12c;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -20812,6 +20860,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x8c8;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x8d0;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x8d8;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -21722,6 +21772,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x910;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x918;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x920;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -22628,6 +22680,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x8d0;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x8d8;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x8e0;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x260;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -23534,6 +23588,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x918;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x920;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x928;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x260;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -24434,6 +24490,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x490;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x494;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x498;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x12c;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =
@@ -25338,6 +25396,8 @@ static constexpr dart::compiler::target::word
     AOT_Thread_service_extension_stream_offset = 0x900;
 static constexpr dart::compiler::target::word AOT_Thread_thread_locals_offset =
     0x908;
+static constexpr dart::compiler::target::word AOT_Thread_shorebird_overridden_cids_offset =
+    0x910;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_entry_offset =
     0x258;
 static constexpr dart::compiler::target::word AOT_Thread_optimize_stub_offset =

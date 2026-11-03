@@ -30,6 +30,8 @@ class AotCallSpecializer : public CallSpecializer {
                                                   const AbstractType& type);
 
  private:
+  void VisitInstanceCallImpl(InstanceCallInstr* instr);
+
   // Attempt to build ICData for call using propagated class-ids.
   virtual bool TryCreateICData(InstanceCallInstr* call);
 
@@ -84,9 +86,54 @@ class AotCallSpecializer : public CallSpecializer {
 
   virtual void ReplaceInstanceCallsWithDispatchTableCalls();
 
+  // Shorebird structural patching: the base class hierarchy (class ids below
+  // the count recorded in ObjectStore::shorebird_base_num_cids) is closed:
+  // patches cannot change the supertypes of existing classes and every class
+  // they add gets a larger class id. The only way a patch can invalidate a
+  // devirtualization over the base hierarchy is by adding an overriding member
+  // to an existing class, which the runtime records per class id in
+  // IsolateGroup::shorebird_overridden_cids(). Calls devirtualized over the
+  // base world are therefore wrapped in a guard that tests that array.
+  static bool IsStructuralClosedWorld();
+
+  // Whether devirtualizing calls whose receiver can have one of the base
+  // classes in [class_ids] needs the runtime guard, i.e. whether any of them
+  // can be patched.
+  bool NeedsBaseWorldGuard(const GrowableArray<intptr_t>& class_ids);
+
+  // Builds, in front of [call], a branch on [condition] and splits the block
+  // so that the code is
+  //   if (condition) { [call] } else { generic copy of [call] }
+  // [call] stays in the true branch so it can be replaced in place afterwards.
+  // Returns the join block holding the rest of the original block, or nullptr
+  // if the guard cannot be built. Callers must then call
+  // current_iterator()->ContinueAfter(join).
+  JoinEntryInstr* SplitForBaseWorldGuard(InstanceCallInstr* call);
+
+  // Builds the diamond `if (condition) true_def else false_def` in place of
+  // [call], which must be one of [true_def] and [false_def]; the other one is
+  // an unattached definition. Returns the join block holding the rest of the
+  // original block.
+  JoinEntryInstr* BuildDiamond(InstanceCallInstr* call,
+                               ConditionInstr* condition,
+                               Definition* true_def,
+                               Definition* false_def);
+
+  // Returns the comparison "overridden-cids[cid(receiver)] != 0" inserting its
+  // operands before [call].
+  ConditionInstr* BuildBaseWorldGuardCondition(InstanceCallInstr* call);
+
+  // Lowers an `is` test against an extendable class over base class id ranges.
+  bool TryReplaceInstanceOfWithBaseWorldRangeCheck(InstanceCallInstr* call,
+                                                   const AbstractType& type);
+
   Precompiler* precompiler_;
 
   bool has_unique_no_such_method_;
+
+  // Join block created by the base world guard of the instance call currently
+  // being visited; see VisitInstanceCall.
+  JoinEntryInstr* guard_join_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(AotCallSpecializer);
 };

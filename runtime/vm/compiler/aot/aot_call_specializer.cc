@@ -748,6 +748,23 @@ bool AotCallSpecializer::TryOptimizeDoubleOperation(TemplateDartCall<0>* instr,
 // TODO(dartbug.com/30635) Evaluate how much this can be shared with
 // JitCallSpecializer.
 void AotCallSpecializer::VisitInstanceCall(InstanceCallInstr* instr) {
+  JoinEntryInstr* const saved_guard_join = guard_join_;
+  guard_join_ = nullptr;
+  VisitInstanceCallImpl(instr);
+  if (guard_join_ != nullptr) {
+    // The visited call was wrapped in a guard diamond: the rest of its block
+    // moved to the join block, continue visiting there.
+    current_iterator()->ContinueAfter(guard_join_);
+  }
+  guard_join_ = saved_guard_join;
+}
+
+void AotCallSpecializer::VisitInstanceCallImpl(InstanceCallInstr* instr) {
+  if (instr->is_base_world_guard_fallback()) {
+    // The generic path of a guarded devirtualization.
+    return;
+  }
+
   // Type test is special as it always gets converted into inlined code.
   const Token::Kind op_kind = instr->token_kind();
   if (Token::IsTypeTestOperator(op_kind)) {
@@ -804,6 +821,15 @@ void AotCallSpecializer::VisitInstanceCall(InstanceCallInstr* instr) {
     const Function& function =
         Function::Handle(Z, instr->ResolveForReceiverClass(receiver_class));
     if (!function.IsNull()) {
+      if (IsStructuralClosedWorld()) {
+        // A structural patch can add an override to this exact class.
+        GrowableArray<intptr_t> exact_cid(1);
+        exact_cid.Add(receiver_cid);
+        if (NeedsBaseWorldGuard(exact_cid)) {
+          guard_join_ = SplitForBaseWorldGuard(instr);
+          if (guard_join_ == nullptr) return;
+        }
+      }
       const Function& target = Function::ZoneHandle(Z, function.ptr());
       StaticCallInstr* call =
           StaticCallInstr::FromCall(Z, instr, target, instr->CallCount());
@@ -830,6 +856,14 @@ void AotCallSpecializer::VisitInstanceCall(InstanceCallInstr* instr) {
         if (target.recognized_kind() != MethodRecognizer::kObjectEquals) {
           is_object_eq = false;
           break;
+        }
+        if (IsStructuralClosedWorld()) {
+          // A structural patch can add an `operator ==` to a patchable class.
+          const Library& cls_lib = Library::Handle(Z, cls.library());
+          if (!cls_lib.IsNull() && cls_lib.is_shorebird_structural_patchable()) {
+            is_object_eq = false;
+            break;
+          }
         }
       }
       if (is_object_eq) {
@@ -868,8 +902,12 @@ void AotCallSpecializer::VisitInstanceCall(InstanceCallInstr* instr) {
   }
   if (!receiver_class.IsNull()) {
     GrowableArray<intptr_t> class_ids(6);
-    if (thread()->compiler_state().cha().ConcreteSubclasses(receiver_class,
-                                                            &class_ids)) {
+    // In the structural profile every class is open to patch-added subclasses,
+    // which always get class ids above the base hierarchy. Devirtualize over
+    // the base hierarchy only and guard against patch-added overrides.
+    const bool base_world = IsStructuralClosedWorld();
+    if (thread()->compiler_state().cha().ConcreteSubclasses(
+            receiver_class, &class_ids, base_world)) {
       // First check if all subclasses end up calling the same method.
       // If this is the case we will replace instance call with a direct
       // static call.
@@ -922,6 +960,17 @@ void AotCallSpecializer::VisitInstanceCall(InstanceCallInstr* instr) {
         ASSERT(ic_data.ptr() != ICData::null());
         ASSERT(single_target.ptr() == Function::null());
         ic_data.AddReceiverCheck(cid, target);
+      }
+
+      const bool can_devirtualize =
+          single_target.ptr() != Function::null() ||
+          ((ic_data.ptr() != ICData::null()) && !ic_data.NumberOfChecksIs(0));
+      if (can_devirtualize && base_world && NeedsBaseWorldGuard(class_ids)) {
+        guard_join_ = SplitForBaseWorldGuard(instr);
+        if (guard_join_ == nullptr) {
+          // Cannot build the guard here: leave the call generic.
+          return;
+        }
       }
 
       if (single_target.ptr() != Function::null()) {
@@ -1113,7 +1162,7 @@ bool AotCallSpecializer::TryReplaceInstanceOfWithRangeCheck(
 
   intptr_t lower_limit, upper_limit;
   if (!hi->InstanceOfHasClassRange(type, &lower_limit, &upper_limit)) {
-    return false;
+    return TryReplaceInstanceOfWithBaseWorldRangeCheck(call, type);
   }
 
   Definition* left = call->ArgumentAt(0);
@@ -1319,6 +1368,216 @@ void AotCallSpecializer::ReplaceWithConditionalDispatchTableCall(
     phi->SetInputAt(1, new (Z) Value(call));
     call->AddInputUse(phi->InputAt(1));
   }
+}
+
+
+bool AotCallSpecializer::IsStructuralClosedWorld() {
+  return FLAG_shorebird_structural_patching;
+}
+
+bool AotCallSpecializer::NeedsBaseWorldGuard(
+    const GrowableArray<intptr_t>& class_ids) {
+  ClassTable* class_table = isolate_group()->class_table();
+  Class& cls = Class::Handle(Z);
+  Library& lib = Library::Handle(Z);
+  for (intptr_t i = 0; i < class_ids.length(); i++) {
+    cls = class_table->At(class_ids[i]);
+    lib = cls.library();
+    // Structural patches can add overriding members to classes of patchable
+    // libraries only; they cannot touch dart: classes.
+    if (lib.IsNull() || !lib.is_shorebird_structural_patchable()) continue;
+    return true;
+  }
+  return false;
+}
+
+ConditionInstr* AotCallSpecializer::BuildBaseWorldGuardCondition(
+    InstanceCallInstr* call) {
+  Definition* receiver = call->ArgumentAt(call->FirstArgIndex());
+  const bool receiver_can_be_smi =
+      call->CanReceiverBeSmiBasedOnInterfaceTarget(Z);
+  auto* load_cid = new (Z) LoadClassIdInstr(new (Z) Value(receiver),
+                                            kUnboxedUword, receiver_can_be_smi);
+  InsertBefore(call, load_cid, nullptr, FlowGraph::kValue);
+  auto* load_thread = new (Z) LoadThreadInstr();
+  InsertBefore(call, load_thread, nullptr, FlowGraph::kValue);
+  auto* load_flags = new (Z) LoadFieldInstr(
+      new (Z) Value(load_thread), Slot::Thread_shorebird_overridden_cids(),
+      InnerPointerAccess::kCannotBeInnerPointer, call->source());
+  InsertBefore(call, load_flags, nullptr, FlowGraph::kValue);
+  auto* load_flag = new (Z) LoadIndexedInstr(
+      new (Z) Value(load_flags), new (Z) Value(load_cid),
+      /*index_unboxed=*/true, /*index_scale=*/1, kExternalTypedDataUint8ArrayCid,
+      kAlignedAccess, DeoptId::kNone, call->source());
+  InsertBefore(call, load_flag, nullptr, FlowGraph::kValue);
+  const Representation rep =
+      LoadIndexedInstr::ReturnRepresentation(kExternalTypedDataUint8ArrayCid);
+  ConstantInstr* zero =
+      flow_graph()->GetConstant(Smi::Handle(Z, Smi::New(0)), rep);
+  return new (Z) EqualityCompareInstr(call->source(), Token::kNE,
+                                      new (Z) Value(load_flag),
+                                      new (Z) Value(zero), rep, DeoptId::kNone,
+                                      /*null_aware=*/false);
+}
+
+JoinEntryInstr* AotCallSpecializer::SplitForBaseWorldGuard(
+    InstanceCallInstr* call) {
+  if (current_iterator() == nullptr || current_iterator()->Current() != call ||
+      call->env() == nullptr) {
+    return nullptr;
+  }
+  ConditionInstr* condition = BuildBaseWorldGuardCondition(call);
+  InputsArray arguments(Z, call->ArgumentCount());
+  for (intptr_t i = 0; i < call->ArgumentCount(); i++) {
+    arguments.Add(call->ArgumentValueAt(i)->CopyWithType(Z));
+  }
+  InstanceCallInstr* generic = new (Z) InstanceCallInstr(
+      call->source(), call->function_name(), call->token_kind(),
+      std::move(arguments), call->type_args_len(), call->argument_names(),
+      call->checked_argument_count(),
+      thread()->compiler_state().GetNextDeoptId(), call->interface_target(),
+      call->tearoff_interface_target());
+  generic->set_ic_data(call->ic_data());
+  if (call->result_type() != nullptr) {
+    generic->SetResultType(Z, *call->result_type());
+  }
+  generic->set_has_unique_selector(call->has_unique_selector());
+  generic->set_entry_kind(call->entry_kind());
+  generic->set_receiver_is_not_smi(call->receiver_is_not_smi());
+  if (call->is_call_on_this()) generic->mark_as_call_on_this();
+  if (call->receivers_static_type() != nullptr) {
+    generic->set_receivers_static_type(call->receivers_static_type());
+  }
+  generic->mark_as_base_world_guard_fallback();
+  return BuildDiamond(call, condition, /*true_def=*/call, /*false_def=*/generic);
+}
+
+JoinEntryInstr* AotCallSpecializer::BuildDiamond(InstanceCallInstr* call,
+                                                 ConditionInstr* condition,
+                                                 Definition* true_def,
+                                                 Definition* false_def) {
+  ASSERT((true_def == call) != (false_def == call));
+  BlockEntryInstr* current_block = call->GetBlock();
+  const bool has_uses = call->HasUses();
+  const auto deopt_id = call->deopt_id();
+
+  BranchInstr* branch = new (Z) BranchInstr(condition, deopt_id);
+
+  TargetEntryInstr* true_target = new (Z) TargetEntryInstr(
+      flow_graph()->allocate_block_id(), current_block->try_index(), deopt_id);
+  *branch->true_successor_address() = true_target;
+
+  TargetEntryInstr* false_target = new (Z) TargetEntryInstr(
+      flow_graph()->allocate_block_id(), current_block->try_index(), deopt_id);
+  *branch->false_successor_address() = false_target;
+
+  JoinEntryInstr* join = new (Z) JoinEntryInstr(
+      flow_graph()->allocate_block_id(), current_block->try_index(), deopt_id);
+
+  current_block->ReplaceAsPredecessorWith(join);
+
+  for (intptr_t i = 0, n = current_block->dominated_blocks().length(); i < n;
+       ++i) {
+    BlockEntryInstr* block = current_block->dominated_blocks()[i];
+    join->AddDominatedBlock(block);
+  }
+  current_block->ClearDominatedBlocks();
+  current_block->AddDominatedBlock(join);
+  current_block->AddDominatedBlock(true_target);
+  current_block->AddDominatedBlock(false_target);
+
+  PhiInstr* phi = nullptr;
+  if (has_uses) {
+    phi = new (Z) PhiInstr(join, 2);
+    phi->mark_alive();
+    flow_graph()->AllocateSSAIndex(phi);
+    join->InsertPhi(phi);
+    phi->UpdateType(*call->Type());
+    phi->set_representation(call->representation());
+    call->ReplaceUsesWith(phi);
+  }
+
+  GotoInstr* true_goto = new (Z) GotoInstr(join, deopt_id);
+  true_target->LinkTo(true_goto);
+  true_target->set_last_instruction(true_goto);
+
+  GotoInstr* false_goto = new (Z) GotoInstr(join, deopt_id);
+  false_target->LinkTo(false_goto);
+  false_target->set_last_instruction(false_goto);
+
+  // Attach the new definition first: its environment is a copy of the call's.
+  Definition* other = (true_def == call) ? false_def : true_def;
+  GotoInstr* other_goto = (true_def == call) ? false_goto : true_goto;
+  GotoInstr* call_goto = (true_def == call) ? true_goto : false_goto;
+  ASSERT(other->representation() == call->representation());
+  InsertBefore(other_goto, other, call->env(),
+               has_uses ? FlowGraph::kValue : FlowGraph::kEffect);
+
+  call->previous()->AppendInstruction(branch);
+  call->set_previous(nullptr);
+  join->LinkTo(call->next());
+  call->set_next(nullptr);
+  call->UnuseAllInputs();  // So it can be re-added to the graph.
+  call->InsertBefore(call_goto);
+  if (call->env() != nullptr) {
+    call->env()->DeepCopyTo(Z, call);  // Restore env use list.
+  }
+
+  if (has_uses) {
+    Definition* true_value = true_def;
+    Definition* false_value = false_def;
+    phi->SetInputAt(0, new (Z) Value(true_value));
+    true_value->AddInputUse(phi->InputAt(0));
+    phi->SetInputAt(1, new (Z) Value(false_value));
+    false_value->AddInputUse(phi->InputAt(1));
+  }
+  return join;
+}
+
+bool AotCallSpecializer::TryReplaceInstanceOfWithBaseWorldRangeCheck(
+    InstanceCallInstr* call,
+    const AbstractType& type) {
+  if (!IsStructuralClosedWorld()) return false;
+  HierarchyInfo* hi = thread()->hierarchy_info();
+  if (hi == nullptr) return false;
+  if (current_iterator() == nullptr || current_iterator()->Current() != call ||
+      call->env() == nullptr) {
+    return false;
+  }
+  intptr_t lower_limit, upper_limit;
+  if (!hi->InstanceOfHasClassRange(type, &lower_limit, &upper_limit,
+                                   /*base_world=*/true)) {
+    return false;
+  }
+  Definition* left = call->ArgumentAt(0);
+  LoadClassIdInstr* load_cid =
+      new (Z) LoadClassIdInstr(new (Z) Value(left), kUnboxedUword);
+  InsertBefore(call, load_cid, nullptr, FlowGraph::kValue);
+
+  // Class ids at or above the base count were created by a patch and the
+  // range does not describe them: they take the generic test.
+  const intptr_t base_num_cids = isolate_group()->class_table()->NumCids();
+  ConditionInstr* in_base_world = new (Z) TestRangeInstr(
+      call->source(), new (Z) Value(load_cid), 0, base_num_cids - 1,
+      kUnboxedUword);
+
+  ConditionInstr* check_range;
+  if (lower_limit == upper_limit) {
+    ConstantInstr* cid_constant = flow_graph()->GetConstant(
+        Smi::Handle(Z, Smi::New(lower_limit)), kUnboxedUword);
+    check_range = new (Z)
+        EqualityCompareInstr(call->source(), Token::kEQ, new (Z) Value(load_cid),
+                             new (Z) Value(cid_constant), kUnboxedUword,
+                             DeoptId::kNone, /*null_aware=*/false);
+  } else {
+    check_range =
+        new (Z) TestRangeInstr(call->source(), new (Z) Value(load_cid),
+                               lower_limit, upper_limit, kUnboxedUword);
+  }
+  guard_join_ = BuildDiamond(call, in_base_world, check_range, call);
+  // The original test stays on the generic path: report failure so that the
+  // caller lowers it normally (in place, in the false branch).
+  return false;
 }
 
 #endif  // DART_PRECOMPILER

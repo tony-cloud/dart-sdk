@@ -287,14 +287,24 @@ class HierarchyInfo : public ThreadStackResource {
 
   bool InstanceOfHasClassRange(const AbstractType& type,
                                intptr_t* lower_limit,
-                               intptr_t* upper_limit);
+                               intptr_t* upper_limit,
+                               bool base_world = false);
 
   // Returns `true` if a simple [CidRange]-based subtype-check can be used to
   // determine if a given instance's type is a subtype of [type].
   //
   // This is the case for [type]s without type arguments or where the type
   // arguments are all dynamic (known as "rare type").
-  bool CanUseSubtypeRangeCheckFor(const AbstractType& type);
+  //
+  // [base_world] (Shorebird structural patching only): ignore that [type]'s
+  // class may be extended later by a structural patch and describe only the
+  // classes of the snapshot. Patches cannot change the supertypes of existing
+  // classes and every class they add has a class id above the snapshot's, so a
+  // class id hit in the returned ranges is always correct; a miss is
+  // conclusive only for class ids of the snapshot. Callers must handle other
+  // class ids with the generic path.
+  bool CanUseSubtypeRangeCheckFor(const AbstractType& type,
+                                  bool base_world = false);
 
   // Returns `true` if a combination of [CidRange]-based checks can be used to
   // determine if a given instance's type is a subtype of [type].
@@ -305,11 +315,13 @@ class HierarchyInfo : public ThreadStackResource {
   //
   // This method should only be called if [CanUseSubtypeRangecheckFor] returned
   // false.
-  bool CanUseGenericSubtypeRangeCheckFor(const AbstractType& type);
+  bool CanUseGenericSubtypeRangeCheckFor(const AbstractType& type,
+                                         bool base_world = false);
 
   // Returns `true` if [type] is a record type which fields can be tested using
   // simple [CidRange]-based subtype-check.
-  bool CanUseRecordSubtypeRangeCheckFor(const AbstractType& type);
+  bool CanUseRecordSubtypeRangeCheckFor(const AbstractType& type,
+                                        bool base_world = false);
 
  private:
   // Does not use any hierarchy information available in the system but computes
@@ -1887,6 +1899,11 @@ class ForwardInstructionIterator {
   void RemoveCurrentFromGraph();
 
   Instruction* Current() const { return current_; }
+
+  // Repositions the iterator after the instructions following 'current_' were
+  // moved to a new block: Advance() will continue with the instruction that
+  // follows 'instruction' (which is typically the new block's entry).
+  void ContinueAfter(Instruction* instruction) { current_ = instruction; }
 
   Instruction* operator*() const { return Current(); }
 
@@ -4928,7 +4945,8 @@ class InstanceCallInstr : public InstanceCallBaseInstr {
             interface_target,
             tearoff_interface_target),
         checked_argument_count_(checked_argument_count),
-        receivers_static_type_(nullptr) {}
+        receivers_static_type_(nullptr),
+        is_base_world_guard_fallback_(false) {}
 
   InstanceCallInstr(
       const InstructionSource& source,
@@ -4952,7 +4970,8 @@ class InstanceCallInstr : public InstanceCallBaseInstr {
                               interface_target,
                               tearoff_interface_target),
         checked_argument_count_(checked_argument_count),
-        receivers_static_type_(nullptr) {}
+        receivers_static_type_(nullptr),
+        is_base_world_guard_fallback_(false) {}
 
   DECLARE_INSTRUCTION(InstanceCall)
 
@@ -4965,6 +4984,20 @@ class InstanceCallInstr : public InstanceCallBaseInstr {
   void set_receivers_static_type(const AbstractType* receiver_type) {
     ASSERT(receiver_type != nullptr);
     receivers_static_type_ = receiver_type;
+  }
+
+  const AbstractType* receivers_static_type() const {
+    return receivers_static_type_;
+  }
+
+  // Shorebird structural patching: this call is the generic (non-devirtualized)
+  // path guarding a devirtualization against the base class hierarchy. The
+  // call specializer must leave it alone.
+  bool is_base_world_guard_fallback() const {
+    return is_base_world_guard_fallback_;
+  }
+  void mark_as_base_world_guard_fallback() {
+    is_base_world_guard_fallback_ = true;
   }
 
   virtual Definition* Canonicalize(FlowGraph* flow_graph);
@@ -4985,7 +5018,8 @@ class InstanceCallInstr : public InstanceCallBaseInstr {
 
 #define FIELD_LIST(F)                                                          \
   F(const intptr_t, checked_argument_count_)                                   \
-  F(const AbstractType*, receivers_static_type_)
+  F(const AbstractType*, receivers_static_type_)                               \
+  F(bool, is_base_world_guard_fallback_)
 
   DECLARE_INSTRUCTION_SERIALIZABLE_FIELDS(InstanceCallInstr,
                                           InstanceCallBaseInstr,

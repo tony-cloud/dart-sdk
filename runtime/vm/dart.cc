@@ -713,6 +713,7 @@ char* Dart::InitIsolateGroupFromSnapshot(Thread* T,
       }
     }
 
+    IG->InitializeShorebirdOverriddenCids();
     T->SetupDartMutatorStateDependingOnSnapshot(IG);
 
 #if defined(SUPPORT_TIMELINE)

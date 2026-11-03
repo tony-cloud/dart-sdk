@@ -498,6 +498,9 @@ class BytecodeReaderHelper : public ValueObject {
   PatchClass* patch_class_ = nullptr;
   Array* functions_ = nullptr;
   const Class* structural_existing_class_ = nullptr;
+  // Records that the structural patch adds [added], an instance member, to the
+  // existing base class [cls]; see IsolateGroup::shorebird_overridden_cids().
+  void RecordStructuralMemberAddition(const Class& cls, const Function& added);
   intptr_t function_index_ = 0;
   GrowableArray<const FunctionType*> enclosing_function_types_;
   Function& scoped_function_;

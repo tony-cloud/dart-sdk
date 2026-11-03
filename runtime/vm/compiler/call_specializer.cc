@@ -50,7 +50,12 @@ static bool ShouldSpecializeForDouble(const BinaryFeedback& binary_feedback) {
 
 // Optimize instance calls using ICData.
 void CallSpecializer::ApplyICData() {
+  const intptr_t max_block_id = flow_graph_->max_block_id();
   VisitBlocks();
+  if (flow_graph_->max_block_id() != max_block_id) {
+    // Specialization split blocks (e.g. to guard a devirtualization).
+    flow_graph_->DiscoverBlocks();
+  }
 }
 
 // Optimize instance calls using cid.  This is called after optimizer
@@ -61,6 +66,7 @@ void CallSpecializer::ApplyICData() {
 // e.g., receiver class id, guarded-cid, or by guessing cid-s.
 void CallSpecializer::ApplyClassIds() {
   ASSERT(current_iterator_ == nullptr);
+  const intptr_t max_block_id = flow_graph_->max_block_id();
   for (BlockIterator block_it = flow_graph_->reverse_postorder_iterator();
        !block_it.Done(); block_it.Advance()) {
     thread()->CheckForSafepoint();
@@ -84,6 +90,9 @@ void CallSpecializer::ApplyClassIds() {
       }
     }
     current_iterator_ = nullptr;
+  }
+  if (flow_graph_->max_block_id() != max_block_id) {
+    flow_graph_->DiscoverBlocks();
   }
 }
 

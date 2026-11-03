@@ -133,6 +133,9 @@ constexpr bool FLAG_support_il_printer = false;
   C(interpreter, false, false, bool, false, "Use bytecode interpreter")        \
   P(shorebird_full_replacement, bool, false,                                   \
     "Require the experimental complete-domain replacement compiler profile.")  \
+  P(trace_shorebird_structural_patching, bool, false,                          \
+    "Trace the class ids whose devirtualized calls a structural patch "       \
+    "disables.")                                                               \
   P(shorebird_structural_patching, bool, false,                                \
     "Require the no-TFA open-world structural patch compiler profile.")        \
   D(trace_interpreter_after, uint64_t, ULLONG_MAX,                             \

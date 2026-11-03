@@ -4,6 +4,8 @@
 
 #include "vm/bytecode_reader.h"
 
+#include <cstdlib>
+
 #include "vm/globals.h"
 #if defined(DART_BYTECODE_INTERPRETER)
 
@@ -2896,7 +2898,12 @@ void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
         function ^= functions_->At(i);
         const auto& existing = Function::Handle(
             Z, cls.LookupFunction(String::Handle(Z, function.name())));
-        if (existing.IsNull()) merged.Add(function);
+        if (existing.IsNull()) {
+          merged.Add(function);
+          if (!function.is_static()) {
+            RecordStructuralMemberAddition(cls, function);
+          }
+        }
       }
       cls.SetFunctions(Array::Handle(Z, Array::MakeFixedLength(merged)));
     } else {
@@ -2917,6 +2924,76 @@ void BytecodeReaderHelper::ReadFunctionDeclarations(const Class& cls) {
   }
 
   functions_ = nullptr;
+}
+
+void BytecodeReaderHelper::RecordStructuralMemberAddition(
+    const Class& cls,
+    const Function& added) {
+#if defined(DART_PRECOMPILED_RUNTIME)
+  // Compiled code devirtualized over the base class hierarchy assumes that no
+  // class of the hierarchy overrides a member it did not override when the
+  // snapshot was built. When the patch adds a member to the existing class
+  // [cls] that overrides an inherited one, clear the guard of [cls] and of
+  // every base subclass that inherits the added member, so that calls on
+  // receivers of those classes use the generic path. Patch-added classes have
+  // class ids above the base hierarchy and always use the generic path.
+  const auto& super = Class::Handle(Z, cls.SuperClass());
+  if (super.IsNull()) return;
+  const auto& name = String::Handle(Z, added.name());
+  if (Resolver::ResolveDynamicAnyArgs(Z, super, name, /*allow_add=*/false) ==
+      Function::null()) {
+    return;
+  }
+  uint8_t* const flags = IG->shorebird_overridden_cids();
+  const SmiPtr base = IG->object_store()->shorebird_base_num_cids();
+  if (flags == nullptr || base == Smi::null()) {
+    RejectBytecodePatch(
+        "Structural patch requires a base snapshot with closed-world "
+        "metadata.");
+  }
+  const intptr_t base_num_cids = Smi::Value(base);
+  auto* table = IG->class_table();
+  auto& candidate = Class::Handle(Z);
+  auto& ancestor = Class::Handle(Z);
+  // The flag is not reachable through the embedding API, which sets the VM
+  // flags itself: the environment variable enables the trace for embedders.
+  const bool trace = FLAG_trace_shorebird_structural_patching ||
+                     std::getenv("DART_TRACE_SHOREBIRD_STRUCTURAL_PATCHING") !=
+                         nullptr;
+  intptr_t marked = 0;
+  const char* marked_names = "";
+  for (intptr_t cid = kNumPredefinedCids;
+       cid < base_num_cids && cid < table->NumCids(); ++cid) {
+    if (!table->HasValidClassAt(cid)) continue;
+    candidate = table->At(cid);
+    if (!candidate.is_declaration_loaded()) continue;
+    ancestor = candidate.ptr();
+    bool inherits_added = false;
+    while (!ancestor.IsNull()) {
+      if (ancestor.ptr() == cls.ptr()) {
+        inherits_added = true;
+        break;
+      }
+      // A class below [cls] that declares the member shadows the added one.
+      if (ancestor.LookupFunction(name) != Function::null()) break;
+      ancestor = ancestor.SuperClass();
+    }
+    if (inherits_added) {
+      flags[cid] = 0;
+      marked++;
+      if (trace) {
+        marked_names = OS::SCreate(Z, "%s %s", marked_names,
+                                   candidate.UserVisibleNameCString());
+      }
+    }
+  }
+  if (trace) {
+    THR_Print(
+        "Shorebird structural patch: %s.%s overrides an inherited member; "
+        "devirtualized calls disabled for %" Pd " class(es):%s\n",
+        cls.UserVisibleNameCString(), name.ToCString(), marked, marked_names);
+  }
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
 }
 
 void BytecodeReaderHelper::LoadReferencedClass(const Class& cls) {

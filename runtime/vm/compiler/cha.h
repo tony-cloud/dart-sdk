@@ -34,8 +34,14 @@ class CHA : public ValueObject {
   // Collect the concrete subclasses of 'cls' into 'class_ids'. Return true if
   // the result is valid (may be invalid because we don't track the subclasses
   // of classes allocated in the VM isolate or class Object).
+  //
+  // With [base_world] the has_dynamically_extendable_subtypes() annotations are
+  // ignored: the result then describes only the classes that exist in the
+  // snapshot (the "base world"). A caller must guard against classes added
+  // later by a Shorebird structural patch (see AotCallSpecializer).
   static bool ConcreteSubclasses(const Class& cls,
-                                 GrowableArray<intptr_t>* class_ids);
+                                 GrowableArray<intptr_t>* class_ids,
+                                 bool base_world = false);
 
   // Return true if the class is implemented by some other class that is not a
   // subclass.

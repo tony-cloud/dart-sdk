@@ -462,6 +462,21 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
   void set_obfuscation_map(const char** map) { obfuscation_map_ = map; }
   const char** obfuscation_map() const { return obfuscation_map_; }
 
+  // Shorebird structural patching: per-class "override guard" for devirtualized
+  // calls in a structural AOT snapshot. One byte per possible class id (a
+  // zero-initialized allocation, so only touched pages are resident). A byte
+  // is non-zero iff devirtualized calls compiled against the base class
+  // hierarchy may still be used for receivers of that class id: it is set for
+  // every base class id (< ObjectStore::shorebird_base_num_cids) and cleared
+  // when a structural patch adds an overriding member to the class or one of
+  // its superclasses. Class ids created by a patch (>= the base count) stay
+  // zero and always take the generic path. nullptr unless the snapshot was
+  // produced by a structural gen_snapshot.
+  uint8_t* shorebird_overridden_cids() const {
+    return shorebird_overridden_cids_;
+  }
+  void InitializeShorebirdOverriddenCids();
+
   bool is_system_isolate_group() const { return is_system_isolate_group_; }
   bool is_bootstrapping() const { return bootstrapping_; }
   void set_bootstrapping(bool v) { bootstrapping_ = v; }
@@ -908,6 +923,7 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
   ClassTable* heap_walk_class_table_;
 
   const char** obfuscation_map_ = nullptr;
+  uint8_t* shorebird_overridden_cids_ = nullptr;
 
   void* embedder_data_ = nullptr;
 

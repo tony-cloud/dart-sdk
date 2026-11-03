@@ -1688,6 +1688,7 @@ void Thread::SetupDartMutatorStateDependingOnSnapshot(IsolateGroup* group) {
   auto object_store = group->object_store();
   if (object_store != nullptr) {
     global_object_pool_ = object_store->global_object_pool();
+    shorebird_overridden_cids_ = group->shorebird_overridden_cids();
 
     auto dispatch_table = group->dispatch_table();
     if (dispatch_table != nullptr) {

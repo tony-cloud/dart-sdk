@@ -658,6 +658,14 @@ void Precompiler::DoCompileAll() {
       DropLibraries();
     }
 
+    if (FLAG_shorebird_structural_patching) {
+      // Classes added by a structural patch get class ids at or above this
+      // count. Compiled code devirtualized over the base hierarchy relies on
+      // that (see AotCallSpecializer).
+      IG->object_store()->set_shorebird_base_num_cids(
+          Smi::Handle(Z, Smi::New(IG->class_table()->NumCids())));
+    }
+
     {
       PRECOMPILER_TIMER_SCOPE(this, Obfuscate);
       Obfuscate();

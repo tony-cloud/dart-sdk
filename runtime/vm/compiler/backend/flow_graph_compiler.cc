@@ -2974,7 +2974,12 @@ void FlowGraphCompiler::GenerateCallerChecksForAssertAssignable(
   if (auto const hi = thread()->hierarchy_info()) {
     const Class& type_class = Class::Handle(zone(), dst_type.type_class());
 
-    if (hi->CanUseSubtypeRangeCheckFor(dst_type)) {
+    // Shorebird structural patching: this only handles the positive case (a
+    // class id in the ranges is assignable); every other class id, including
+    // the ids of classes added by a patch, continues with the type testing
+    // stub. Ranges over the base hierarchy are therefore sufficient.
+    if (hi->CanUseSubtypeRangeCheckFor(
+            dst_type, /*base_world=*/FLAG_shorebird_structural_patching)) {
       const CidRangeVector& ranges = hi->SubtypeRangesForClass(
           type_class,
           /*include_abstract=*/false,
