@@ -566,6 +566,10 @@ static void JumpToExceptionHandler(Thread* thread,
       UNREACHABLE();
   }
   thread->set_active_stacktrace(stacktrace_object);
+#if defined(DART_MIXED_MODE)
+  // RunExceptionHandler branches to resume_pc natively.
+  remapped_pc = MixedMode::ToNativePc(remapped_pc);
+#endif
   thread->set_resume_pc(remapped_pc);
   Exceptions::JumpToFrame(thread, run_exception_pc, stack_pointer,
                           frame_pointer, clear_deopt);

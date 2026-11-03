@@ -27528,7 +27528,7 @@ SuspendStatePtr SuspendState::Clone(Thread* thread,
     *reinterpret_cast<ObjectPtr*>(
         LocalVarAddress(fp, runtime_frame_layout.FrameSlotForVariableIndex(
                                 kSuspendStateVarIndex))) = dst.ptr();
-    dst.set_pc(src.pc());
+    dst.set_pc(src.untag()->pc_);  // Raw (native) resume address.
     // Trigger write barrier if needed.
     if (dst.ptr()->IsOldObject()) {
       dst.untag()->EnsureInRememberedSet(thread);

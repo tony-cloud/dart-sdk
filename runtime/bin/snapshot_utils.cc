@@ -26,14 +26,15 @@
 
 #define LOG_SECTION_BOUNDARIES false
 
-#if !defined(DART_INCLUDE_SIMULATOR)
+// A mixed-mode runtime executes natively; it only simulates patch code.
+#if !defined(DART_INCLUDE_SIMULATOR) || defined(DART_MIXED_MODE)
 #if defined(DART_HOST_OS_LINUX) || defined(DART_HOST_OS_ANDROID) ||            \
     defined(DART_HOST_OS_FUCHSIA)
 #define NATIVE_SHARED_OBJECT_FORMAT_ELF 1
 #elif defined(DART_HOST_OS_MACOS)
 #define NATIVE_SHARED_OBJECT_FORMAT_MACHO 1
 #endif
-#endif  // !defined(DART_INCLUDE_SIMULATOR)
+#endif  // !defined(DART_INCLUDE_SIMULATOR) || defined(DART_MIXED_MODE)
 
 namespace dart {
 namespace bin {
@@ -185,7 +186,7 @@ static AppSnapshot* TryReadAppSnapshotDynamicLibrary(
     DartUtils::MagicNumber magic_number,
     const char* script_name,
     char** error) {
-#if defined(DART_INCLUDE_SIMULATOR)
+#if defined(DART_INCLUDE_SIMULATOR) && !defined(DART_MIXED_MODE)
   *error = Utils::StrDup("running on a simulated architecture");
   return nullptr;
 #else

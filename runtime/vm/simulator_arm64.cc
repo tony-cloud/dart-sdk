@@ -4211,9 +4211,14 @@ int64_t Simulator::Call(int64_t entry,
 
 #if defined(DART_MIXED_MODE)
 void Simulator::MixedBranch(Instr* instr, uword dest, bool link, uword ret) {
+  // Invariant: every return address the simulator produces is an address the
+  // CPU may execute (a gate), even for simulated -> simulated calls. Frames
+  // therefore never hold patch pcs, so native code that returns or unwinds on
+  // behalf of a simulated frame (async suspend, return stubs, exception
+  // handling) never branches into the non-executable patch text.
   // Fast path: a branch inside the unlinked entry being simulated.
   if (dest - sim_lo_ < sim_hi_ - sim_lo_) {
-    if (link) set_register(instr, LR, ret);
+    if (link) set_register(instr, LR, MixedMode::ReturnGateFor(ret));
     set_pc(dest);
     return;
   }
@@ -4228,7 +4233,7 @@ void Simulator::MixedBranch(Instr* instr, uword dest, bool link, uword ret) {
     if (!linked) {
       sim_lo_ = lo;
       sim_hi_ = hi;
-      if (link) set_register(instr, LR, ret);
+      if (link) set_register(instr, LR, MixedMode::ReturnGateFor(ret));
       set_pc(target);
       return;
     }
@@ -4240,7 +4245,16 @@ void Simulator::MixedBranch(Instr* instr, uword dest, bool link, uword ret) {
   }
   // Leave the simulator. A native callee returns through a gate bound to the
   // simulated return address.
-  if (link) set_register(instr, LR, MixedMode::ReturnGateFor(ret));
+  if (link) {
+    set_register(instr, LR, MixedMode::ReturnGateFor(ret));
+  } else {
+    // Tail call into native code (e.g. an async epilogue jumping to a
+    // return stub): the CPU must never see a patch pc as its return address.
+    const uword lr = get_register(LR);
+    if (MixedMode::InPatchText(lr)) {
+      set_register(instr, LR, MixedMode::ToNativePc(lr));
+    }
+  }
   mixed_exit_target_ = target;
   MixedMode::sim_to_native_.fetch_add(1, std::memory_order_relaxed);
   set_pc(kEndSimulatingPC);
