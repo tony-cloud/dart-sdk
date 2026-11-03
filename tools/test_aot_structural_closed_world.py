@@ -246,12 +246,17 @@ int newImplementors() {
     isBoxOfShape(MyBox<Imp>(imp)), isBoxOfShape(Box<Named>(Named())),
     isBoxOfShape(Box<Sq>(Sq(1))),
   ];
-  var casts = 0;  // (A failing cast of a Smi after another failing cast of the
-  // same call site crashes the slow type test stub: a pre-existing issue.)
+  var casts = 0;
   casts += asShape(Tri(1)).w + asShape(imp).w + asShape(Sq(2)).w;
   casts += asTagged(Named()).tagId();
   try {
     asShape(Named());
+    casts += 1000;
+  } on TypeError {
+    casts += 1;
+  }
+  try {
+    asShape(3);  // A Smi after the positive answers for the added Imp.
     casts += 1000;
   } on TypeError {
     casts += 1;
