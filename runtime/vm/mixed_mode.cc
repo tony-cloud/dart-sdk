@@ -47,6 +47,9 @@ intptr_t entry_count = 0;
 uword* entry_start = nullptr;  // entry_count + 1 elements (last = end).
 uint8_t* entry_linked = nullptr;
 intptr_t* entry_delta = nullptr;  // base address - patch address (linked).
+// End of entry i's code: entry_start[i + 1], or less when a link record
+// names a payload followed by alignment padding.
+uword* entry_end = nullptr;
 
 // Linked release ranges sorted by address, for BaseToPatch.
 struct BaseRange {
@@ -147,7 +150,7 @@ int PcRelative(uword pc, uint32_t instr, uword* target) {
 // offset (the displacement differs when the layout differs). Other
 // pc-relative references leaving the entry are not allowed.
 bool VerifyEntry(intptr_t i) {
-  const uword lo = entry_start[i], hi = entry_start[i + 1];
+  const uword lo = entry_start[i], hi = entry_end[i];
   const intptr_t delta = entry_delta[i];
   for (uword pc = lo; pc + 4 <= hi; pc += 4) {
     const uint32_t pw = *reinterpret_cast<const uint32_t*>(pc);
@@ -177,10 +180,12 @@ void FreeLinkState() {
   free(entry_start);
   free(entry_linked);
   free(entry_delta);
+  free(entry_end);
   free(base_ranges);
   entry_start = nullptr;
   entry_linked = nullptr;
   entry_delta = nullptr;
+  entry_end = nullptr;
   base_ranges = nullptr;
   entry_count = 0;
   base_range_count = 0;
@@ -374,10 +379,14 @@ const char* MixedMode::LinkImage(uword start_pc,
   entry_start = reinterpret_cast<uword*>(malloc((length + 1) * sizeof(uword)));
   entry_linked = reinterpret_cast<uint8_t*>(calloc(length, 1));
   entry_delta = reinterpret_cast<intptr_t*>(calloc(length, sizeof(intptr_t)));
+  entry_end = reinterpret_cast<uword*>(malloc(length * sizeof(uword)));
   for (intptr_t i = 0; i < length; i++) {
     entry_start[i] = start_pc + pc_offsets[i * pc_offset_stride];
   }
   entry_start[length] = end_pc;
+  for (intptr_t i = 0; i < length; i++) {
+    entry_end[i] = entry_start[i + 1];
+  }
 
   auto fail = [&](const char* message) -> const char* {
     if (verbose) OS::PrintErr("mixed: link failed: %s\n", message);
@@ -397,11 +406,26 @@ const char* MixedMode::LinkImage(uword start_pc,
       if (i < 0 || entry_start[i] != lo) {
         return fail("link record does not start a patch code entry");
       }
-      if (entry_start[i + 1] - lo != l.size) {
+      // The record names the payload; the entry may also hold the padding
+      // (brk #0 words) that aligns the next payload or the image end.
+      const uword end = lo + l.size;
+      bool size_ok = end <= entry_start[i + 1] && end % 4 == 0 &&
+                     entry_start[i + 1] - end < kObjectAlignment;
+      for (uword pc = end; size_ok && pc < entry_start[i + 1]; pc += 4) {
+        size_ok = *reinterpret_cast<const uint32_t*>(pc) == 0xD4200000;
+      }
+      if (!size_ok) {
+        if (verbose) {
+          OS::PrintErr("mixed: record %" Pd " patch %#x release %#x size %u,"
+                       " entry %" Pd " of %" Pd " spans %" Pu "\n",
+                       r, l.patch_offset, l.release_offset, l.size, i, length,
+                       entry_start[i + 1] - lo);
+        }
         return fail("link record size differs from the patch code entry");
       }
       entry_linked[i] = 1;
       entry_delta[i] = (base_start_ + l.release_offset) - lo;
+      entry_end[i] = end;
     }
     for (intptr_t i = 0; i < length; i++) {
       if (entry_linked[i] && !VerifyEntry(i)) {
@@ -446,7 +470,7 @@ const char* MixedMode::LinkImage(uword start_pc,
   intptr_t linked = 0, unlinked = 0, call_sites = 0;
   uword linked_bytes = 0, total_bytes = 0;
   for (intptr_t i = 0; i < length; i++) {
-    const uword size = entry_start[i + 1] - entry_start[i];
+    const uword size = entry_end[i] - entry_start[i];
     total_bytes += size;
     if (entry_linked[i]) {
       linked++;
@@ -474,7 +498,7 @@ const char* MixedMode::LinkImage(uword start_pc,
   for (intptr_t i = 0; i < length; i++) {
     if (!entry_linked[i]) continue;
     base_ranges[base_range_count++] = {entry_start[i] + entry_delta[i],
-                                       entry_start[i + 1] + entry_delta[i],
+                                       entry_end[i] + entry_delta[i],
                                        entry_delta[i]};
   }
   qsort(base_ranges, base_range_count, sizeof(BaseRange),
@@ -493,7 +517,7 @@ const char* MixedMode::LinkImage(uword start_pc,
         l.patch_offset = static_cast<uint32_t>(entry_start[i] - patch_start_);
         l.release_offset = static_cast<uint32_t>(entry_start[i] +
                                                  entry_delta[i] - base_start_);
-        l.size = static_cast<uint32_t>(entry_start[i + 1] - entry_start[i]);
+        l.size = static_cast<uint32_t>(entry_end[i] - entry_start[i]);
         l.flags = 0;
         fwrite(&l, sizeof(l), 1, f);
       }
