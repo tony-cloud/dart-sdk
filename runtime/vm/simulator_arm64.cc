@@ -4012,6 +4012,35 @@ void Simulator::DecodeDPSimd2(Instr* instr) {
 // Executes the current instruction.
 DART_FORCE_INLINE
 void Simulator::InstructionDecodeImpl(Instr* instr) {
+#if defined(DART_MIXED_MODE) && !defined(DEBUG)
+  // Fast paths for the most frequent instructions in AOT code, with the
+  // same effects as the generic decoders below.
+  {
+    const uint32_t w = instr->InstructionBits();
+    const uword next = reinterpret_cast<uword>(instr) + Instr::kInstrSize;
+    if ((w & 0xFFE0FFE0) == 0xAA0003E0) {  // mov xd, xm (orr xd, xzr, xm)
+      const intptr_t rd = w & 31, rm = (w >> 16) & 31;
+      if (rd != 31) registers_[rd] = rm == 31 ? 0 : registers_[rm];
+      set_pc(next);
+      return;
+    }
+    const uint32_t ls = w & 0xFFC00000;
+    if (ls == 0xF9400000 || ls == 0xF9000000) {  // ldr/str xt, [xn|sp, #imm]
+      const intptr_t rt = w & 31, rn = (w >> 5) & 31;
+      const uword address = registers_[rn] + (((w >> 10) & 0xFFF) << 3);
+      if ((address & 7) == 0 && !IsIllegalAddress(address)) {
+        if (ls == 0xF9400000) {
+          const int64_t value = memory_.Load<intptr_t>(address);
+          if (rt != 31) registers_[rt] = value;
+        } else {
+          memory_.Store<intptr_t>(address, rt == 31 ? 0 : registers_[rt]);
+        }
+        set_pc(next);
+        return;
+      }
+    }
+  }
+#endif
   pc_modified_ = false;
 
   if (instr->IsLoadStoreOp()) {
@@ -4218,35 +4247,23 @@ void Simulator::MixedBranch(Instr* instr, uword dest, bool link, uword ret) {
   // handling) never branches into the non-executable patch text.
   // Fast path: a branch inside the unlinked entry being simulated.
   if (dest - sim_lo_ < sim_hi_ - sim_lo_) {
-    if (link) set_register(instr, LR, MixedMode::ReturnGateFor(ret));
+    if (link) set_register(instr, LR, ReturnGateFor(ret));
     set_pc(dest);
     return;
   }
-  uword target = dest;
-  if (MixedMode::IsGate(target)) {
-    target = MixedMode::GateTarget(target);
-    if (target == 0) FATAL("Mixed mode: branch to unbound gate %#" Px, dest);
+  const MixedTarget& t = LookupMixedTarget(dest);
+  if (t.simulate) {
+    sim_lo_ = t.lo;
+    sim_hi_ = t.hi;
+    if (link) set_register(instr, LR, ReturnGateFor(ret));
+    set_pc(t.sim_pc);
+    return;
   }
-  uword lo, hi;
-  bool linked;
-  if (MixedMode::LookupEntry(target, &lo, &hi, &linked)) {
-    if (!linked) {
-      sim_lo_ = lo;
-      sim_hi_ = hi;
-      if (link) set_register(instr, LR, MixedMode::ReturnGateFor(ret));
-      set_pc(target);
-      return;
-    }
-    // Linked code runs natively from the release's copy.
-    target = MixedMode::PatchToBase(target);
-  } else if (MixedMode::InPatchText(target)) {
-    FATAL("Mixed mode: branch into patch text outside any entry %#" Px,
-          target);
-  }
+  const uword target = t.native;
   // Leave the simulator. A native callee returns through a gate bound to the
   // simulated return address.
   if (link) {
-    set_register(instr, LR, MixedMode::ReturnGateFor(ret));
+    set_register(instr, LR, ReturnGateFor(ret));
   } else {
     // Tail call into native code (e.g. an async epilogue jumping to a
     // return stub): the CPU must never see a patch pc as its return address.
@@ -4260,6 +4277,57 @@ void Simulator::MixedBranch(Instr* instr, uword dest, bool link, uword ret) {
   set_pc(kEndSimulatingPC);
 }
 
+uword Simulator::ReturnGateFor(uword ret) {
+  CheckMixedCacheGeneration();
+  ReturnGateLine& line =
+      return_gate_cache_[(ret >> 2) & (kReturnGateCacheSize - 1)];
+  if (line.ret != ret) {
+    line.ret = ret;
+    line.gate = MixedMode::ReturnGateFor(ret);
+  }
+  return line.gate;
+}
+
+void Simulator::CheckMixedCacheGeneration() {
+  if (mixed_cache_generation_ != MixedMode::link_generation()) {
+    memset(mixed_cache_, 0, sizeof(mixed_cache_));
+    memset(return_gate_cache_, 0, sizeof(return_gate_cache_));
+    mixed_cache_generation_ = MixedMode::link_generation();
+  }
+}
+
+const Simulator::MixedTarget& Simulator::LookupMixedTarget(uword dest) {
+  CheckMixedCacheGeneration();
+  MixedTarget& line = mixed_cache_[(dest >> 2) & (kMixedTargetCacheSize - 1)];
+  if (line.pc == dest) return line;
+  // Gates are bound once and never rebound, so a gate's resolution is as
+  // stable as the link state.
+  uword target = dest;
+  if (MixedMode::IsGate(target)) {
+    target = MixedMode::GateTarget(target);
+    if (target == 0) FATAL("Mixed mode: branch to unbound gate %#" Px, dest);
+  }
+  MixedTarget result = {dest, target, 0, 0, target, false};
+  uword lo, hi;
+  bool linked;
+  intptr_t delta;
+  if (MixedMode::LookupEntry(target, &lo, &hi, &linked, &delta)) {
+    if (linked) {
+      // Linked code runs natively from the release's copy.
+      result.native = target + delta;
+    } else {
+      result.lo = lo;
+      result.hi = hi;
+      result.simulate = true;
+    }
+  } else if (MixedMode::InPatchText(target)) {
+    FATAL("Mixed mode: branch into patch text outside any entry %#" Px,
+          target);
+  }
+  line = result;
+  return line;
+}
+
 uword Simulator::RunMixed(MixedRegs* regs) {
   mixed_mode_ = true;
   for (intptr_t i = 0; i < kNumberOfCpuRegisters; i++) {
@@ -4270,18 +4338,16 @@ uword Simulator::RunMixed(MixedRegs* regs) {
     vregisters_[i].bits.i64[1] = regs->v[i][1];
   }
   const uword gate = static_cast<uword>(regs->x[16]);
-  const uword start = MixedMode::GateTarget(gate);
-  if (start == 0) FATAL("Mixed mode: entered unbound gate %#" Px, gate);
-  uword lo, hi;
-  bool linked;
-  if (!MixedMode::LookupEntry(start, &lo, &hi, &linked) || linked) {
+  if (!MixedMode::IsGate(gate)) FATAL("Mixed mode: entered from %#" Px, gate);
+  const MixedTarget& t = LookupMixedTarget(gate);
+  if (!t.simulate) {
     FATAL("Mixed mode: gate %#" Px " bound to non-simulated pc %#" Px, gate,
-          start);
+          t.sim_pc);
   }
-  sim_lo_ = lo;
-  sim_hi_ = hi;
+  sim_lo_ = t.lo;
+  sim_hi_ = t.hi;
   mixed_exit_target_ = 0;
-  set_pc(start);
+  set_pc(t.sim_pc);
   if (FLAG_stop_sim_at == ULLONG_MAX && FLAG_trace_sim_after == ULLONG_MAX)
       [[likely]] {
     ExecuteNoTrace();

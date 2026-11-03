@@ -143,6 +143,14 @@ class MixedMode : public AllStatic {
   // Returns false if `pc` is not inside the patch text. On success, sets
   // [*lo, *hi) to the entry's range and *linked.
   static bool LookupEntry(uword pc, uword* lo, uword* hi, bool* linked);
+  // As above, also setting *delta (release - patch address, if linked).
+  static bool LookupEntry(uword pc,
+                          uword* lo,
+                          uword* hi,
+                          bool* linked,
+                          intptr_t* delta);
+  // Changes whenever the link state changes (simulator lookup caches).
+  static uword link_generation() { return link_generation_; }
 
   // Release address of the linked patch pc `patch_pc`.
   static uword PatchToBase(uword patch_pc);
@@ -175,6 +183,7 @@ class MixedMode : public AllStatic {
   static uword AllocateGate(uword patch_pc);
 
   static bool active_;
+  static uword link_generation_;
   static const uint8_t* patch_image_;
   static const uint8_t* base_image_;
 };

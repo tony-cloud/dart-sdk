@@ -136,6 +136,29 @@ class Simulator {
   // Patch-text range of the unlinked entry being simulated (cache).
   uword sim_lo_ = 0;
   uword sim_hi_ = 0;
+  // Branch-target cache: where a patch pc (or gate target) leads. The link
+  // state is immutable while a patch is active; the generation catches a
+  // re-link.
+  struct MixedTarget {
+    uword pc;      // Key (branch destination); 0 = empty.
+    uword sim_pc;  // Patch pc to simulate (gate target or `pc`).
+    uword lo, hi;  // Entry range of `sim_pc`, if simulated.
+    uword native;  // Native target (linked or outside the patch).
+    bool simulate;
+  };
+  static constexpr intptr_t kMixedTargetCacheSize = 1024;
+  const MixedTarget& LookupMixedTarget(uword target);
+  uword mixed_cache_generation_ = 0;
+  MixedTarget mixed_cache_[kMixedTargetCacheSize] = {};
+  // Return-gate cache (MixedMode::ReturnGateFor; gates are never rebound).
+  struct ReturnGateLine {
+    uword ret;
+    uword gate;
+  };
+  static constexpr intptr_t kReturnGateCacheSize = 512;
+  uword ReturnGateFor(uword ret);
+  void CheckMixedCacheGeneration();
+  ReturnGateLine return_gate_cache_[kReturnGateCacheSize] = {};
 #endif
 
   // Known bad pc value to ensure that the simulator does not execute

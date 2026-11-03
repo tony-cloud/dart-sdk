@@ -27,6 +27,7 @@ extern char DartMixedGatesEnd[];
 namespace dart {
 
 bool MixedMode::active_ = false;
+uword MixedMode::link_generation_ = 1;
 const uint8_t* MixedMode::patch_image_ = nullptr;
 const uint8_t* MixedMode::base_image_ = nullptr;
 uword MixedMode::gates_start_ = 0;
@@ -274,6 +275,7 @@ bool MixedMode::RegisterImages(const uint8_t* patch_text,
 
 void MixedMode::Deactivate() {
   active_ = false;
+  link_generation_++;
   patch_image_ = nullptr;
   base_image_ = nullptr;
   base_start_ = base_size_ = 0;
@@ -344,6 +346,20 @@ uword MixedMode::BaseToPatch(uword base_pc) {
     }
   }
   return base_pc;  // Not linked release code; leave it untranslated.
+}
+
+bool MixedMode::LookupEntry(uword pc,
+                            uword* lo,
+                            uword* hi,
+                            bool* linked,
+                            intptr_t* delta) {
+  const intptr_t i = FindEntryIndex(pc);
+  if (i < 0) return false;
+  *lo = entry_start[i];
+  *hi = entry_start[i + 1];
+  *linked = entry_linked[i] != 0;
+  *delta = entry_delta[i];
+  return true;
 }
 
 bool MixedMode::LookupEntry(uword pc, uword* lo, uword* hi, bool* linked) {
@@ -526,6 +542,7 @@ const char* MixedMode::LinkImage(uword start_pc,
   }
 
   active_ = true;
+  link_generation_++;
   if (verbose) {
     OS::PrintErr(
         "mixed: table=%s entries=%" Pd " identical=%" Pd
