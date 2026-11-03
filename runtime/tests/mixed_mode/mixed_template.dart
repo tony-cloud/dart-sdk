@@ -186,14 +186,14 @@ int numLoopN(int n) {
     a = (a * 31 + i) & 0xffffff;
     b ^= a;
   }
-  return b + 3;
+  return b + 7; // differs from numLoopB in both variants (no dedup)
 }
 
 @pragma('vm:never-inline')
 int tinyB(int x) => x + __K__ - 2;
 
 @pragma('vm:never-inline')
-int tinyN(int x) => x + 3 - 2;
+int tinyN(int x) => x + 2; // differs from tinyB in both variants
 
 // Simulated loop calling a linked leaf: one sim->native->sim round trip per
 // iteration.
@@ -223,7 +223,7 @@ int callLoopNative(int n) {
   for (int i = 0; i < n; i++) {
     s = tinyN(s) ^ i;
   }
-  return s + 3;
+  return s + 7;
 }
 
 void check(String name, Object actual, Object expected) {
@@ -244,7 +244,7 @@ Future<void> main(List<String> args) async {
   // Give the native helpers more than one closure target so TFA cannot turn
   // their closure calls into direct calls (which would cascade-unlink them).
   check('linked helpers (native)',
-      linkedCatcher(tinyN, 3) + linkedPassThrough(tinyN, 1), 6 + 3);
+      linkedCatcher(tinyN, 3) + linkedPassThrough(tinyN, 1), 9 + 4);
   check('changedLeaf', changedLeaf(10), 10 + k);
   check('changedCaller sim->native', changedCaller(100),
       List.generate(100, (i) => i * 2 + 1 + k).reduce((a, b) => a + b));
