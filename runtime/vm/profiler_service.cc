@@ -2081,6 +2081,50 @@ void ProfilerService::PrintCommon(PrintFormat format,
                   include_code_samples);
 }
 
+#if defined(DART_MIXED_MODE)
+void ProfilerService::PrintMixedModeSummary(Thread* thread) {
+  SampleBlockBuffer* buffer = Profiler::sample_block_buffer();
+  if (buffer == nullptr) return;
+  Isolate* isolate = thread->isolate();
+  StackZone zone(thread);
+  HANDLESCOPE(thread);
+  NoAllocationSampleFilter filter(isolate->main_port(), Thread::kMutatorTask,
+                                  -1, -1);
+  Profile profile;
+  profile.Build(thread, isolate, &filter, buffer);
+  const intptr_t count = profile.NumFunctions();
+  GrowableArray<ProfileFunction*> functions(count);
+  for (intptr_t i = 0; i < count; i++) {
+    functions.Add(profile.GetFunction(i));
+  }
+  functions.Sort([](ProfileFunction* const* a, ProfileFunction* const* b) {
+    const intptr_t d = (*b)->exclusive_ticks() - (*a)->exclusive_ticks();
+    return d < 0 ? -1 : (d > 0 ? 1 : 0);
+  });
+  OS::PrintErr("mixed-profile: samples %" Pd " functions %" Pd "\n",
+               profile.sample_count(), count);
+  for (intptr_t i = 0; i < count && i < 15; i++) {
+    ProfileFunction* f = functions[i];
+    if (f->exclusive_ticks() == 0) break;
+    OS::PrintErr("mixed-profile: exclusive %" Pd " inclusive %" Pd " %s %s\n",
+                 f->exclusive_ticks(), f->inclusive_ticks(),
+                 ProfileFunction::KindToCString(f->kind()), f->Name());
+  }
+  functions.Sort([](ProfileFunction* const* a, ProfileFunction* const* b) {
+    const intptr_t d = (*b)->inclusive_ticks() - (*a)->inclusive_ticks();
+    return d < 0 ? -1 : (d > 0 ? 1 : 0);
+  });
+  for (intptr_t i = 0; i < count && i < 8; i++) {
+    ProfileFunction* f = functions[i];
+    if (f->inclusive_ticks() == 0) break;
+    OS::PrintErr("mixed-profile: by inclusive: inclusive %" Pd
+                 " exclusive %" Pd " %s %s\n",
+                 f->inclusive_ticks(), f->exclusive_ticks(),
+                 ProfileFunction::KindToCString(f->kind()), f->Name());
+  }
+}
+#endif  // defined(DART_MIXED_MODE)
+
 void ProfilerService::PrintJSON(JSONStream* js,
                                 int64_t time_origin_micros,
                                 int64_t time_extent_micros,

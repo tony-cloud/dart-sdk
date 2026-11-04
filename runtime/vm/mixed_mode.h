@@ -50,9 +50,17 @@ struct MixedRegs {
   uword c_stack_top;     // Top of the side stack.           offset 784
   uword exit_target;     // Native address to resume at.     offset 792
   Simulator* simulator;  // Per-thread simulator instance.   offset 800
-  uword padding;
+  // Profiler support: the pre-decoded op the interpreter last branched to
+  // from another function, i.e. a pc in the function being simulated;
+  // kMixedSimEntering while no op has run yet (x[16] still holds the gate);
+  // nullptr when unknown (the generic simulator). DartMixedSimEnter sets
+  // kMixedSimEntering before it switches to the side stack; see
+  // MixedMode::SampleSimulatedState.                    offset 808
+  std::atomic<const void*> sim_op;
 };
 static_assert(sizeof(MixedRegs) == 816, "Keep in sync with the gate asm");
+static_assert(offsetof(MixedRegs, sim_op) == 808, "Keep in sync with the asm");
+static constexpr uword kMixedSimEntering = 1;  // A sim_op value.
 static constexpr intptr_t kMixedZeroSlot = 32;
 static constexpr intptr_t kMixedSinkSlot = 33;
 static constexpr intptr_t kMixedRegisterSlots = 34;
@@ -179,7 +187,37 @@ class MixedMode : public AllStatic {
   static bool count_transitions() { return count_transitions_; }
 
   // Allocates the per-thread register area and side stack.
+  static constexpr intptr_t kSideStackSize = 512 * KB;
   static MixedRegs* NewThreadArea();
+
+  // Is `sp` on the side stack of `area`, i.e. is the thread inside
+  // DartMixedSimEnter / DartMixedRun (simulating, or about to)?
+  static bool OnSideStack(const MixedRegs* area, uword sp) {
+    if (area == nullptr || area->c_stack_top == 0) return false;
+    const uword end = area->c_stack_top + kSideStackEndGap;
+    return sp - (end - kSideStackSize) < static_cast<uword>(kSideStackSize);
+  }
+  static constexpr intptr_t kSideStackEndGap = 64;
+
+  // Profiler support. Called while the thread owning `area` is interrupted
+  // at an arbitrary instruction (suspended, or in a signal handler on that
+  // thread); reads only, takes no locks, never dereferences the simulated
+  // stack. When `csp` (the interrupted CPU stack pointer) is not on the side
+  // stack, returns kNotSimulating. Otherwise returns kSimulated and the top
+  // simulated frame's state (pc is a patch pc; fp/sp/lr are the simulated
+  // registers, still to be validated by the caller against the thread's
+  // stack bounds) when that state is known to be consistent, or
+  // kSimulatedUnknown when it is not (the generic simulator, an op table of
+  // an old link generation).
+  enum SampleState { kNotSimulating, kSimulated, kSimulatedUnknown };
+  static SampleState SampleSimulatedState(const MixedRegs* area,
+                                          uword csp,
+                                          uword* pc,
+                                          uword* fp,
+                                          uword* sp,
+                                          uword* lr);
+  static std::atomic<int64_t> profiler_simulated_;
+  static std::atomic<int64_t> profiler_unknown_;
   static void DeleteThreadArea(MixedRegs* area);
 
   // Statistics.
@@ -212,6 +250,11 @@ class MixedMode : public AllStatic {
 
 // Statistics of the pre-decoded interpreter (simulator_arm64_mixed.cc).
 void MixedInterpPrintStats();
+
+// The patch pc of a pre-decoded op published in MixedRegs::sim_op, or 0 if
+// `op` is not in an op table of the current link generation. Lock-free and
+// async-signal safe (simulator_arm64_mixed.cc).
+uword MixedInterpOpPc(const void* op);
 
 // Entry point called from the gate assembly with the saved registers. Runs
 // the simulator and returns the native address at which to resume.

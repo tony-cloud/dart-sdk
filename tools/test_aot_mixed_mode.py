@@ -18,6 +18,10 @@ one layout and the runtime may link by identity. Checks:
     with simulated frames, async/await), with identity linking and with a
     vmcode v1 container synthesized from the runtime's own link records;
   * a stress run that simulates all Dart code (only stubs native);
+  * non-PRODUCT runtimes: the CPU profiler (--profiler --profile_period=100)
+    with and without stress (stress is repeated: the sampler interrupts at
+    arbitrary points), and a profile of the simulated benchmarks that must
+    attribute samples to the simulated hot loop (DART_MIXED_PROFILE_DUMP);
   * fail-closed cases, each of which must reject the patch and run the
     release unpatched.
 
@@ -370,6 +374,35 @@ def part_a(tc, mixed, out, bench_args):
                          args=['--verbose_gc'])
         check_program('stress, all Dart code simulated', proc, 5, False,
                       lambda p: (link_stats(p.stderr) or (0, 0))[1] > 1000)
+
+    # The profiler samples simulated code from the simulated registers
+    # (MixedMode::SampleSimulatedState); not available in PRODUCT runtimes.
+    profiler = ['--profiler', '--profile_period=100']
+    if is_product(tc.release_dir):
+        log('SKIP profiler: PRODUCT runtime')
+    else:
+        check_program('profiler', mixed_run({}, args=profiler), 5, False)
+        for i in range(3 if offset is not None else 0):
+            proc = mixed_run({'DART_MIXED_UNLINK_BELOW': hex(offset)},
+                             args=profiler)
+            check_program(
+                'profiler, stress (%d/3)' % (i + 1), proc, 5, False,
+                lambda p: ((link_stats(p.stderr) or (0, 0))[1] > 1000 and
+                           'profiler samples while simulating: walked' in
+                           p.stderr))
+        # numLoopB (simulated, ~40 ms at n = 4M) must lead the profile.
+        proc = run([mixed] + profiler + [patch, '4000000'],
+                   dict(DART_MIXED_BASE=base, DART_MIXED_VERBOSE='1',
+                        DART_MIXED_PROFILE_DUMP='1'),
+                   check=False)
+        top = re.findall(r'mixed-profile: exclusive (\d+) inclusive \d+ '
+                         r'(\S+) (.*)', proc.stderr)
+        ok = (proc.returncode == 0 and bool(top) and
+              top[0][1:] == ('Dart', 'numLoopB') and int(top[0][0]) >= 50)
+        record('profiler attributes simulated code', ok,
+               ': exit=%d top=%s' % (proc.returncode, top[:3]))
+        if not ok:
+            log(proc.stderr[-2000:])
 
     # Fail-closed: the release (K=3, or K=4 for `other`) must run instead.
     def flip_elf_byte(d):

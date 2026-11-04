@@ -120,6 +120,11 @@ SYM(DartMixedSimEnter):
   stp q28, q29, [x16, #448]
   stp q30, q31, [x16, #480]
 1:
+  // MixedRegs::sim_op = kMixedSimEntering (1) before the switch: until the
+  // interpreter publishes the activation's first op, the profiler takes the
+  // pc from the gate saved in x16 (MixedMode::SampleSimulatedState).
+  mov x16, #1
+  str x16, [x17, #808]
   // Switch to the side stack and run the simulator.
   ldr x16, [x17, #784]
   mov sp, x16

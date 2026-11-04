@@ -499,6 +499,12 @@ class ProfilerService : public AllStatic {
 
   static void ClearSamples();
 
+#if defined(DART_MIXED_MODE)
+  // Testing aid (DART_MIXED_PROFILE_DUMP=1 with --profiler): prints the
+  // current isolate's CPU profile, functions by exclusive ticks, to stderr.
+  static void PrintMixedModeSummary(Thread* thread);
+#endif
+
  private:
   enum PrintFormat : bool { JSON = false, Perfetto = true };
 

@@ -291,6 +291,24 @@ std::atomic<const FastOp*>* g_gate_ip = nullptr;
 // before the entry's ops.
 uint8_t** g_entry_high_live = nullptr;
 std::atomic<int> g_mode = {-1};
+
+// Profiler support: every op table decoded in the current link generation,
+// so that MixedInterpOpPc can map an op pointer (MixedRegs::sim_op) back to
+// its patch pc without locks. Append-only under DecodeMutex; a record is
+// written before `count` is raised with a release store, and before its
+// table is published in g_entry_ops (so no published op is ever missing).
+// Registries of earlier generations are leaked like their tables.
+struct OpTableRecord {
+  const FastOp* ops;
+  intptr_t n;  // Instructions; ops[n] is the H_End op.
+  uword lo;    // Patch pc of ops[0].
+};
+struct OpTableRegistry {
+  intptr_t capacity;
+  std::atomic<intptr_t> count;
+  OpTableRecord records[1];
+};
+std::atomic<OpTableRegistry*> g_op_tables = {nullptr};
 std::atomic<int64_t> g_decoded_entries = {0};
 std::atomic<int64_t> g_decoded_bytes = {0};
 
@@ -334,6 +352,12 @@ void EnsureTables() {
   g_gate_count = MixedMode::GateCount();
   g_gate_ip = reinterpret_cast<std::atomic<const FastOp*>*>(
       calloc(Utils::Maximum<uword>(g_gate_count, 1), sizeof(void*)));
+  const intptr_t capacity = Utils::Maximum<intptr_t>(g_entry_count, 1);
+  auto* tables = reinterpret_cast<OpTableRegistry*>(
+      calloc(1, sizeof(OpTableRegistry) +
+                    (capacity - 1) * sizeof(OpTableRecord)));
+  tables->capacity = capacity;
+  g_op_tables.store(tables, std::memory_order_release);
   g_generation.store(generation, std::memory_order_release);
 }
 
@@ -398,6 +422,16 @@ DART_FORCE_INLINE uword ExitTo(const FastOp* ip, int64_t* x, uword target) {
   return target | (ip->ra & 1);
 }
 
+// Profiler support (MixedMode::SampleSimulatedState): every dispatch that
+// may enter another function (a far call or branch, br/blr/ret, the first
+// op of an activation, the generic decoder's or H_End's continuation)
+// publishes its target op, so MixedRegs::sim_op always lies in the function
+// being simulated. Branches within a function never publish: the cost is one
+// store per inter-function transfer, none per op.
+DART_FORCE_INLINE void PublishOp(int64_t* x, const FastOp* op) {
+  reinterpret_cast<MixedRegs*>(x)->sim_op.store(op, std::memory_order_relaxed);
+}
+
 // A non-linking branch to native code: the CPU must never see a patch pc as
 // its return address (see Simulator::MixedBranch).
 DART_FORCE_INLINE void FixLinkRegister(int64_t* x) {
@@ -443,7 +477,10 @@ uword H_Slow(HARGS) {
   if (next == pc + Instr::kInstrSize) NEXT();
   uword native = 0;
   const FastOp* target = ResolveSlow(next, &native);
-  if (target != nullptr) DISPATCH(target);
+  if (target != nullptr) {
+    PublishOp(x, target);
+    DISPATCH(target);
+  }
   FixLinkRegister(x);
   return ExitTo(ip, x, native);
 }
@@ -452,7 +489,10 @@ uword H_Slow(HARGS) {
 uword H_End(HARGS) {
   uword native = 0;
   const FastOp* target = ResolveSlow(static_cast<uword>(ip->imm), &native);
-  if (target != nullptr) DISPATCH(target);
+  if (target != nullptr) {
+    PublishOp(x, target);
+    DISPATCH(target);
+  }
   FixLinkRegister(x);
   return ExitTo(ip, x, native);
 }
@@ -1023,6 +1063,7 @@ uword H_BLocalLink(HARGS) {
 uword H_BSimDecode(HARGS) {
   const auto* slot = reinterpret_cast<std::atomic<const FastOp*>*>(ip->aux);
   const FastOp* ops = DecodeEntry(slot - g_entry_ops);
+  PublishOp(x, ops + ip->i32);
   DISPATCH(ops + ip->i32);
 }
 
@@ -1032,6 +1073,7 @@ uword H_BSim(HARGS) {
   if (ops == nullptr) [[unlikely]] {
     [[clang::musttail]] return H_BSimDecode(ip, x, fa, fb, fk, sim);
   }
+  PublishOp(x, ops + ip->i32);
   DISPATCH(ops + ip->i32);
 }
 
@@ -1042,6 +1084,7 @@ uword H_BlSim(HARGS) {
   if (ops == nullptr) [[unlikely]] {
     [[clang::musttail]] return H_BSimDecode(ip, x, fa, fb, fk, sim);
   }
+  PublishOp(x, ops + ip->i32);
   DISPATCH(ops + ip->i32);
 }
 
@@ -1067,7 +1110,10 @@ uword H_BrSlow(HARGS) {
   const uword target = static_cast<uword>(x[ip->rn]);
   uword native = 0;
   const FastOp* next = ResolveSlow(target, &native);
-  if (next != nullptr) DISPATCH(next);
+  if (next != nullptr) {
+    PublishOp(x, next);
+    DISPATCH(next);
+  }
   FixLinkRegister(x);
   return ExitTo(ip, x, native);
 }
@@ -1076,7 +1122,10 @@ uword H_BrSlow(HARGS) {
 uword H_Br(HARGS) {
   const uword target = static_cast<uword>(x[ip->rn]);
   const FastOp* next = GateOp(target);
-  if (next != nullptr) DISPATCH(next);
+  if (next != nullptr) {
+    PublishOp(x, next);
+    DISPATCH(next);
+  }
   if (MixedMode::InPatchText(target) || MixedMode::IsGate(target) ||
       MixedMode::InPatchText(static_cast<uword>(x[kLinkSlot]))) [[unlikely]] {
     [[clang::musttail]] return H_BrSlow(ip, x, fa, fb, fk, sim);
@@ -1091,7 +1140,10 @@ uword H_BlrSlow(HARGS) {
   x[kLinkSlot] = ip->imm;
   uword native = 0;
   const FastOp* next = ResolveSlow(target, &native);
-  if (next != nullptr) DISPATCH(next);
+  if (next != nullptr) {
+    PublishOp(x, next);
+    DISPATCH(next);
+  }
   return ExitTo(ip, x, native);
 }
 
@@ -1107,6 +1159,7 @@ uword H_Blr(HARGS) {
     return ExitTo(ip, x, target);
   }
   x[kLinkSlot] = ip->imm;
+  PublishOp(x, next);
   DISPATCH(next);
 }
 
@@ -2657,6 +2710,11 @@ const FastOp* DecodeEntry(intptr_t j) {
   g_decoded_entries.fetch_add(1, std::memory_order_relaxed);
   g_decoded_bytes.fetch_add((n + 1) * sizeof(FastOp),
                             std::memory_order_relaxed);
+  OpTableRegistry* tables = g_op_tables.load(std::memory_order_relaxed);
+  const intptr_t k = tables->count.load(std::memory_order_relaxed);
+  RELEASE_ASSERT(k < tables->capacity);
+  tables->records[k] = {ops, n, lo};
+  tables->count.store(k + 1, std::memory_order_release);
   g_entry_ops[j].store(ops, std::memory_order_release);
   return ops;
 }
@@ -2866,6 +2924,7 @@ uword Simulator::RunMixedFast(MixedRegs* regs) {
       }
     }
   }
+  PublishOp(x, ip);
   return ip->h(ip, x, 0, 0, kFLogic64, this);
 }
 
@@ -2883,6 +2942,9 @@ extern "C" uword DartMixedRun(MixedRegs* regs) {
     MixedMode::native_to_sim_.fetch_add(1, std::memory_order_relaxed);
   }
   if (Mode() == kModeSimulator) [[unlikely]] {
+    // The generic simulator does not publish ops: the profiler cannot tell
+    // which function it is in once it has started.
+    regs->sim_op.store(nullptr, std::memory_order_relaxed);
     return sim->RunMixed(regs);
   }
   const uword target = sim->RunMixedFast(regs);
@@ -2896,6 +2958,23 @@ extern "C" uword DartMixedRun(MixedRegs* regs) {
     return target & ~static_cast<uword>(1);
   }
   return target;
+}
+
+uword MixedInterpOpPc(const void* op) {
+  const OpTableRegistry* tables = g_op_tables.load(std::memory_order_acquire);
+  if (tables == nullptr) return 0;
+  const intptr_t count = tables->count.load(std::memory_order_acquire);
+  const uword p = reinterpret_cast<uword>(op);
+  for (intptr_t i = 0; i < count; i++) {
+    const OpTableRecord& r = tables->records[i];
+    const uword offset = p - reinterpret_cast<uword>(r.ops);
+    if (r.n <= 0 || offset >= (r.n + 1) * sizeof(FastOp)) continue;
+    if (offset % sizeof(FastOp) != 0) return 0;
+    const intptr_t index =
+        Utils::Minimum<intptr_t>(offset / sizeof(FastOp), r.n - 1);
+    return r.lo + index * Instr::kInstrSize;
+  }
+  return 0;
 }
 
 void MixedInterpPrintStats() {

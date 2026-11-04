@@ -30,6 +30,9 @@
 #include "vm/json_stream.h"
 #include "vm/lockers.h"
 #include "vm/message_handler.h"
+#if defined(DART_MIXED_MODE)
+#include "vm/mixed_mode.h"
+#endif
 #include "vm/native_symbol.h"
 #include "vm/object.h"
 #include "vm/object_store.h"
@@ -1022,21 +1025,30 @@ void ClearProfileVisitor::VisitSample(Sample* sample) {
 // Executing Dart code, walk the stack.
 class ProfilerDartStackWalker : public ProfilerStackWalker {
  public:
+  // With nonzero [stack_lower, stack_upper), every frame pointer is
+  // validated (aligned, inside the bounds, above the previous one) before a
+  // slot of its frame is read, and an invalid one ends the walk. Mixed mode
+  // needs this: its frame pointers can come from simulated state.
   ProfilerDartStackWalker(Thread* thread,
                           Sample* sample,
                           Isolate* isolate,
                           uword pc,
-                          uword fp)
+                          uword fp,
+                          uword stack_lower = 0,
+                          uword stack_upper = 0)
       : ProfilerStackWalker(sample, isolate),
         thread_(thread),
         pc_(reinterpret_cast<uword*>(pc)),
-        fp_(reinterpret_cast<uword*>(fp)) {}
+        fp_(reinterpret_cast<uword*>(fp)),
+        stack_lower_(stack_lower),
+        stack_upper_(stack_upper) {}
 
   void WalkFromExitFrame() {
     // Can't be in the middle of a prologue. Won't need an SP or LR fixup.
     sample_->set_exit_frame_sample(true);
 
     // Skip exit frame.
+    if (!ValidFrame(fp_)) return;
     pc_ = CallerPC();
     fp_ = CallerFP();
     walk();
@@ -1075,17 +1087,25 @@ class ProfilerDartStackWalker : public ProfilerStackWalker {
       // Skip entry frame.
       if (StubCode::InInvocationStub(thread_, reinterpret_cast<uword>(pc_),
                                      IsInterpretedFrame())) {
+        if (!ValidFrame(fp_)) break;
         pc_ = nullptr;
+        uword* entry_fp = fp_;
         fp_ = ExitLink();
         if (fp_ == nullptr) {
           break;  // End of Dart stack.
         }
+        if (!ValidCaller(entry_fp, fp_)) break;
 
         // Skip exit frame.
         pc_ = CallerPC();
         fp_ = CallerFP();
 
         // At least one frame between exit and next entry frame.
+        if (validating() &&
+            StubCode::InInvocationStub(thread_, reinterpret_cast<uword>(pc_),
+                                       IsInterpretedFrame())) {
+          break;  // Inconsistent state (see the constructor).
+        }
         RELEASE_ASSERT(!StubCode::InInvocationStub(
             thread_, reinterpret_cast<uword>(pc_), IsInterpretedFrame()));
       }
@@ -1094,9 +1114,40 @@ class ProfilerDartStackWalker : public ProfilerStackWalker {
         break;  // Sample is full.
       }
 
+      if (!ValidFrame(fp_)) break;
+      uword* callee_fp = fp_;
       pc_ = CallerPC();
       fp_ = CallerFP();
+      if (validating() && !ValidCaller(callee_fp, fp_)) break;
     }
+  }
+
+  bool validating() const { return stack_upper_ != 0; }
+
+  // Can the slots of the frame at `fp` (exit link, saved fp, saved pc) be
+  // read? Always true when not validating.
+  bool ValidFrame(uword* fp) const {
+    if (!validating()) return true;
+    const uword addr = reinterpret_cast<uword>(fp);
+    const intptr_t lowest = Utils::Minimum<intptr_t>(
+        Utils::Minimum<intptr_t>(kExitLinkSlotFromEntryFp,
+                                 kSavedCallerFpSlotFromFp),
+        kSavedCallerPcSlotFromFp);
+    const intptr_t highest = Utils::Maximum<intptr_t>(
+        Utils::Maximum<intptr_t>(kExitLinkSlotFromEntryFp,
+                                 kSavedCallerFpSlotFromFp),
+        kSavedCallerPcSlotFromFp);
+    return Utils::IsAligned(addr, kWordSize) &&
+           addr + lowest * kWordSize >= stack_lower_ &&
+           addr + lowest * kWordSize <= addr &&  // No wrap-around.
+           addr + (highest + 1) * kWordSize <= stack_upper_ &&
+           addr + (highest + 1) * kWordSize > addr;
+  }
+
+  // Frames are older the higher they are: a caller's (or an exit frame's)
+  // fp must be above its callee's, which also bounds the walk.
+  bool ValidCaller(uword* callee_fp, uword* caller_fp) const {
+    return !validating() || caller_fp > callee_fp;
   }
 
   bool IsInterpretedFrame() const {
@@ -1142,6 +1193,8 @@ class ProfilerDartStackWalker : public ProfilerStackWalker {
   Thread* const thread_;
   uword* pc_;
   uword* fp_;
+  const uword stack_lower_;
+  const uword stack_upper_;
 };
 
 static void CopyStackBuffer(Sample* sample, uword sp_addr) {
@@ -1352,13 +1405,36 @@ void Profiler::SampleThread(Thread* thread,
     uintptr_t fp = thread->top_exit_frame_info();
     uintptr_t pc = 0;
     counters_.stack_walker_dart_exit.fetch_add(1);
+#if defined(DART_MIXED_MODE)
+    ProfilerDartStackWalker dart_stack_walker(thread, sample, isolate, pc, fp,
+                                              os_thread->stack_limit(),
+                                              os_thread->stack_base());
+#else
     ProfilerDartStackWalker dart_stack_walker(thread, sample, isolate, pc, fp);
+#endif
     dart_stack_walker.WalkFromExitFrame();
   } else if (thread->IsExecutingDartCode()) {
     uintptr_t sp = state.dsp;
     uintptr_t fp = state.fp;
     uintptr_t pc = state.pc;
     uintptr_t lr = state.lr;
+#if defined(DART_MIXED_MODE)
+    // Interrupted in the mixed-mode interpreter: its C++ frames are on a side
+    // stack; walk the simulated Dart frames from the simulated registers
+    // instead (see MixedMode::SampleSimulatedState for when they are
+    // trusted). Without a trusted state, record no Dart frames.
+    switch (MixedMode::SampleSimulatedState(thread->mixed_area(), state.csp,
+                                            &pc, &fp, &sp, &lr)) {
+      case MixedMode::kNotSimulating:
+      case MixedMode::kSimulated:
+        break;
+      case MixedMode::kSimulatedUnknown:
+        counters_.stack_walker_none.fetch_add(1);
+        sample->SetAt(0, state.pc);
+        ReleaseToCurrentBlock(isolate);
+        return;
+    }
+#endif
 #if defined(DART_INCLUDE_SIMULATOR)
     if (FLAG_use_simulator) {
       Simulator* simulator = isolate->simulator();
@@ -1383,7 +1459,13 @@ void Profiler::SampleThread(Thread* thread,
     CopyStackBuffer(sample, sp);
 
     counters_.stack_walker_dart_exit.fetch_add(1);
+#if defined(DART_MIXED_MODE)
+    ProfilerDartStackWalker dart_stack_walker(thread, sample, isolate, pc, fp,
+                                              os_thread->stack_limit(),
+                                              os_thread->stack_base());
+#else
     ProfilerDartStackWalker dart_stack_walker(thread, sample, isolate, pc, fp);
+#endif
     dart_stack_walker.WalkFromTopFrame(sp, lr);
   } else {
     counters_.stack_walker_none.fetch_add(1);
@@ -1929,6 +2011,14 @@ ProcessedSample* SampleBuffer::BuildProcessedSample(
       if (current->At(i) == 0) {
         break;
       }
+#if defined(DART_MIXED_MODE)
+      // Frames of mixed-mode code are described by patch pcs (gates and
+      // linked release code are translated, RUNTIME.md section 6.1).
+      if (MixedMode::active()) {
+        processed_sample->Add(MixedMode::ToPatchPc(current->At(i)));
+        continue;
+      }
+#endif
       processed_sample->Add(current->At(i));
     }
 
@@ -2088,6 +2178,12 @@ void SampleBlockProcessor::Shutdown() {
 
 void Profiler::IsolateShutdown(Isolate* isolate) {
   FlushSampleBlocks(isolate);
+#if defined(DART_MIXED_MODE)
+  if (getenv("DART_MIXED_PROFILE_DUMP") != nullptr && config_.enabled &&
+      !Isolate::IsSystemIsolate(isolate)) {
+    ProfilerService::PrintMixedModeSummary(Thread::Current());
+  }
+#endif
   NOT_IN_PRECOMPILED(Timeline::DrainCompletedSampleBlocksIntoRecorder(isolate));
 }
 

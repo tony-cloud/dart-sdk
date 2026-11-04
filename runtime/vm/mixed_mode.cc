@@ -48,6 +48,8 @@ uword MixedMode::patch_start_ = 0;
 uword MixedMode::patch_size_ = 0;
 std::atomic<int64_t> MixedMode::native_to_sim_ = {0};
 std::atomic<int64_t> MixedMode::sim_to_native_ = {0};
+std::atomic<int64_t> MixedMode::profiler_simulated_ = {0};
+std::atomic<int64_t> MixedMode::profiler_unknown_ = {0};
 
 namespace {
 
@@ -631,11 +633,11 @@ MixedRegs* MixedMode::NewThreadArea() {
   auto* area = reinterpret_cast<MixedRegs*>(calloc(1, sizeof(MixedRegs)));
   // The side stack only holds the simulator's own C++ frames (and signal
   // handler frames while simulating); Dart frames stay on the thread stack.
-  constexpr intptr_t kSideStackSize = 512 * KB;
   VirtualMemory* stack =
       VirtualMemory::Allocate(kSideStackSize, false, "dart-mixed-sim-stack");
   RELEASE_ASSERT(stack != nullptr);
-  area->c_stack_top = stack->end() - 64;
+  RELEASE_ASSERT(stack->size() == static_cast<uword>(kSideStackSize));
+  area->c_stack_top = stack->end() - kSideStackEndGap;
   return area;
 }
 
@@ -649,7 +651,80 @@ void MixedMode::PrintStats() {
   OS::PrintErr("mixed: native->sim %" Pd64 " sim->native %" Pd64
                " gates-used %" Pu "\n",
                native_to_sim_.load(), sim_to_native_.load(), next_gate.load());
+  if (profiler_simulated_.load() != 0 || profiler_unknown_.load() != 0) {
+    OS::PrintErr("mixed: profiler samples while simulating: walked %" Pd64
+                 " unknown-state %" Pd64 "\n",
+                 profiler_simulated_.load(), profiler_unknown_.load());
+  }
   MixedInterpPrintStats();
+}
+
+// Profiler support.
+//
+// While a thread simulates, its CPU runs the interpreter's C++ on the side
+// stack, so the interrupted fp/pc describe C++ frames; the simulated Dart
+// frames are on the thread stack, described by the area's x29/x15/x30 and
+// the op published in sim_op. The native frame chain must not be walked: the
+// gate's C++ frame records the Dart fp of the moment the activation began,
+// and simulated code may have returned past that frame since, and reused its
+// stack (a stale frame pointer; it crashed the sampler in stress mode).
+//
+// Invariant (when the state is trusted):
+//  1. A thread is simulating iff its CPU sp is on its side stack. The gate
+//     switches sp after saving every register in the area and clearing
+//     sim_op, and switches back only after DartMixedRun has returned, i.e.
+//     after the area holds the final simulated state.
+//  2. The area is the interpreter's register file: every op writes its
+//     results there before it dispatches (a tail call; the compiler cannot
+//     defer stores past it). So at any instant the area is the simulated
+//     state at an op boundary, except for the registers of the one op being
+//     executed, each of which holds either its old or its new value (aligned
+//     64-bit stores).
+//  3. The gate sets sim_op to kMixedSimEntering before it switches to the
+//     side stack. Until the interpreter publishes the activation's first op,
+//     no simulated instruction has run, so the area is the gate's entry
+//     state and x16 the gate, whose bound patch pc is the pc. From then on
+//     sim_op is published at every dispatch that may enter another
+//     function, so it lies in the function being simulated (precision: the
+//     function, not the instruction; within the function it is the last
+//     entry or return point). The generic simulator
+//     (DART_MIXED_INTERP=simulator) publishes nothing and sets it to nullptr
+//     (unknown) before it starts.
+//  4. The sampler runs while the thread is stopped (Mach thread_suspend on
+//     Apple platforms, a signal handler on the thread elsewhere), so it sees
+//     the effects of every instruction before the interruption.
+// From 2 and 3, x29 is a frame pointer the simulated code actually had,
+// paired with a pc of the same function or of a function it is calling or
+// returning into (the same imprecision a native sample has in a prologue or
+// epilogue). Nothing here dereferences x29: the stack walker validates every
+// frame pointer against the thread's stack bounds before reading it, so even
+// a torn state can only cost the sample's accuracy, never a fault.
+MixedMode::SampleState MixedMode::SampleSimulatedState(const MixedRegs* area,
+                                                       uword csp,
+                                                       uword* pc,
+                                                       uword* fp,
+                                                       uword* sp,
+                                                       uword* lr) {
+  if (!active_ || !OnSideStack(area, csp)) return kNotSimulating;
+  const volatile int64_t* x = area->x;
+  const void* op = area->sim_op.load(std::memory_order_relaxed);
+  uword patch_pc = 0;
+  if (reinterpret_cast<uword>(op) == kMixedSimEntering) {
+    const uword gate = static_cast<uword>(x[16]);
+    if (IsGate(gate)) patch_pc = GateTarget(gate);
+  } else if (op != nullptr) {
+    patch_pc = MixedInterpOpPc(op);
+  }
+  if (patch_pc == 0) {
+    profiler_unknown_.fetch_add(1, std::memory_order_relaxed);
+    return kSimulatedUnknown;
+  }
+  *pc = patch_pc;
+  *fp = static_cast<uword>(x[FPREG]);
+  *sp = static_cast<uword>(x[SPREG]);
+  *lr = static_cast<uword>(x[ConcreteRegister(LINK_REGISTER)]);
+  profiler_simulated_.fetch_add(1, std::memory_order_relaxed);
+  return kSimulated;
 }
 
 // DartMixedRun is defined with the interpreter (simulator_arm64_mixed.cc).
