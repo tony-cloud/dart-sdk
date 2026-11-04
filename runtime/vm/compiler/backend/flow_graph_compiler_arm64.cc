@@ -400,7 +400,13 @@ void FlowGraphCompiler::GenerateStaticDartCall(intptr_t deopt_id,
                                                const Function& target,
                                                Code::EntryKind entry_kind) {
   ASSERT(CanCallDart());
-  if (FLAG_precompiled_mode && LinkInfo::IsDDTarget(target)) {
+#if defined(DART_PRECOMPILER)
+  const bool is_dd_target =
+      FLAG_precompiled_mode && LinkInfo::IsDDTarget(target);
+#else
+  const bool is_dd_target = false;
+#endif
+  if (is_dd_target) {
     // DD (dynamic dispatch) slot: call through the target's Function object
     // in the global object pool instead of a direct pc-relative call, so the
     // caller's instructions do not depend on the callee's code. The checked
