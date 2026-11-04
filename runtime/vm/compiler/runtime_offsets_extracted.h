@@ -19487,7 +19487,7 @@ static constexpr dart::compiler::target::word
     AOT_Closure_elements_start_offset = 0x14;
 static constexpr dart::compiler::target::word AOT_Closure_element_size = 0x4;
 static constexpr dart::compiler::target::word AOT_Code_elements_start_offset =
-    0x40;
+    0x44;
 static constexpr dart::compiler::target::word AOT_Code_element_size = 0x4;
 static constexpr dart::compiler::target::word
     AOT_Context_elements_start_offset = 0xc;
@@ -24022,7 +24022,7 @@ static constexpr dart::compiler::target::word
     AOT_Closure_elements_start_offset = 0x14;
 static constexpr dart::compiler::target::word AOT_Closure_element_size = 0x4;
 static constexpr dart::compiler::target::word AOT_Code_elements_start_offset =
-    0x40;
+    0x44;
 static constexpr dart::compiler::target::word AOT_Code_element_size = 0x4;
 static constexpr dart::compiler::target::word
     AOT_Context_elements_start_offset = 0xc;
