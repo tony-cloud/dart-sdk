@@ -688,7 +688,7 @@ void ObjectPoolBuilder::ReserveLinkBaseSlots() {
   }
   for (intptr_t i = start; i < end; i++) {
     object_pool_.Add(ObjectPoolBuilderEntry(
-        0, ObjectPoolBuilderEntry::kImmediate,
+        static_cast<uint64_t>(0), ObjectPoolBuilderEntry::kImmediate,
         ObjectPoolBuilderEntry::kNotPatchable));
     link_slot_used_.Add(false);
   }
