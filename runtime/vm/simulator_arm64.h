@@ -19,6 +19,9 @@
 #include "vm/constants.h"
 #include "vm/random.h"
 #include "vm/simulator_memory.h"
+#if defined(DART_MIXED_MODE)
+#include "vm/mixed_mode.h"
+#endif
 
 namespace dart {
 
@@ -126,10 +129,20 @@ class Simulator {
   // the gate's patch pc until the code branches to native code, stores the
   // simulated state back and returns the native branch target.
   uword RunMixed(MixedRegs* regs);
+  // The same with the pre-decoded interpreter (simulator_arm64_mixed.cc);
+  // DartMixedRun selects it unless DART_MIXED_INTERP=simulator.
+  uword RunMixedFast(MixedRegs* regs);
 #endif
 
  private:
 #if defined(DART_MIXED_MODE)
+  friend class MixedInterp;
+  // Executes the instruction at `instr` with the generic decoders, on behalf
+  // of the pre-decoded interpreter. Flags are NZCV in bits 3..0, in and out.
+  // *next_pc is the next pc, or kEndSimulatingPC when the instruction
+  // branched to native code (mixed_exit_target_).
+  uint32_t MixedOldStep(Instr* instr, uint32_t nzcv, uword* next_pc);
+  void* mixed_interp_state_ = nullptr;
   void MixedBranch(Instr* instr, uword dest, bool link, uword ret);
   bool mixed_mode_ = false;
   uword mixed_exit_target_ = 0;
@@ -171,13 +184,24 @@ class Simulator {
   static constexpr uword kEndSimulatingPC = -2;
 
   // CPU state.
+#if defined(DART_MIXED_MODE)
+  // The register file is the thread's MixedRegs area while running mixed
+  // (RunMixed), so gates and the simulator share it without copying.
+  int64_t own_registers_[kMixedRegisterSlots];
+  simd_value_t own_vregisters_[kNumberOfVRegisters];
+  int64_t* registers_ = own_registers_;
+  simd_value_t* vregisters_ = own_vregisters_;
+#else
   int64_t registers_[kNumberOfCpuRegisters];
+#endif
   bool n_flag_;
   bool z_flag_;
   bool c_flag_;
   bool v_flag_;
 
+#if !defined(DART_MIXED_MODE)
   simd_value_t vregisters_[kNumberOfVRegisters];
+#endif
 
   // Simulator support.
   int64_t last_pc_;

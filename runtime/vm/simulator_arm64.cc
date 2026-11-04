@@ -804,6 +804,10 @@ Simulator::Simulator() : memory_(FLAG_sim_buffer_memory) {
   for (int i = 0; i < kNumberOfCpuRegisters; i++) {
     registers_[i] = 0;
   }
+#if defined(DART_MIXED_MODE)
+  registers_[kMixedZeroSlot] = 0;
+  registers_[kMixedSinkSlot] = 0;
+#endif
   n_flag_ = false;
   z_flag_ = false;
   c_flag_ = false;
@@ -4273,8 +4277,24 @@ void Simulator::MixedBranch(Instr* instr, uword dest, bool link, uword ret) {
     }
   }
   mixed_exit_target_ = target;
-  MixedMode::sim_to_native_.fetch_add(1, std::memory_order_relaxed);
+  if (MixedMode::count_transitions()) {
+    MixedMode::sim_to_native_.fetch_add(1, std::memory_order_relaxed);
+  }
   set_pc(kEndSimulatingPC);
+}
+
+uint32_t Simulator::MixedOldStep(Instr* instr, uint32_t nzcv, uword* next_pc) {
+  n_flag_ = (nzcv & 8) != 0;
+  z_flag_ = (nzcv & 4) != 0;
+  c_flag_ = (nzcv & 2) != 0;
+  v_flag_ = (nzcv & 1) != 0;
+  mixed_mode_ = true;
+  mixed_exit_target_ = 0;
+  pc_ = reinterpret_cast<int64_t>(instr);
+  InstructionDecodeImpl(instr);
+  *next_pc = static_cast<uword>(pc_);
+  return (n_flag_ ? 8 : 0) | (z_flag_ ? 4 : 0) | (c_flag_ ? 2 : 0) |
+         (v_flag_ ? 1 : 0);
 }
 
 uword Simulator::ReturnGateFor(uword ret) {
@@ -4329,14 +4349,11 @@ const Simulator::MixedTarget& Simulator::LookupMixedTarget(uword dest) {
 }
 
 uword Simulator::RunMixed(MixedRegs* regs) {
+  // The register file is the area itself (one area and one simulator per
+  // thread), so nothing is copied in or out.
+  registers_ = regs->x;
+  vregisters_ = reinterpret_cast<simd_value_t*>(regs->v);
   mixed_mode_ = true;
-  for (intptr_t i = 0; i < kNumberOfCpuRegisters; i++) {
-    registers_[i] = regs->x[i];
-  }
-  for (intptr_t i = 0; i < kNumberOfVRegisters; i++) {
-    vregisters_[i].bits.i64[0] = regs->v[i][0];
-    vregisters_[i].bits.i64[1] = regs->v[i][1];
-  }
   const uword gate = static_cast<uword>(regs->x[16]);
   if (!MixedMode::IsGate(gate)) FATAL("Mixed mode: entered from %#" Px, gate);
   const MixedTarget& t = LookupMixedTarget(gate);
@@ -4353,13 +4370,6 @@ uword Simulator::RunMixed(MixedRegs* regs) {
     ExecuteNoTrace();
   } else {
     ExecuteTrace();
-  }
-  for (intptr_t i = 0; i < kNumberOfCpuRegisters; i++) {
-    regs->x[i] = registers_[i];
-  }
-  for (intptr_t i = 0; i < kNumberOfVRegisters; i++) {
-    regs->v[i][0] = vregisters_[i].bits.i64[0];
-    regs->v[i][1] = vregisters_[i].bits.i64[1];
   }
   regs->exit_target = mixed_exit_target_;
   return mixed_exit_target_;

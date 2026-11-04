@@ -390,7 +390,9 @@ def part_a(tc, mixed, out, bench_args):
             unlinked_entry = (off, size)
             break
     # Keep the records sorted and disjoint so that only the entry check fails.
-    mid = len(links) // 2
+    # A record near the middle that is large enough to shrink by 16 bytes.
+    mid = next(i for i in range(len(links) // 2, len(links))
+               if links[i][2] >= 32)
     p, r, size, flags = links[mid]
     shifted = links[:mid] + [(p + 16, r + 16, size - 16, 0)] + links[mid + 1:]
     resized = links[:mid] + [(p, r, size - 16, 0)] + links[mid + 1:]

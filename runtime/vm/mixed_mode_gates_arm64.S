@@ -37,6 +37,28 @@
   ldr \reg, [x26, \reg]
 .endm
 
+// reg = &sym
+.macro ADDR reg, sym
+#if defined(__APPLE__)
+  adrp \reg, SYM(\sym)@PAGE
+  add \reg, \reg, SYM(\sym)@PAGEOFF
+#else
+  adrp \reg, \sym
+  add \reg, \reg, :lo12:\sym
+#endif
+.endm
+
+// reg = sym (a pointer-sized global)
+.macro LOAD_GLOBAL reg, sym
+#if defined(__APPLE__)
+  adrp \reg, SYM(\sym)@PAGE
+  ldr \reg, [\reg, SYM(\sym)@PAGEOFF]
+#else
+  adrp \reg, \sym
+  ldr \reg, [\reg, :lo12:\sym]
+#endif
+.endm
+
   .text
   .p2align 4
   .globl SYM(DartMixedGatesStart)
@@ -70,11 +92,21 @@ SYM(DartMixedSimEnter):
   str x30, [x17, #240]
   mov x16, sp
   str x16, [x17, #248]
-  add x16, x17, #256
+  add x16, x17, #272
   stp q0, q1, [x16, #0]
   stp q2, q3, [x16, #32]
   stp q4, q5, [x16, #64]
   stp q6, q7, [x16, #96]
+  // v8..v31 are saved unless the gate's flag says they are dead from its
+  // target (DartMixedGateFlags, set by the interpreter's liveness analysis;
+  // 0 = save). x0..x15 are free here: they are saved and reloaded at exit.
+  ldr x0, [x17, #128]
+  ADDR x1, DartMixedGatesStart
+  sub x0, x0, x1
+  lsr x0, x0, #3
+  LOAD_GLOBAL x1, DartMixedGateFlags
+  ldrb w0, [x1, x0]
+  cbnz w0, 1f
   stp q8, q9, [x16, #128]
   stp q10, q11, [x16, #160]
   stp q12, q13, [x16, #192]
@@ -87,8 +119,9 @@ SYM(DartMixedSimEnter):
   stp q26, q27, [x16, #416]
   stp q28, q29, [x16, #448]
   stp q30, q31, [x16, #480]
+1:
   // Switch to the side stack and run the simulator.
-  ldr x16, [x17, #768]
+  ldr x16, [x17, #784]
   mov sp, x16
   stp x29, x30, [sp, #-16]!
   mov x29, sp
@@ -96,11 +129,14 @@ SYM(DartMixedSimEnter):
   bl SYM(DartMixedRun)
   // x26 (THR) is callee-saved in the C ABI.
   LOAD_AREA x17
-  add x16, x17, #256
+  add x16, x17, #272
   ldp q0, q1, [x16, #0]
   ldp q2, q3, [x16, #32]
   ldp q4, q5, [x16, #64]
   ldp q6, q7, [x16, #96]
+  // Bit 0 of DartMixedRun's result: the exiting code cannot have written
+  // v8..v31 (Simulator EntryMayWriteHighV), so they are not reloaded.
+  tbnz x0, #0, 2f
   ldp q8, q9, [x16, #128]
   ldp q10, q11, [x16, #160]
   ldp q12, q13, [x16, #192]
@@ -113,6 +149,7 @@ SYM(DartMixedSimEnter):
   ldp q26, q27, [x16, #416]
   ldp q28, q29, [x16, #448]
   ldp q30, q31, [x16, #480]
+2:
   ldp x0, x1, [x17, #0]
   ldp x2, x3, [x17, #16]
   ldp x4, x5, [x17, #32]
@@ -131,7 +168,7 @@ SYM(DartMixedSimEnter):
   ldr x16, [x17, #248]
   mov sp, x16
   // The area is not on the stack, so it is safe to read after moving sp.
-  ldr x16, [x17, #776]
+  ldr x16, [x17, #792]
   br x16
 
 #endif  // defined(__aarch64__) && defined(DART_MIXED_MODE)

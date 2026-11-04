@@ -226,6 +226,117 @@ int callLoopNative(int n) {
   return s + 7;
 }
 
+// Device-style micros (docs/PATCH_PERFORMANCE.md, patch_perf_bench): the
+// hosts are changed (simulated); every callee below is unchanged (linked).
+abstract class VShape {
+  int area(int k);
+}
+
+class VSquare extends VShape {
+  @override
+  int area(int k) => k * k + 1;
+}
+
+class VRect extends VShape {
+  @override
+  int area(int k) => k * 3 + 2;
+}
+
+class VTri extends VShape {
+  @override
+  int area(int k) => (k * k) ~/ 2 + 3;
+}
+
+class VCircle extends VShape {
+  @override
+  int area(int k) => k * 7 - 1;
+}
+
+abstract class Scorer {
+  int score(int k);
+}
+
+class ScorerA implements Scorer {
+  @override
+  int score(int k) => k ^ 0x55;
+}
+
+class ScorerB implements Scorer {
+  @override
+  int score(int k) => k + 13;
+}
+
+class ScorerC implements Scorer {
+  @override
+  int score(int k) => k - 7;
+}
+
+class Chip {
+  int get weight => 3;
+}
+
+class Point {
+  Point(this.x, this.y);
+  final double x;
+  final double y;
+}
+
+class Workset {
+  final List<VShape> shapes = [VSquare(), VRect(), VTri(), VCircle()];
+  final List<Scorer> scorers = [ScorerA(), ScorerB(), ScorerC()];
+  final List<int> list = List<int>.generate(1000, (i) => i);
+  final Map<int, int> map = {for (var i = 0; i < 1000; i++) i: i * 2};
+  final Chip chip = Chip();
+}
+
+@pragma('vm:never-inline')
+int virtualB(Workset w, int n) {
+  var acc = 0;
+  final shapes = w.shapes;
+  final scorers = w.scorers;
+  for (var i = 0; i < n; i++) {
+    acc += shapes[i & 3].area(i & 15);
+    acc += scorers[i % 3].score(i & 31);
+  }
+  return acc + __K__;
+}
+
+@pragma('vm:never-inline')
+int listMapB(Workset w, int n) {
+  var acc = 0;
+  final list = w.list;
+  final map = w.map;
+  final scratch = <int>[];
+  for (var i = 0; i < n; i++) {
+    scratch.add(i);
+    acc += list[i % 1000];
+    acc += map[i % 1000]!;
+    map[(i * 7) % 1000] = i;
+    if (scratch.length > 64) scratch.clear();
+  }
+  return acc + scratch.length + __K__;
+}
+
+@pragma('vm:never-inline')
+int allocB(int n) {
+  var acc = 0.0;
+  for (var i = 0; i < n; i++) {
+    final p = Point(i.toDouble(), 2.0);
+    acc += p.x + p.y;
+  }
+  return acc.toInt() + __K__;
+}
+
+@pragma('vm:never-inline')
+int getterB(Workset w, int n) {
+  var acc = 0;
+  final chip = w.chip;
+  for (var i = 0; i < n; i++) {
+    acc += chip.weight ^ i;
+  }
+  return acc + __K__;
+}
+
 void check(String name, Object actual, Object expected) {
   final ok = actual == expected;
   print('${ok ? "PASS" : "FAIL"} $name: $actual (expected $expected)');
@@ -281,6 +392,11 @@ Future<void> main(List<String> args) async {
   callLoopNative(1000);
   applyN(changedLeaf, 1000);
   applyN(tinyN, 1000);
+  final w = Workset();
+  virtualB(w, 1000);
+  listMapB(w, 1000);
+  allocB(1000);
+  getterB(w, 1000);
   final r = <String, int>{
     'numLoopB(changed)': timeUs(() => numLoopB(n)),
     'numLoopN(same)': timeUs(() => numLoopN(n)),
@@ -289,6 +405,10 @@ Future<void> main(List<String> args) async {
     'callLoopNative': timeUs(() => callLoopNative(n ~/ 4)),
     'applyN(changedLeaf) native->sim': timeUs(() => applyN(changedLeaf, n ~/ 4)),
     'applyN(tinyN) native->native': timeUs(() => applyN(tinyN, n ~/ 4)),
+    'virtualB(virtual+interface)': timeUs(() => virtualB(w, n ~/ 8)),
+    'listMapB(List/Map)': timeUs(() => listMapB(w, n ~/ 32)),
+    'allocB(allocation)': timeUs(() => allocB(n ~/ 4)),
+    'getterB(inlined getter)': timeUs(() => getterB(w, n)),
   };
   r.forEach((key, v) => print('TIME $key ${v}us'));
 }

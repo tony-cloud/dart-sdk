@@ -26,11 +26,16 @@ extern char DartMixedGatesEnd[];
 // A variable rather than an assembler constant, so one source works for
 // every build configuration.
 __attribute__((visibility("hidden"))) uintptr_t DartMixedAreaOffset = 0;
+// One byte per gate, read by DartMixedSimEnter: nonzero when v8..v31 are dead
+// at the gate's target, so the gate need not save them. Written by the
+// interpreter (simulator_arm64_mixed.cc).
+__attribute__((visibility("hidden"))) uint8_t* DartMixedGateFlags = nullptr;
 }
 
 namespace dart {
 
 bool MixedMode::active_ = false;
+bool MixedMode::count_transitions_ = false;
 uword MixedMode::link_generation_ = 1;
 const uint8_t* MixedMode::patch_image_ = nullptr;
 const uint8_t* MixedMode::base_image_ = nullptr;
@@ -204,6 +209,7 @@ bool MixedMode::RegisterImages(const uint8_t* patch_text,
                                intptr_t link_count,
                                const char** error) {
   DartMixedAreaOffset = Thread::mixed_area_offset();
+  count_transitions_ = EnvFlag("DART_MIXED_VERBOSE");
   *error = nullptr;
   if (patch_text == nullptr) {
     *error = "no patch image";
@@ -267,6 +273,10 @@ bool MixedMode::RegisterImages(const uint8_t* patch_text,
         sizeof(uword)));
     gate_map =
         reinterpret_cast<GateSlot*>(calloc(kGateMapSize, sizeof(GateSlot)));
+    DartMixedGateFlags = reinterpret_cast<uint8_t*>(
+        calloc((reinterpret_cast<uword>(DartMixedGatesEnd) - gates_start_) >>
+                   kGateSizeLog2,
+               1));
     gate_mutex = new Mutex();
   }
   RELEASE_ASSERT(gate_count * 2 < kGateMapSize);
@@ -360,6 +370,34 @@ bool MixedMode::LookupEntry(uword pc,
   *linked = entry_linked[i] != 0;
   *delta = entry_delta[i];
   return true;
+}
+
+intptr_t MixedMode::EntryCount() {
+  return entry_count;
+}
+
+intptr_t MixedMode::EntryIndex(uword pc) {
+  return FindEntryIndex(pc);
+}
+
+uword MixedMode::EntryStart(intptr_t i) {
+  return entry_start[i];
+}
+
+uword MixedMode::EntryLimit(intptr_t i) {
+  return entry_start[i + 1];
+}
+
+bool MixedMode::EntryLinked(intptr_t i) {
+  return entry_linked[i] != 0;
+}
+
+intptr_t MixedMode::EntryDelta(intptr_t i) {
+  return entry_delta[i];
+}
+
+uword MixedMode::GateCount() {
+  return gate_count;
 }
 
 bool MixedMode::LookupEntry(uword pc, uword* lo, uword* hi, bool* linked) {
@@ -611,17 +649,10 @@ void MixedMode::PrintStats() {
   OS::PrintErr("mixed: native->sim %" Pd64 " sim->native %" Pd64
                " gates-used %" Pu "\n",
                native_to_sim_.load(), sim_to_native_.load(), next_gate.load());
+  MixedInterpPrintStats();
 }
 
-extern "C" uword DartMixedRun(MixedRegs* regs) {
-  Simulator* sim = regs->simulator;
-  if (sim == nullptr) {
-    sim = new Simulator();
-    regs->simulator = sim;
-  }
-  MixedMode::native_to_sim_.fetch_add(1, std::memory_order_relaxed);
-  return sim->RunMixed(regs);
-}
+// DartMixedRun is defined with the interpreter (simulator_arm64_mixed.cc).
 
 }  // namespace dart
 

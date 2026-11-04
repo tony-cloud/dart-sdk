@@ -39,16 +39,23 @@ namespace dart {
 class Simulator;
 
 // Saved CPU state at a native <-> simulator transition. The layout is shared
-// with mixed_mode_gates_arm64.S.
+// with mixed_mode_gates_arm64.S. The simulator works on this area directly
+// (its register file aliases it), so a transition copies no registers beyond
+// the gate's own save and restore.
 struct MixedRegs {
-  int64_t x[32];         // x0..x30; x[31] is CSP.          offset 0
-  int64_t v[32][2];      // q0..q31.                         offset 256
-  uword c_stack_top;     // Top of the side stack.           offset 768
-  uword exit_target;     // Native address to resume at.     offset 776
-  Simulator* simulator;  // Per-thread simulator instance.   offset 784
+  // x0..x30; x[31] is CSP; x[32] reads as zero (the interpreter's XZR source
+  // slot, never written); x[33] absorbs writes to XZR.     offset 0
+  int64_t x[34];
+  int64_t v[32][2];      // q0..q31.                         offset 272
+  uword c_stack_top;     // Top of the side stack.           offset 784
+  uword exit_target;     // Native address to resume at.     offset 792
+  Simulator* simulator;  // Per-thread simulator instance.   offset 800
   uword padding;
 };
-static_assert(sizeof(MixedRegs) == 800, "Keep in sync with the gate asm");
+static_assert(sizeof(MixedRegs) == 816, "Keep in sync with the gate asm");
+static constexpr intptr_t kMixedZeroSlot = 32;
+static constexpr intptr_t kMixedSinkSlot = 33;
+static constexpr intptr_t kMixedRegisterSlots = 34;
 
 // One record of a vmcode v1 link table (docs/ios-linker/COMPILER_LINKER.md
 // section 6): the patch instructions entry whose payload starts at
@@ -157,6 +164,20 @@ class MixedMode : public AllStatic {
   // Patch pc for a pc inside linked release code.
   static uword BaseToPatch(uword base_pc);
 
+  // Instructions-table queries for the simulator's pre-decoder (valid while
+  // active; the table is immutable after LinkImage).
+  static intptr_t EntryCount();
+  // Index of the entry containing `pc`, or -1.
+  static intptr_t EntryIndex(uword pc);
+  static uword EntryStart(intptr_t i);
+  // End of entry i, including trailing alignment padding.
+  static uword EntryLimit(intptr_t i);
+  static bool EntryLinked(intptr_t i);
+  static intptr_t EntryDelta(intptr_t i);
+  static uword GateCount();
+  // Whether transitions are counted (DART_MIXED_VERBOSE).
+  static bool count_transitions() { return count_transitions_; }
+
   // Allocates the per-thread register area and side stack.
   static MixedRegs* NewThreadArea();
   static void DeleteThreadArea(MixedRegs* area);
@@ -183,10 +204,14 @@ class MixedMode : public AllStatic {
   static uword AllocateGate(uword patch_pc);
 
   static bool active_;
+  static bool count_transitions_;
   static uword link_generation_;
   static const uint8_t* patch_image_;
   static const uint8_t* base_image_;
 };
+
+// Statistics of the pre-decoded interpreter (simulator_arm64_mixed.cc).
+void MixedInterpPrintStats();
 
 // Entry point called from the gate assembly with the saved registers. Runs
 // the simulator and returns the native address at which to resume.
