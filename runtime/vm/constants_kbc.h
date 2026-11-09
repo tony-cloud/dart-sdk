@@ -268,13 +268,88 @@ namespace dart {
 
 typedef uint8_t KBCInstr;
 
+// Open Shorebird hardened-diversified bytecode profile (contract v3, see
+// tools/bytecode_profile.py). A profiled VM reads every opcode byte through a
+// compile-time permutation of the public opcodes. Trap keeps byte 0 and the
+// VM-internal opcodes keep their canonical bytes. Semantic opcodes (the enum
+// below) are used everywhere else, so widths, operand formats and validation
+// rules never depend on a wire byte.
+namespace kbc_profile {
+
+#define KBC_PROFILE_COUNT_OPCODE(name, encoding, kind, op1, op2, op3) +1
+static constexpr intptr_t kNumPublicOpcodes =
+    0 PUBLIC_KERNEL_BYTECODES_LIST(KBC_PROFILE_COUNT_OPCODE);
+#undef KBC_PROFILE_COUNT_OPCODE
+
+#if defined(DART_BYTECODE_PROFILE)
+inline constexpr uint8_t kSemanticToWire[] = {DART_BYTECODE_PROFILE_WIRE};
+inline constexpr uint8_t kDigest[] = {DART_BYTECODE_PROFILE_DIGEST};
+inline constexpr const char* kId = DART_BYTECODE_PROFILE_ID;
+
+static_assert(DART_BYTECODE_PROFILE_COUNT == kNumPublicOpcodes,
+              "dart_bytecode_profile was made for another opcode table");
+static_assert(sizeof(kSemanticToWire) == kNumPublicOpcodes,
+              "dart_bytecode_profile must map every public opcode");
+static_assert(sizeof(kDigest) == 32, "profile digest must be SHA-256");
+
+struct WireTable {
+  uint8_t to_semantic[256];
+};
+
+constexpr WireTable MakeWireTable() {
+  WireTable table{};
+  for (intptr_t i = 0; i < 256; i++) {
+    table.to_semantic[i] = static_cast<uint8_t>(i);
+  }
+  for (intptr_t i = 0; i < kNumPublicOpcodes; i++) {
+    table.to_semantic[kSemanticToWire[i]] = static_cast<uint8_t>(i);
+  }
+  return table;
+}
+
+inline constexpr WireTable kWireTable = MakeWireTable();
+
+constexpr bool IsBijectionWithTrapAtZero() {
+  if (kSemanticToWire[0] != 0) return false;
+  for (intptr_t i = 0; i < kNumPublicOpcodes; i++) {
+    if (kSemanticToWire[i] >= kNumPublicOpcodes) return false;
+    if (kWireTable.to_semantic[kSemanticToWire[i]] != i) return false;
+  }
+  return true;
+}
+static_assert(IsBijectionWithTrapAtZero(),
+              "dart_bytecode_profile must permute the public opcodes and "
+              "keep Trap at 0");
+#endif  // defined(DART_BYTECODE_PROFILE)
+
+}  // namespace kbc_profile
+
 class KernelBytecode {
  public:
   // Magic value of bytecode files.
   static const intptr_t kMagicValue = 0x44424333;  // 'DBC3'
+  // Magic value of profile-bound bytecode files (hardened-diversified). The
+  // format version is followed by the 32 SHA-256 bytes of the profile.
+  static const intptr_t kProfiledMagicValue = 0x44425033;  // 'DBP3'
+  static const intptr_t kProfileDigestSize = 32;
   // Bytecode format version supported by the VM
   // (should match pkg/dart2bytecode/lib/dbc.dart).
   static const intptr_t kBytecodeFormatVersion = 3;
+
+#if defined(DART_BYTECODE_PROFILE)
+  static constexpr bool kIsProfiled = true;
+  // The 32 digest bytes a profiled component header must carry.
+  static const uint8_t* ProfileDigest() { return kbc_profile::kDigest; }
+  // The "sha256:<hex>" id a profiled envelope must carry.
+  static const char* ProfileId() { return kbc_profile::kId; }
+#else
+  static constexpr bool kIsProfiled = false;
+  static const uint8_t* ProfileDigest() { return nullptr; }
+  static const char* ProfileId() { return nullptr; }
+#endif
+  // Magic value this VM accepts.
+  static const intptr_t kExpectedMagicValue =
+      kIsProfiled ? kProfiledMagicValue : kMagicValue;
 
   enum Opcode {
 #define DECLARE_BYTECODE(name, encoding, kind, op1, op2, op3) k##name,
@@ -282,6 +357,28 @@ class KernelBytecode {
 #undef DECLARE_BYTECODE
         kNumOpcodes,
   };
+
+  static constexpr intptr_t kNumPublicOpcodes = kbc_profile::kNumPublicOpcodes;
+
+  // Semantic opcode of a wire byte. Bytes outside the public range are
+  // VM-internal or invalid and decode to themselves, as in canonical builds.
+  DART_FORCE_INLINE static constexpr Opcode DecodeWire(uint8_t wire) {
+#if defined(DART_BYTECODE_PROFILE)
+    return static_cast<Opcode>(kbc_profile::kWireTable.to_semantic[wire]);
+#else
+    return static_cast<Opcode>(wire);
+#endif
+  }
+
+  // Wire byte of a semantic opcode.
+  DART_FORCE_INLINE static constexpr KBCInstr Encode(Opcode opcode) {
+#if defined(DART_BYTECODE_PROFILE)
+    return opcode < kNumPublicOpcodes ? kbc_profile::kSemanticToWire[opcode]
+                                      : static_cast<KBCInstr>(opcode);
+#else
+    return static_cast<KBCInstr>(opcode);
+#endif
+  }
 
   static const char* NameOf(Opcode op) {
     const char* names[] = {
@@ -385,7 +482,7 @@ class KernelBytecode {
   }
 
   DART_FORCE_INLINE static Opcode DecodeOpcode(const KBCInstr* bc) {
-    return static_cast<Opcode>(bc[0]);
+    return DecodeWire(bc[0]);
   }
 
   DART_FORCE_INLINE static const KBCInstr* Next(const KBCInstr* bc) {

@@ -4,6 +4,7 @@
 
 import 'dart:typed_data';
 import 'package:vm/bytecode/full_replacement.dart';
+import 'bytecode_profile.dart';
 import 'bytecode_serialization.dart';
 import 'constant_pool.dart';
 import 'object_table.dart';
@@ -17,6 +18,7 @@ Uint8List createShorebirdFullReplacement(
   required List<int> hostAbi,
   required String rootUri,
   List<int>? baseline,
+  BytecodeProfile? profile,
 }) {
   List<String> validate(List<int> bytes) {
     if (bytes.length > shorebirdReplacementMaxComponent) {
@@ -24,7 +26,9 @@ Uint8List createShorebirdFullReplacement(
     }
     final Component component;
     try {
-      component = Component.read(BufferedReader(LinkReader(), bytes));
+      component = Component.read(
+        BufferedReader(LinkReader(), bytes, profile: profile),
+      );
     } catch (error) {
       throw FormatException('Invalid replacement bytecode component: $error');
     }

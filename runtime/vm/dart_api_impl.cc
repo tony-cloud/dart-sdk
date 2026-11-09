@@ -1935,8 +1935,11 @@ DART_EXPORT bool Dart_IsBytecode(const uint8_t* buffer, intptr_t buffer_size) {
   if (buffer_size < 4) {
     return false;
   }
-  return (buffer[0] == 0x33) && (buffer[1] == 0x43) && (buffer[2] == 0x42) &&
-         (buffer[3] == 0x44);
+  // 'DBC3' (canonical) or 'DBP3' (bound to a hardened-diversified profile).
+  // Either is Dart bytecode; the reader then accepts only the encoding this VM
+  // was built for and reports a profile mismatch for the other.
+  return (buffer[0] == 0x33) && (buffer[1] == 0x43 || buffer[1] == 0x50) &&
+         (buffer[2] == 0x42) && (buffer[3] == 0x44);
 }
 
 DART_EXPORT char* Dart_IsolateMakeRunnable(Dart_Isolate isolate) {
@@ -7745,7 +7748,8 @@ static bool ValidateAotPatchJsonObject(const char* json,
                                    "license_type",       "obfuscation_map_hash",
                                    "offline_expires_at", "patch_snapshot_hash",
                                    "runtime_mode",       "sdk_hash",
-                                   "target_arch",        "target_os"};
+                                   "target_arch",        "target_os",
+                                   "bytecode_profile_id"};
   const char* encryption_fields[] = {"algorithm", "key_id", "nonce_base64",
                                      "tag_base64", "aad_sha256"};
   const char** fields = object_kind == 0   ? root_fields
@@ -8143,6 +8147,7 @@ static Dart_Handle BuildAotPatchMetadataAad(const char* json,
   APPEND_FIELD("base_flavor_id", false);
   APPEND_FIELD("base_license_type", false);
   APPEND_FIELD("base_snapshot_hash", true);
+  APPEND_FIELD("bytecode_profile_id", false);
   APPEND_FIELD("flavor_id", true);
   APPEND_FIELD("license_type", true);
   APPEND_FIELD("obfuscation_map_hash", false);
@@ -8286,6 +8291,25 @@ Dart_InstallAotPatchWithStatus(const uint8_t* patch_buffer,
   if (Api::IsError(result)) return result;
   result = ValidateAotPatchPayloadKind(json, patch_buffer_length, options);
   if (Api::IsError(result)) return result;
+  // Hardened-diversified (contract v3): the authenticated metadata names the
+  // bytecode profile. It is checked here, before the key callback and before
+  // decryption, so a payload for another profile never obtains a key.
+#if defined(DART_BYTECODE_PROFILE)
+  result = ValidateAotPatchJsonField(json, patch_buffer_length,
+                                     "bytecode_profile_id",
+                                     KernelBytecode::ProfileId());
+  if (Api::IsError(result)) return result;
+#else
+  {
+    AotPatchJsonString profile_id;
+    if (FindAotPatchJsonString(json, patch_buffer_length, "bytecode_profile_id",
+                               &profile_id)) {
+      return Api::NewError(
+          "AOT patch artifact is bound to a Dart bytecode profile this VM "
+          "does not use.");
+    }
+  }
+#endif
 
   AotPatchJsonString key_id;
   if (!FindAotPatchJsonString(json, patch_buffer_length, "key_id", &key_id)) {

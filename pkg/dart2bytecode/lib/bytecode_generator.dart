@@ -115,6 +115,7 @@ void generateBytecode(
       bytecodeComponent.stringTable,
       bytecodeComponent.objectTable,
       linkWriter,
+      profile: options.bytecodeProfile,
     );
     bytecodeComponent.write(writer);
     writer.writeContentsToSink(sink);

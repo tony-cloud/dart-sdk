@@ -15,6 +15,7 @@ shipping PRODUCT runtime. This test does not establish Flutter embedder safety.
 import argparse
 import contextlib
 import hashlib
+import json
 from pathlib import Path
 import platform as host_platform
 import struct
@@ -740,17 +741,32 @@ int main(int argc, char** argv) {
 
 MALFORMED_PRODUCER = r'''
 import 'dart:io';
+import 'package:dart2bytecode/bytecode_profile.dart';
 import 'package:dart2bytecode/bytecode_serialization.dart';
+import 'package:dart2bytecode/dbc.dart';
 import 'package:dart2bytecode/declarations.dart';
 import 'package:vm/bytecode/full_replacement.dart';
 
 void main(List<String> args) {
+  final profile = args.length > 2 ? BytecodeProfile.load(args[2]) : null;
   final bundle = decodeShorebirdReplacement(File(args[0]).readAsBytesSync());
-  final component = Component.read(BufferedReader(LinkReader(), bundle.component));
+  final component = Component.read(
+      BufferedReader(LinkReader(), bundle.component, profile: profile));
   // Deliberately invalid instruction in a loaded body, after identity staging.
-  component.codes.first.bytecodes[0] = 255;
+  // A profiled writer only encodes real opcodes, so a profiled fixture uses an
+  // opcode that full replacement forbids, of the same width.
+  final code = component.codes.first.bytecodes;
+  if (profile == null) {
+    code[0] = 255;
+  } else {
+    if (BytecodeProfile.instructionSizeOf(Opcode.values[code[0]]) !=
+        BytecodeProfile.instructionSizeOf(Opcode.kExternalCall)) {
+      throw StateError('Fixture needs a two-byte first instruction');
+    }
+    code[0] = Opcode.kExternalCall.index;
+  }
   final writer = BufferedWriter(component.stringTable, component.objectTable,
-      LinkWriter());
+      LinkWriter(), profile: profile);
   component.write(writer);
   final bytes = writer.getContents();
   final previous = bundle.manifest;
@@ -762,6 +778,14 @@ void main(List<String> args) {
   File(args[1]).writeAsBytesSync(encodeShorebirdReplacement(manifest, bytes));
 }
 '''
+
+
+def bytecode_profile_id(path):
+    """`sha256:` over the canonical JSON of an Open Shorebird profile."""
+    document = json.loads(path.read_text(encoding='utf-8'))
+    canonical = json.dumps(document, sort_keys=True, separators=(',', ':'),
+                           ensure_ascii=False).encode('utf-8')
+    return 'sha256:' + hashlib.sha256(canonical).hexdigest()
 
 
 def digest_artifact(path):
@@ -790,6 +814,9 @@ def main():
     parser.add_argument('--product', action='store_true')
     parser.add_argument('--prepare-only', action='store_true')
     parser.add_argument('--cxx', default='c++')
+    parser.add_argument('--bytecode-profile', type=Path,
+                        help='hardened-diversified profile the SDK was built '
+                             'with (GN dart_bytecode_profile)')
     parser.add_argument('--envelope-producer', type=Path)
     parser.add_argument('--envelope-packages', type=Path)
     parser.add_argument('--envelope-dart', type=Path)
@@ -853,8 +880,16 @@ def main():
         abi = host_abi(runtime, snapshot_compiler, platform, args.product)
         defines = ['-Ddart.vm.product=true'] if args.product else []
         profile = ['--shorebird-full-replacement', f'--shorebird-host-abi={abi}']
+        profile_flags = ([f'--bytecode-profile={args.bytecode_profile.resolve()}']
+                         if args.bytecode_profile else [])
+        producer_flags = ([f'--bytecode-profile-id='
+                           f'{bytecode_profile_id(args.bytecode_profile)}']
+                          if args.bytecode_profile else [])
+        # A profiled component carries the 32-byte profile digest after the
+        # format version, before the section table.
+        section_table = 8 + (32 if args.bytecode_profile else 0)
         bytecode = [dart, root / 'pkg/dart2bytecode/bin/dart2bytecode.dart',
-                    *defines, f'--platform={platform}', *profile]
+                    *defines, f'--platform={platform}', *profile, *profile_flags]
         baseline = work / 'base.sbr'
         run(*bytecode, '-o', baseline, driver)
 
@@ -880,7 +915,7 @@ def main():
         plain_bytecode = work / 'plain.bytecode'
         additive_bytecode = work / 'additive.bytecode'
         legacy_compiler = [dart, root / 'pkg/dart2bytecode/bin/dart2bytecode.dart',
-                           *defines, f'--platform={platform}']
+                           *defines, f'--platform={platform}', *profile_flags]
         run(*legacy_compiler, '-o', plain_bytecode, driver)
         run(*legacy_compiler, '--shorebird-structural-patching',
             '-o', additive_bytecode, driver)
@@ -903,7 +938,8 @@ def main():
             envelopes = work / 'envelopes'
             run(args.envelope_dart.resolve(),
                 f'--packages={args.envelope_packages.resolve()}',
-                args.envelope_producer.resolve(), baseline, patch, envelopes)
+                args.envelope_producer.resolve(), baseline, patch, envelopes,
+                *producer_flags)
             run(executable, base_snapshot, patch, baseline, source.as_uri(),
                 removed.as_uri(), 'encrypted', envelopes,
                 digest_artifact(baseline), digest_artifact(patch))
@@ -933,12 +969,13 @@ def main():
         malformed_producer.write_text(MALFORMED_PRODUCER)
         malformed = work / 'malformed-component.sbr'
         run(dart, f'--packages={root / ".dart_tool/package_config.json"}',
-            malformed_producer, patch, malformed)
+            malformed_producer, patch, malformed,
+            *([args.bytecode_profile.resolve()] if args.bytecode_profile else []))
         exercise(malformed, 'reject-malformed-component')
         # Corrupt a used URI's string span while preserving every outer binding.
         # A checksum-only rejection would not exercise the native bounds check.
         component = bytearray(content[component_start:])
-        strings = struct.unpack_from('<I', component, 12)[0]
+        strings = struct.unpack_from('<I', component, section_table + 4)[0]
         one_byte, two_byte = struct.unpack_from('<II', component, strings)
         strings_data = strings + 8 + 4 * (one_byte + two_byte)
         previous = 0

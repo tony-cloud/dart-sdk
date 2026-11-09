@@ -93,8 +93,10 @@ uint32_t BytecodePatcher::AddBreakpointAtWithMutatorsStopped(
     const Bytecode& bytecode) {
   auto* const instr = reinterpret_cast<KBCInstr*>(
       bytecode.GetInstructionBefore(return_address));
+  // The saved and restored value is the wire byte (it may be a profiled
+  // encoding); the breakpoint opcode is written in wire form as well.
   uint32_t old_opcode = *instr;
-  *instr = KernelBytecode::BreakpointOpcode(instr);
+  *instr = KernelBytecode::Encode(KernelBytecode::BreakpointOpcode(instr));
   return old_opcode;
 }
 
@@ -106,8 +108,9 @@ void BytecodePatcher::RemoveBreakpointAtWithMutatorsStopped(
   auto* const instr = reinterpret_cast<KBCInstr*>(
       bytecode.GetInstructionBefore(return_address));
   // Must be previously enabled and not yet removed.
-  ASSERT(*instr == KernelBytecode::BreakpointOpcode(
-                       static_cast<KernelBytecode::Opcode>(opcode)));
+  ASSERT(*instr ==
+         KernelBytecode::Encode(KernelBytecode::BreakpointOpcode(
+             KernelBytecode::DecodeWire(static_cast<uint8_t>(opcode)))));
   *instr = opcode;
 }
 #endif  // !defined(PRODUCT) && defined(DART_BYTECODE_INTERPRETER)

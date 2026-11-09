@@ -13,6 +13,7 @@ import 'bytecode_serialization.dart'
         BytecodeDeclaration,
         BytecodeSizeStatistics,
         StringTable;
+import 'bytecode_profile.dart' show BytecodeProfile;
 import 'constant_pool.dart' show ConstantPool;
 import 'dbc.dart' show bytecodeFormatVersion;
 import 'disassembler.dart' show BytecodeDisassembler;
@@ -1402,6 +1403,11 @@ class Component {
   //  UInt32 magic, version, numSections x (numItems, offset)
   static const int headerSize = (2 + numSections * 2) * 4;
 
+  /// Header size of a component written with [profile]: a profiled ('DBP3')
+  /// component carries the profile digest between version and sections.
+  static int headerSizeFor(BytecodeProfile? profile) =>
+      headerSize + (profile == null ? 0 : BytecodeProfile.digestLength);
+
   late StringTable stringTable;
   late ObjectTable objectTable;
   final List<LibraryDeclaration> libraries = <LibraryDeclaration>[];
@@ -1536,7 +1542,9 @@ class Component {
       );
     }
 
-    int offset = headerSize;
+    final profile = writer.profile;
+    final int componentHeaderSize = headerSizeFor(profile);
+    int offset = componentHeaderSize;
     for (var section in sections) {
       if (section.writer != null) {
         section.offset = offset;
@@ -1548,13 +1556,21 @@ class Component {
 
     final start = writer.offset;
 
-    writer.writeUInt32(magicValue);
-    writer.writeUInt32(bytecodeFormatVersion);
+    if (profile == null) {
+      writer.writeUInt32(magicValue);
+      writer.writeUInt32(bytecodeFormatVersion);
+    } else {
+      writer.writeUInt32(BytecodeProfile.profiledMagicValue);
+      writer.writeUInt32(bytecodeFormatVersion);
+      for (final byte in profile.digest) {
+        writer.writeByte(byte);
+      }
+    }
     for (var section in sections) {
       writer.writeUInt32(section.numItems);
       writer.writeUInt32(section.offset!);
     }
-    assert(writer.offset - start == headerSize);
+    assert(writer.offset - start == componentHeaderSize);
     for (var section in sections) {
       final sectionWriter = section.writer;
       if (sectionWriter != null) {
@@ -1570,13 +1586,36 @@ class Component {
     final int start = reader.offset;
 
     final int magic = reader.readUInt32();
-    if (magic != magicValue) {
+    final profile = reader.profile;
+    if (magic == BytecodeProfile.profiledMagicValue && profile == null) {
+      throw const FormatException(
+        'Profiled (DBP3) bytecode needs its --bytecode-profile.',
+      );
+    }
+    if (magic == magicValue && profile != null) {
+      throw const FormatException(
+        'Canonical (DBC3) bytecode does not match --bytecode-profile.',
+      );
+    }
+    if (magic !=
+        (profile == null ? magicValue : BytecodeProfile.profiledMagicValue)) {
       throw 'Error: unexpected bytecode magic $magic';
     }
 
     final version = reader.readUInt32();
     if (version != bytecodeFormatVersion) {
       throw 'Error: unexpected bytecode format version $version (expected $bytecodeFormatVersion)';
+    }
+
+    if (profile != null) {
+      final digest = reader.readBytesAsUint8List(BytecodeProfile.digestLength);
+      for (int i = 0; i < BytecodeProfile.digestLength; i++) {
+        if (digest[i] != profile.digest[i]) {
+          throw const FormatException(
+            'Bytecode was produced for another bytecode profile.',
+          );
+        }
+      }
     }
 
     reader.readUInt32();
@@ -1750,13 +1789,21 @@ class Component {
   }
 }
 
+// Instructions are canonical (semantic opcodes) in memory. A profiled
+// component stores them in the profile's wire encoding; this is the only place
+// the encoding is applied or removed.
 void _writeBytecodeInstructions(BufferedWriter writer, Uint8List bytecodes) {
   writer.writePackedUInt30(bytecodes.length);
-  writer.appendUint8List(bytecodes);
+  final profile = writer.profile;
+  writer.appendUint8List(
+    profile == null ? bytecodes : profile.encodeInstructions(bytecodes),
+  );
   BytecodeSizeStatistics.instructionsSize += bytecodes.length;
 }
 
 Uint8List _readBytecodeInstructions(BufferedReader reader) {
   int len = reader.readPackedUInt30();
-  return reader.readBytesAsUint8List(len);
+  final bytes = reader.readBytesAsUint8List(len);
+  final profile = reader.profile;
+  return profile == null ? bytes : profile.decodeInstructions(bytes);
 }

@@ -35,34 +35,35 @@ const intptr_t KernelBytecode::kInstructionSize[] = {
 };
 
 static const KBCInstr kVMInternal_ImplicitConstructorClosureInstructions[] = {
-    KernelBytecode::kVMInternal_ImplicitConstructorClosure,
+    KernelBytecode::Encode(
+        KernelBytecode::kVMInternal_ImplicitConstructorClosure),
     0,
     0,
-    KernelBytecode::kPush,
+    KernelBytecode::Encode(KernelBytecode::kPush),
     0,
-    KernelBytecode::kReturnTOS,
+    KernelBytecode::Encode(KernelBytecode::kReturnTOS),
 };
 
 static const KBCInstr
     kVMInternal_ImplicitConstructorClosure_WideInstructions[] = {
-        KernelBytecode::kTrap,
+        KernelBytecode::Encode(KernelBytecode::kTrap),
 };
 
 static const KBCInstr kVMInternal_ImplicitInstanceClosureInstructions[] = {
-    KernelBytecode::kVMInternal_ImplicitInstanceClosure,
+    KernelBytecode::Encode(KernelBytecode::kVMInternal_ImplicitInstanceClosure),
     0,
     0,
-    KernelBytecode::kReturnTOS,
+    KernelBytecode::Encode(KernelBytecode::kReturnTOS),
 };
 
 static const KBCInstr kVMInternal_ImplicitInstanceClosure_WideInstructions[] = {
-    KernelBytecode::kTrap,
+    KernelBytecode::Encode(KernelBytecode::kTrap),
 };
 
 #define DECLARE_INSTRUCTIONS(name, fmt, kind, fmta, fmtb, fmtc)                \
   static const KBCInstr k##name##Instructions[] = {                            \
-      KernelBytecode::k##name,                                                 \
-      KernelBytecode::kReturnTOS,                                              \
+      KernelBytecode::Encode(KernelBytecode::k##name),                         \
+      KernelBytecode::Encode(KernelBytecode::kReturnTOS),                      \
   };
 INTERNAL_KERNEL_BYTECODES_WITH_DEFAULT_CODE(DECLARE_INSTRUCTIONS)
 #undef DECLARE_INSTRUCTIONS

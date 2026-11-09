@@ -1056,7 +1056,7 @@ DART_FORCE_INLINE bool Interpreter::InstanceCall(Thread* thread,
   do {                                                                         \
     if (IsTracingExecution() || IsWritingTraceFile()) {                        \
       KBCInstr temp[KernelBytecode::kMaxInstructionSize];                      \
-      *temp = op;                                                              \
+      *temp = KernelBytecode::Encode(static_cast<KernelBytecode::Opcode>(op)); \
       memmove(temp + 1, pc + 1, KernelBytecode::kInstructionSize[op] - 1);     \
       if (IsTracingExecution()) {                                              \
         LogBlock lb;                                                           \
@@ -1114,7 +1114,7 @@ DART_FORCE_INLINE bool Interpreter::InstanceCall(Thread* thread,
 #endif  // defined(DART_HAS_COMPUTED_GOTO)
 
 // Fetch next operation from PC and dispatch.
-#define DISPATCH() DISPATCH_OP(*pc)
+#define DISPATCH() DISPATCH_OP(KernelBytecode::DecodeOpcode(pc))
 
 // Load target of a jump instruction into PC.
 #define LOAD_JUMP_TARGET() pc = rT
@@ -4895,7 +4895,9 @@ SwitchDispatchNoSingleStep:
     Exit(thread, FP, SP + 2, pc);                                              \
     INVOKE_RUNTIME(DRT_BreakpointRuntimeHandler,                               \
                    NativeArguments(thread, 0, nullptr, SP + 1));               \
-    uint32_t old_op = RawSmiValue(Smi::RawCast(SP[1]));                        \
+    /* The saved byte is a wire byte; dispatch on its semantic opcode. */      \
+    uint32_t old_op = KernelBytecode::DecodeWire(                              \
+        static_cast<uint8_t>(RawSmiValue(Smi::RawCast(SP[1]))));               \
     ASSERT_EQUAL(KernelBytecode::BreakpointOpcode(                             \
                      static_cast<KernelBytecode::Opcode>(old_op)),             \
                  op);                                                          \

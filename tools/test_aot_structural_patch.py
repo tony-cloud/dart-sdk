@@ -17,6 +17,7 @@ dart_engine_aot_shared_product to exercise matching shipping-mode artifacts.
 import argparse
 import contextlib
 import hashlib
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -231,12 +232,16 @@ void main() {}
 CONST_MALFORMED_PRODUCER = r'''
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:dart2bytecode/bytecode_profile.dart';
 import 'package:dart2bytecode/bytecode_serialization.dart';
 import 'package:dart2bytecode/declarations.dart';
 import 'package:dart2bytecode/patch.dart';
 
+BytecodeProfile? profile;
+
 Uint8List clearClassCapabilities(List<int> bytes) {
-  final component = Component.read(BufferedReader(LinkReader(), bytes));
+  final component = Component.read(
+      BufferedReader(LinkReader(), bytes, profile: profile));
   final replacements = {
     for (final cls in component.classes)
       cls: ClassDeclaration(
@@ -257,20 +262,29 @@ Uint8List clearClassCapabilities(List<int> bytes) {
     }
   }
   final writer = BufferedWriter(component.stringTable, component.objectTable,
-      LinkWriter());
+      LinkWriter(), profile: profile);
   component.write(writer);
   return writer.getContents();
 }
 
 void main(List<String> args) {
+  if (args.length > 3) profile = BytecodeProfile.load(args[3]);
   // Explicit malformed-data fixture only. The production compiler rejects this
   // change; the actual native baseline retains its const class capability.
   final baseline = clearClassCapabilities(File(args[0]).readAsBytesSync());
   final updated = clearClassCapabilities(File(args[1]).readAsBytesSync());
   File(args[2]).writeAsBytesSync(createBytecodePatch(baseline, updated,
-      shorebirdStructuralPatching: true));
+      shorebirdStructuralPatching: true, profile: profile));
 }
 '''
+
+def bytecode_profile_id(path):
+    """`sha256:` over the canonical JSON of an Open Shorebird profile."""
+    document = json.loads(path.read_text(encoding='utf-8'))
+    canonical = json.dumps(document, sort_keys=True, separators=(',', ':'),
+                           ensure_ascii=False).encode('utf-8')
+    return 'sha256:' + hashlib.sha256(canonical).hexdigest()
+
 
 HARNESS = r'''
 #include <atomic>
@@ -628,6 +642,9 @@ def main():
                         help='Use matching PRODUCT compiler, platform, and shared runtime')
     parser.add_argument('--prepare-only', action='store_true',
                         help='Write fixtures/harness only; do not build or run')
+    parser.add_argument('--bytecode-profile', type=Path,
+                        help='hardened-diversified profile the SDK was built '
+                             'with (GN dart_bytecode_profile)')
     parser.add_argument('--envelope-producer', type=Path,
                         help='Optional real Dart envelope fixture producer')
     parser.add_argument('--envelope-packages', type=Path,
@@ -689,8 +706,14 @@ def main():
         print(f'Runtime mode: {"PRODUCT" if args.product else "non-PRODUCT"}; '
               f'compiler={snapshot_compiler}; runtime={runtime_path}; '
               f'platform={platform}', flush=True)
+        profile_flags = ([f'--bytecode-profile={args.bytecode_profile.resolve()}']
+                         if args.bytecode_profile else [])
+        producer_flags = ([f'--bytecode-profile-id='
+                           f'{bytecode_profile_id(args.bytecode_profile)}']
+                          if args.bytecode_profile else [])
         bytecode = [dart, root / 'pkg/dart2bytecode/bin/dart2bytecode.dart',
-                    *defines, f'--platform={platform}', '--shorebird-structural-patching']
+                    *defines, f'--platform={platform}', '--shorebird-structural-patching',
+                    *profile_flags]
 
         def snapshot(path, output, *, structural):
             kernel = output.with_suffix('.dill')
@@ -734,7 +757,8 @@ def main():
             envelopes = work / 'envelopes'
             run(args.envelope_dart.resolve(),
                 f'--packages={args.envelope_packages.resolve()}',
-                args.envelope_producer.resolve(), baseline, patch, envelopes)
+                args.envelope_producer.resolve(), baseline, patch, envelopes,
+                *producer_flags)
             baseline_hash = hashlib.sha256(baseline.read_bytes()).hexdigest()
             patch_hash = hashlib.sha256(patch.read_bytes()).hexdigest()
             run(executable, base_snapshot, patch, source.as_uri(), 'encrypted',
@@ -767,7 +791,8 @@ void main() {}
         malformed_producer.write_text(CONST_MALFORMED_PRODUCER)
         const_patch = work / 'const.bytecode'
         run(dart, f'--packages={root / ".dart_tool/package_config.json"}',
-            malformed_producer, const_baseline, const_updated, const_patch)
+            malformed_producer, const_baseline, const_updated, const_patch,
+            *([args.bytecode_profile.resolve()] if args.bytecode_profile else []))
         run(executable, const_snapshot, const_patch, const_source.as_uri(), 'reject-const')
 
 

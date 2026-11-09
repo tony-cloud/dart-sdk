@@ -41,6 +41,7 @@ import 'bytecode_serialization.dart' show BytecodeSizeStatistics;
 import 'bytecode_generator.dart' show generateBytecode;
 import 'full_replacement.dart';
 import 'options.dart' show BytecodeOptions;
+import 'bytecode_profile.dart' show BytecodeProfile, BytecodeProfileException;
 import 'patch.dart' show createBytecodePatch;
 
 final ArgParser _argParser = ArgParser(allowTrailingOptions: true)
@@ -70,6 +71,13 @@ final ArgParser _argParser = ArgParser(allowTrailingOptions: true)
     'target-os',
     help: 'Compile for a specific target operating system.',
     allowed: TargetOS.names,
+  )
+  ..addOption(
+    'bytecode-profile',
+    help:
+        'Open Shorebird hardened-diversified profile (contract v3): encode '
+        'the output, and read --patch-base, in this profile\'s opcode map '
+        '(DBP3). Omit for canonical DBC3 bytecode.',
   )
   ..addOption(
     'patch-base',
@@ -289,6 +297,7 @@ Future<int> runCompilerWithCommandLineArguments(List<String> arguments) async {
     shorebirdStructuralPatching: options['shorebird-structural-patching'],
     shorebirdFullReplacement: options['shorebird-full-replacement'],
     shorebirdHostAbi: options['shorebird-host-abi'],
+    bytecodeProfile: options['bytecode-profile'],
   );
 }
 
@@ -326,6 +335,7 @@ Future<int> runCompilerWithOptions({
   bool shorebirdStructuralPatching = false,
   bool shorebirdFullReplacement = false,
   String? shorebirdHostAbi,
+  String? bytecodeProfile,
   String? targetOS,
 }) async {
   if (shorebirdFullReplacement && shorebirdStructuralPatching) {
@@ -388,10 +398,21 @@ Future<int> runCompilerWithOptions({
     mainUri = await convertToPackageUri(fileSystem, mainUri, packagesUri);
   }
 
+  BytecodeProfile? profile;
+  if (bytecodeProfile != null) {
+    try {
+      profile = BytecodeProfile.load(bytecodeProfile);
+    } on BytecodeProfileException catch (error) {
+      printMessage(error.toString());
+      return badUsageExitCode;
+    }
+  }
+
   final BytecodeOptions bytecodeOptions = BytecodeOptions(
     enableAsserts: enableAsserts,
     shorebirdStructuralPatching: shorebirdStructuralPatching,
     shorebirdFullReplacement: shorebirdFullReplacement,
+    bytecodeProfile: profile,
   )..parseCommandLineFlags(bytecodeGeneratorOptions);
 
   final CompilerOptions compilerOptions = CompilerOptions()
@@ -508,12 +529,14 @@ Future<int> runCompilerWithOptions({
               baseline: patchBase == null
                   ? null
                   : await io.File(patchBase).readAsBytes(),
+              profile: profile,
             )
           : createBytecodePatch(
               await io.File(patchBase!).readAsBytes(),
               updated,
               shorebirdStructuralPatching: shorebirdStructuralPatching,
               addedExistingClassMembers: addedExistingClassMembers,
+              profile: profile,
             );
       await output.writeAsBytes(delta);
       if (structuralPatchReport != null) {

@@ -92,6 +92,13 @@ declare_args() {
   # from dart_dynamic_modules; iOS may combine it with
   # dart_enable_shorebird_interpreter for App Store-safe patch payloads.
   dart_enable_aot_patching = false
+
+  # Open Shorebird hardened-diversified bytecode profile: base64 of the
+  # canonical JSON of a contract v3 diversification profile, or "" for the
+  # canonical opcode encoding. Requires dart_enable_shorebird_interpreter.
+  # The VM then accepts only DBP3 components and envelopes bound to this
+  # profile. See tools/bytecode_profile.py.
+  dart_bytecode_profile = ""
 }
 
 declare_args() {

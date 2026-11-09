@@ -197,9 +197,12 @@ static void ValidateFullFfiCode(const Function& function,
       if (call) {
         ValidateFullFfiFunction(function);
       } else {
+        const auto previous_op =
+            previous < 0 ? KernelBytecode::kTrap
+                         : KernelBytecode::DecodeOpcode(data + previous);
         if (previous < 0 ||
-            (data[previous] != KernelBytecode::kPushConstant &&
-             data[previous] != KernelBytecode::kPushConstant_Wide)) {
+            (previous_op != KernelBytecode::kPushConstant &&
+             previous_op != KernelBytecode::kPushConstant_Wide)) {
           RejectBytecodePatch("Invalid full replacement FFI address metadata.");
         }
         const intptr_t annotation_index =
@@ -1144,7 +1147,12 @@ BytecodePtr BytecodeReaderHelper::ReadBytecode(const ObjectPool& pool) {
   const uint8_t* data = reader_.BufferAt(offset);
   if (thread_->bytecode_loader()->is_full_replacement()) {
     for (intptr_t pc = 0; pc < size;) {
-      const uint8_t op = data[pc];
+      // Range-check the wire byte, then apply every rule to the semantic
+      // opcode, so the forbidden categories hold for any profile.
+      if (data[pc] >= KernelBytecode::kNumOpcodes) {
+        RejectBytecodePatch("Unsupported or truncated replacement opcode.");
+      }
+      const uint8_t op = KernelBytecode::DecodeWire(data[pc]);
       if (op >= KernelBytecode::kNumOpcodes ||
           op == KernelBytecode::kExternalCall ||
           op == KernelBytecode::kExternalCall_Wide ||
@@ -1286,10 +1294,17 @@ ArrayPtr BytecodeReaderHelper::ReadBytecodeComponent() {
 
   const intptr_t start_offset = reader_.offset();
 
+  // A canonical VM reads only DBC3 components. A VM built with
+  // dart_bytecode_profile reads only DBP3 components bound to its profile, so
+  // canonical bytecode never runs in a diversified VM and vice versa.
   intptr_t magic = reader_.ReadUInt32();
-  if (magic != KernelBytecode::kMagicValue) {
+  if (magic != KernelBytecode::kExpectedMagicValue) {
     if (thread_->bytecode_loader()->is_loading_patch()) {
-      RejectBytecodePatch("Invalid Dart bytecode patch magic.");
+      RejectBytecodePatch(
+          magic == KernelBytecode::kMagicValue ||
+                  magic == KernelBytecode::kProfiledMagicValue
+              ? "Dart bytecode patch profile does not match this VM."
+              : "Invalid Dart bytecode patch magic.");
     }
     FATAL("Unexpected Dart bytecode magic %" Px, magic);
   }
@@ -1304,6 +1319,29 @@ ArrayPtr BytecodeReaderHelper::ReadBytecodeComponent() {
           "This version of Dart VM supports bytecode format version %" Pd ".",
           version, KernelBytecode::kBytecodeFormatVersion);
   }
+
+#if defined(DART_BYTECODE_PROFILE)
+  // The profile digest is compared before any section, instruction or
+  // metadata is read.
+  {
+    CheckBytecodeRange(reader_.offset(), KernelBytecode::kProfileDigestSize,
+                       reader_.size());
+    const uint8_t* digest = reader_.BufferAt(reader_.offset());
+    const uint8_t* expected = KernelBytecode::ProfileDigest();
+    uint8_t difference = 0;
+    for (intptr_t i = 0; i < KernelBytecode::kProfileDigestSize; ++i) {
+      difference |= digest[i] ^ expected[i];
+    }
+    if (difference != 0) {
+      if (thread_->bytecode_loader()->is_loading_patch()) {
+        RejectBytecodePatch(
+            "Dart bytecode patch profile does not match this VM.");
+      }
+      FATAL("Dart bytecode profile does not match this VM.");
+    }
+    reader_.set_offset(reader_.offset() + KernelBytecode::kProfileDigestSize);
+  }
+#endif  // defined(DART_BYTECODE_PROFILE)
 
   // Every declared item consumes at least one byte, including annotations
   // which PRODUCT does not otherwise decode. Validate all section extents

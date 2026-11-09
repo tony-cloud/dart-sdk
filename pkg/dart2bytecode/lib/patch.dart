@@ -4,6 +4,7 @@
 
 import 'dart:typed_data';
 
+import 'bytecode_profile.dart' show BytecodeProfile;
 import 'bytecode_serialization.dart';
 import 'constant_pool.dart';
 import 'declarations.dart';
@@ -28,9 +29,16 @@ Uint8List createBytecodePatch(
   List<int> updated, {
   bool shorebirdStructuralPatching = false,
   List<String>? addedExistingClassMembers,
+  BytecodeProfile? profile,
 }) {
-  final base = Component.read(BufferedReader(LinkReader(), baseline));
-  final patch = Component.read(BufferedReader(LinkReader(), updated));
+  // A profiled baseline and update are read (and the patch written) in the
+  // same profile; a component for another profile is refused by the reader.
+  final base = Component.read(
+    BufferedReader(LinkReader(), baseline, profile: profile),
+  );
+  final patch = Component.read(
+    BufferedReader(LinkReader(), updated, profile: profile),
+  );
   for (final library in [...base.libraries, ...patch.libraries]) {
     if ((library.flags & LibraryDeclaration.shorebirdFullReplacementFlag) !=
         0) {
@@ -229,6 +237,7 @@ Uint8List createBytecodePatch(
     patch.stringTable,
     patch.objectTable,
     LinkWriter(),
+    profile: profile,
   );
   patch.write(writer);
   return writer.getContents();

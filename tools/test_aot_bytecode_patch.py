@@ -9,6 +9,13 @@ Build gen_snapshot, dart_engine_aot_shared, and dart with
 dart_enable_shorebird_interpreter=true and dart_dynamic_modules=false first.
 This exercises a native AOT caller of an ordinary, unannotated Dart function;
 the caller's library is deliberately absent from each bytecode patch.
+
+Hardened-diversified (Open Shorebird contract v3): pass --bytecode-profile with
+the profile the build was configured with (GN dart_bytecode_profile) to compile
+every fixture in that profile. --foreign-bytecode-profile names a profile the
+VM was not built with; a valid patch compiled with it (and, for a profiled VM,
+the same patch in canonical DBC3 form) must be refused without changing any
+body.
 """
 
 import argparse
@@ -48,8 +55,11 @@ int64_t Probe(const char* name = "probe") {
 int main(int argc, char** argv) {
   const bool reject_profile = argc == 4 &&
       std::strcmp(argv[2], "--reject-profile") == 0;
+  const bool reject_bytecode_profile = argc >= 4 &&
+      std::strcmp(argv[2], "--reject-bytecode-profile") == 0;
   const bool ffi_only = argc == 3 && std::strcmp(argv[2], "--ffi") == 0;
-  if ((argc != 7 && !reject_profile && !ffi_only) ||
+  if ((argc != 7 && !reject_profile && !reject_bytecode_profile &&
+       !ffi_only) ||
       !Dart_IsPrecompiledRuntime()) return 2;
   char* error = nullptr;
   auto snapshot = DartEngine_AotSnapshotFromFile(argv[1], &error);
@@ -65,6 +75,32 @@ int main(int argc, char** argv) {
     DartEngine_Shutdown();
     std::cout << "Dead FFI callback discarded; live callback roundtrip passed."
               << std::endl;
+    return 0;
+  }
+  if (reject_bytecode_profile) {
+    for (int i = 3; i < argc; ++i) {
+      std::ifstream input(argv[i], std::ios::binary);
+      std::vector<uint8_t> patch((std::istreambuf_iterator<char>(input)), {});
+      auto result = Dart_ReloadBytecodePatch(patch.data(), patch.size());
+      if (!Dart_IsError(result) ||
+          std::strstr(Dart_GetError(result),
+                      "profile does not match this VM") == nullptr ||
+          Probe() != 1 || Probe("probeArg") != 11) {
+        std::cerr << "Bytecode for another profile was not refused: "
+                  << argv[i] << ": "
+                  << (Dart_IsError(result) ? Dart_GetError(result)
+                                           : "accepted")
+                  << std::endl;
+        return 8;
+      }
+      std::cout << "Refused " << argv[i] << ": " << Dart_GetError(result)
+                << std::endl;
+    }
+    Dart_ExitScope();
+    DartEngine_ReleaseIsolate();
+    DartEngine_Shutdown();
+    std::cout << "Bytecode for another profile refused before any body "
+                 "changed." << std::endl;
     return 0;
   }
   if (reject_profile) {
@@ -122,6 +158,10 @@ def main():
     parser.add_argument('--build-dir', required=True, type=Path)
     parser.add_argument('--cxx', default='c++')
     parser.add_argument('--work-dir', type=Path)
+    parser.add_argument('--bytecode-profile', type=Path,
+                        help='profile the VM was built with (DBP3 fixtures)')
+    parser.add_argument('--foreign-bytecode-profile', type=Path,
+                        help='a profile the VM was not built with')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     build = args.build_dir.resolve()
@@ -192,9 +232,14 @@ def main():
                 f'--elf={snapshot}', kernel)
 
         baseline = work / 'baseline.bytecode'
-        bytecode_command = [
+        compiler = [
             build / 'dart', root / 'pkg/dart2bytecode/bin/dart2bytecode.dart',
             f'--platform={platform}',
+        ]
+        bytecode_command = [
+            *compiler,
+            *([f'--bytecode-profile={args.bytecode_profile.resolve()}']
+              if args.bytecode_profile else []),
         ]
         run(*bytecode_command, '-o', baseline, driver)
 
@@ -232,6 +277,30 @@ def main():
                 if result.returncode == 0 or rejected.exists():
                     raise AssertionError('Structural delta was not rejected')
             patches.append(patch)
+
+        # The valid patch in a profile this VM was not built with (and, for a
+        # profiled VM, in canonical form) must be refused.
+        foreign = []
+        if args.foreign_bytecode_profile:
+            foreign_base = work / 'foreign-baseline.bytecode'
+            source.write_text(body(1))
+            run(*compiler,
+                f'--bytecode-profile={args.foreign_bytecode_profile.resolve()}',
+                '-o', foreign_base, driver)
+            source.write_text(body(2))
+            foreign.append(work / 'foreign-profile.bytecode')
+            run(*compiler,
+                f'--bytecode-profile={args.foreign_bytecode_profile.resolve()}',
+                '--define=paid=true', f'--patch-base={foreign_base}',
+                '-o', foreign[-1], driver)
+        if args.bytecode_profile:
+            canonical_base = work / 'canonical-baseline.bytecode'
+            source.write_text(body(1))
+            run(*compiler, '-o', canonical_base, driver)
+            source.write_text(body(2))
+            foreign.append(work / 'canonical.bytecode')
+            run(*compiler, '--define=paid=true',
+                f'--patch-base={canonical_base}', '-o', foreign[-1], driver)
 
         valid = patches[1].read_bytes()
         truncated = work / 'truncated.bytecode'
@@ -344,6 +413,8 @@ void main(List<String> args) {
         tfa_patch = work / 'tfa.bytecode'
         run(*bytecode_command, '-o', tfa_patch, tfa_source)
         run(executable, tfa_snapshot, '--reject-profile', tfa_patch)
+        if foreign:
+            run(executable, snapshot, '--reject-bytecode-profile', *foreign)
         run(executable, snapshot, *patches)
 
 

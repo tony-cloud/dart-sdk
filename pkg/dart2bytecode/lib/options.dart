@@ -2,6 +2,8 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'bytecode_profile.dart' show BytecodeProfile;
+
 /// Collection of options for bytecode generator.
 class BytecodeOptions {
   static Map<String, String> commandLineFlags = {
@@ -25,6 +27,10 @@ class BytecodeOptions {
   bool emitInstanceFieldInitializers;
   final bool shorebirdStructuralPatching;
   final bool shorebirdFullReplacement;
+
+  /// Open Shorebird hardened-diversified profile the output is encoded with
+  /// (`--bytecode-profile`), or null for canonical DBC3 output.
+  final BytecodeProfile? bytecodeProfile;
   bool omitAssertSourcePositions;
   bool keepUnreachableCode;
   bool showBytecodeSizeStatistics;
@@ -40,6 +46,7 @@ class BytecodeOptions {
     this.emitInstanceFieldInitializers = false,
     this.shorebirdStructuralPatching = false,
     this.shorebirdFullReplacement = false,
+    this.bytecodeProfile,
     this.omitAssertSourcePositions = false,
     this.keepUnreachableCode = false,
     this.showBytecodeSizeStatistics = false,

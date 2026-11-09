@@ -4,6 +4,8 @@
 
 import 'dart:typed_data' show ByteData, Endian, Uint8List, Uint16List;
 
+import 'bytecode_profile.dart' show BytecodeProfile;
+
 abstract class StringWriter {
   int put(String string);
 }
@@ -38,6 +40,10 @@ class BufferedWriter {
   final ObjectWriter objectWriter;
   final LinkWriter linkWriter;
 
+  /// Hardened-diversified profile used to encode instructions and the
+  /// component header, or null for the canonical encoding.
+  final BytecodeProfile? profile;
+
   // Prefix of the data stored in this writer.
   // List of pairs Uint8List buffer, int length.
   List<dynamic>? _buffers;
@@ -50,13 +56,19 @@ class BufferedWriter {
 
   static final emptyBuffer = Uint8List(0);
 
-  BufferedWriter(this.stringWriter, this.objectWriter, this.linkWriter);
+  BufferedWriter(
+    this.stringWriter,
+    this.objectWriter,
+    this.linkWriter, {
+    this.profile,
+  });
 
   factory BufferedWriter.fromWriter(BufferedWriter writer) =>
       new BufferedWriter(
         writer.stringWriter,
         writer.objectWriter,
         writer.linkWriter,
+        profile: writer.profile,
       );
 
   Uint8List getContents() {
@@ -284,11 +296,19 @@ class BufferedReader {
   final List<int> bytes;
   final int baseOffset;
 
+  /// Hardened-diversified profile the component must be bound to, or null
+  /// for a canonical component.
+  final BytecodeProfile? profile;
+
   /// Position within [bytes], already includes [baseOffset].
   int _pos;
 
-  BufferedReader(this.linkReader, this.bytes, {this.baseOffset = 0})
-    : _pos = baseOffset {
+  BufferedReader(
+    this.linkReader,
+    this.bytes, {
+    this.baseOffset = 0,
+    this.profile,
+  }) : _pos = baseOffset {
     assert((0 <= _pos) && (_pos <= bytes.length));
   }
 

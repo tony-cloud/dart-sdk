@@ -12,6 +12,23 @@ assert(!dart_enable_aot_patching || !dart_dynamic_modules,
        "dart_enable_aot_patching must be built without dart_dynamic_modules.")
 assert(!dart_enable_shorebird_interpreter || !dart_dynamic_modules,
        "dart_enable_shorebird_interpreter must be built without dart_dynamic_modules.")
+assert(dart_bytecode_profile == "" || dart_enable_shorebird_interpreter,
+       "dart_bytecode_profile requires dart_enable_shorebird_interpreter.")
+
+if (dart_bytecode_profile != "") {
+  # Fails gn gen for an invalid profile or one made for another opcode table.
+  _dart_bytecode_profile =
+      exec_script("tools/bytecode_profile.py",
+                  [
+                    "gn",
+                    "--profile",
+                    dart_bytecode_profile,
+                    "--constants",
+                    rebase_path("vm/constants_kbc.h", root_build_dir),
+                  ],
+                  "scope",
+                  [ "vm/constants_kbc.h" ])
+}
 
 config("dart_public_config") {
   include_dirs = [
@@ -255,6 +272,15 @@ config("dart_config") {
   }
   if (dart_enable_shorebird_interpreter) {
     defines += [ "DART_SHOREBIRD_INTERPRETER" ]
+  }
+  if (dart_bytecode_profile != "") {
+    defines += [
+      "DART_BYTECODE_PROFILE=1",
+      "DART_BYTECODE_PROFILE_COUNT=${_dart_bytecode_profile.count}",
+      "DART_BYTECODE_PROFILE_WIRE=${_dart_bytecode_profile.wire}",
+      "DART_BYTECODE_PROFILE_DIGEST=${_dart_bytecode_profile.digest}",
+      "DART_BYTECODE_PROFILE_ID=\"${_dart_bytecode_profile.id}\"",
+    ]
   }
 
   if (dart_enable_aot_patching) {
