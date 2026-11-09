@@ -125,6 +125,26 @@ Uint8List everyInstruction(Random random) {
   return out.takeBytes();
 }
 
+// Platform.script is not the test file when package:test is launched with a
+// relative path (CI runs it from the SDK root), so search upward from both the
+// script and the working directory.
+File _findSdkFile(String relative) {
+  final starts = <Directory>[Directory.current];
+  if (Platform.script.isScheme('file')) {
+    starts.add(File(Platform.script.toFilePath()).parent);
+  }
+  for (final start in starts) {
+    var directory = start.absolute;
+    while (true) {
+      final candidate = File('${directory.path}/$relative');
+      if (candidate.existsSync()) return candidate;
+      if (directory.parent.path == directory.path) break;
+      directory = directory.parent;
+    }
+  }
+  throw StateError('$relative not found above ${starts.map((d) => d.path)}');
+}
+
 void main() {
   group('derivation and profile rules', () {
     test('the DEVELOPMENT-ONLY seed derives the reference profile id', () {
@@ -132,10 +152,8 @@ void main() {
     });
 
     test('the opcode table hash matches the VM opcode list', () {
-      final constants = File(
-        Platform.script
-            .resolve('../../../runtime/vm/constants_kbc.h')
-            .toFilePath(),
+      final constants = _findSdkFile(
+        'runtime/vm/constants_kbc.h',
       ).readAsStringSync();
       final list = RegExp(
         r'#define PUBLIC_KERNEL_BYTECODES_LIST\(V\)(.*?)\n\n',
